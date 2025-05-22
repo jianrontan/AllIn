@@ -1,2 +1,2 @@
 # AllIn
-This is my Orbital 2025 project
+This is Ron and Radusan's Orbital 2025 project
