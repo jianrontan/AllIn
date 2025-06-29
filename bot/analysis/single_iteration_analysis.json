@@ -1,0 +1,629 @@
+{
+  "total_info_sets": 24,
+  "info_sets_by_street": {
+    "preflop": {
+      "weak_": {
+        "check": -0.039996337890624956,
+        "bet_small": -0.12000122070312491,
+        "bet_medium": 0.07999877929687504,
+        "bet_large": 0.07999877929687504
+      },
+      "weak_k": {
+        "check": -0.010003662109375006,
+        "bet_small": 0.07000122070312498,
+        "bet_medium": -0.029998779296875,
+        "bet_large": -0.029998779296875
+      },
+      "weak_ks": {
+        "fold": 0.09999999999999998,
+        "call": -1.4,
+        "raise_small": 0.09999999999999998,
+        "raise_medium": 0.09999999999999998,
+        "raise_large": 0.09999999999999998
+      },
+      "weak_kss": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "weak_s": {
+        "fold": -0.04999999999999999,
+        "call": -0.04999999999999999,
+        "raise_small": 0.2,
+        "raise_medium": -0.04999999999999999,
+        "raise_large": -0.04999999999999999
+      },
+      "weak_ss": {
+        "fold": 0.2,
+        "call": -5.0
+      }
+    },
+    "flop": {
+      "weak_weak_made_flop_": {
+        "check": -0.009985351562499994,
+        "bet_small": -0.030004882812499994,
+        "bet_medium": 0.019995117187499994,
+        "bet_large": 0.019995117187499994
+      },
+      "weak_weak_made_flop_k": {
+        "check": -0.0025146484375000028,
+        "bet_small": 0.017504882812499997,
+        "bet_medium": -0.007495117187499997,
+        "bet_large": -0.007495117187499997
+      },
+      "weak_weak_made_flop_ks": {
+        "fold": 0.024999999999999994,
+        "call": -9.700000000000001,
+        "raise_small": 0.024999999999999994,
+        "raise_medium": 0.024999999999999994,
+        "raise_large": 0.024999999999999994
+      },
+      "weak_weak_made_flop_kss": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "weak_weak_made_flop_s": {
+        "fold": -0.012499999999999997,
+        "call": -0.012499999999999997,
+        "raise_small": 0.05,
+        "raise_medium": -0.012499999999999997,
+        "raise_large": -0.012499999999999997
+      },
+      "weak_weak_made_flop_ss": {
+        "fold": 0.05,
+        "call": -29.299999999999997
+      }
+    },
+    "turn": {
+      "weak_weak_made_turn_": {
+        "check": -0.00244140625,
+        "bet_small": -0.007519531250000003,
+        "bet_medium": 0.0049804687499999944,
+        "bet_large": 0.0049804687499999944
+      },
+      "weak_weak_made_turn_k": {
+        "check": -0.0006835937499999993,
+        "bet_small": 0.00439453125,
+        "bet_medium": -0.0018554687499999986,
+        "bet_large": -0.0018554687499999986
+      },
+      "weak_weak_made_turn_ks": {
+        "fold": 0.006249999999999999,
+        "call": -53.849999999999966,
+        "raise_small": 0.006249999999999999,
+        "raise_medium": 0.006249999999999999,
+        "raise_large": 0.006249999999999999
+      },
+      "weak_weak_made_turn_kss": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "weak_weak_made_turn_s": {
+        "fold": -0.0031249999999999993,
+        "call": -0.0031249999999999993,
+        "raise_small": 0.0125,
+        "raise_medium": -0.0031249999999999993,
+        "raise_large": -0.0031249999999999993
+      },
+      "weak_weak_made_turn_ss": {
+        "fold": 0.0125,
+        "call": -161.60000000000036
+      }
+    },
+    "river": {
+      "weak_medium_river_": {
+        "check": -0.00039062500000000035,
+        "bet_small": -0.001953125,
+        "bet_medium": 0.0011718749999999993,
+        "bet_large": 0.0011718749999999993
+      },
+      "weak_weak_made_river_k": {
+        "check": -0.0003906249999999999,
+        "bet_small": 0.0011718749999999997,
+        "bet_medium": -0.0003906249999999999,
+        "bet_large": -0.0003906249999999999
+      },
+      "weak_medium_river_ks": {
+        "fold": 0.0015624999999999997,
+        "call": -296.2999999999991,
+        "raise_small": 0.0015624999999999997,
+        "raise_medium": 0.0015624999999999997,
+        "raise_large": 0.0015624999999999997
+      },
+      "weak_weak_made_river_kss": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "weak_weak_made_river_s": {
+        "fold": -0.0007812499999999998,
+        "call": -0.0007812499999999998,
+        "raise_small": 0.003125,
+        "raise_medium": -0.0007812499999999998,
+        "raise_large": -0.0007812499999999998
+      },
+      "weak_medium_river_ss": {
+        "fold": 0.003125,
+        "call": -888.9124999999959
+      }
+    }
+  },
+  "hand_bucket_distribution": {
+    "weak": 24
+  },
+  "action_pattern_distribution": {
+    "": 4,
+    "k": 4,
+    "ks": 4,
+    "kss": 4,
+    "s": 4,
+    "ss": 4
+  },
+  "detailed_info_sets": {
+    "weak_": {
+      "regrets": {
+        "check": -0.039996337890624956,
+        "bet_small": -0.12000122070312491,
+        "bet_medium": 0.07999877929687504,
+        "bet_large": 0.07999877929687504
+      },
+      "strategies": {
+        "check": 0.25,
+        "bet_small": 0.25,
+        "bet_medium": 0.25,
+        "bet_large": 0.25
+      },
+      "key_parts": [
+        "weak",
+        ""
+      ]
+    },
+    "weak_k": {
+      "regrets": {
+        "check": -0.010003662109375006,
+        "bet_small": 0.07000122070312498,
+        "bet_medium": -0.029998779296875,
+        "bet_large": -0.029998779296875
+      },
+      "strategies": {
+        "check": 0.25,
+        "bet_small": 0.25,
+        "bet_medium": 0.25,
+        "bet_large": 0.25
+      },
+      "key_parts": [
+        "weak",
+        "k"
+      ]
+    },
+    "weak_weak_made_flop_": {
+      "regrets": {
+        "check": -0.009985351562499994,
+        "bet_small": -0.030004882812499994,
+        "bet_medium": 0.019995117187499994,
+        "bet_large": 0.019995117187499994
+      },
+      "strategies": {
+        "check": 0.0625,
+        "bet_small": 0.0625,
+        "bet_medium": 0.7875,
+        "bet_large": 0.7875
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        ""
+      ]
+    },
+    "weak_weak_made_flop_k": {
+      "regrets": {
+        "check": -0.0025146484375000028,
+        "bet_small": 0.017504882812499997,
+        "bet_medium": -0.007495117187499997,
+        "bet_large": -0.007495117187499997
+      },
+      "strategies": {
+        "check": 0.0625,
+        "bet_small": 4.737500000000001,
+        "bet_medium": 0.0625,
+        "bet_large": 0.0625
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "k"
+      ]
+    },
+    "weak_weak_made_turn_": {
+      "regrets": {
+        "check": -0.00244140625,
+        "bet_small": -0.007519531250000003,
+        "bet_medium": 0.0049804687499999944,
+        "bet_large": 0.0049804687499999944
+      },
+      "strategies": {
+        "check": 0.015625,
+        "bet_small": 0.015625,
+        "bet_medium": 0.921875,
+        "bet_large": 0.921875
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        ""
+      ]
+    },
+    "weak_weak_made_turn_k": {
+      "regrets": {
+        "check": -0.0006835937499999993,
+        "bet_small": 0.00439453125,
+        "bet_medium": -0.0018554687499999986,
+        "bet_large": -0.0018554687499999986
+      },
+      "strategies": {
+        "check": 0.015625,
+        "bet_small": 26.896874999999984,
+        "bet_medium": 0.015625,
+        "bet_large": 0.015625
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "k"
+      ]
+    },
+    "weak_medium_river_": {
+      "regrets": {
+        "check": -0.00039062500000000035,
+        "bet_small": -0.001953125,
+        "bet_medium": 0.0011718749999999993,
+        "bet_large": 0.0011718749999999993
+      },
+      "strategies": {
+        "check": 0.00390625,
+        "bet_small": 0.00390625,
+        "bet_medium": 0.9554687499999998,
+        "bet_large": 0.9554687499999998
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        ""
+      ]
+    },
+    "weak_weak_made_river_k": {
+      "regrets": {
+        "check": -0.0003906249999999999,
+        "bet_small": 0.0011718749999999997,
+        "bet_medium": -0.0003906249999999999,
+        "bet_large": -0.0003906249999999999
+      },
+      "strategies": {
+        "check": 0.00390625,
+        "bet_small": 148.14296874999954,
+        "bet_medium": 0.00390625,
+        "bet_large": 0.00390625
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "k"
+      ]
+    },
+    "weak_medium_river_ks": {
+      "regrets": {
+        "fold": 0.0015624999999999997,
+        "call": -296.2999999999991,
+        "raise_small": 0.0015624999999999997,
+        "raise_medium": 0.0015624999999999997,
+        "raise_large": 0.0015624999999999997
+      },
+      "strategies": {
+        "fold": 0.002734375,
+        "call": 0.00078125,
+        "raise_small": 0.002734375,
+        "raise_medium": 0.002734375,
+        "raise_large": 0.002734375
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "ks"
+      ]
+    },
+    "weak_weak_made_river_kss": {
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "strategies": {
+        "fold": 222.22617187499898,
+        "call": 222.22617187499898
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "kss"
+      ]
+    },
+    "weak_weak_made_river_s": {
+      "regrets": {
+        "fold": -0.0007812499999999998,
+        "call": -0.0007812499999999998,
+        "raise_small": 0.003125,
+        "raise_medium": -0.0007812499999999998,
+        "raise_large": -0.0007812499999999998
+      },
+      "strategies": {
+        "fold": 0.003125,
+        "call": 0.003125,
+        "raise_small": 444.451562499998,
+        "raise_medium": 0.003125,
+        "raise_large": 0.003125
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "s"
+      ]
+    },
+    "weak_medium_river_ss": {
+      "regrets": {
+        "fold": 0.003125,
+        "call": -888.9124999999959
+      },
+      "strategies": {
+        "fold": 5.7425781250000085,
+        "call": 0.001953125
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "ss"
+      ]
+    },
+    "weak_weak_made_turn_ks": {
+      "regrets": {
+        "fold": 0.006249999999999999,
+        "call": -53.849999999999966,
+        "raise_small": 0.006249999999999999,
+        "raise_medium": 0.006249999999999999,
+        "raise_large": 0.006249999999999999
+      },
+      "strategies": {
+        "fold": 0.0109375,
+        "call": 0.003125,
+        "raise_small": 0.0109375,
+        "raise_medium": 0.0109375,
+        "raise_large": 0.0109375
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "ks"
+      ]
+    },
+    "weak_weak_made_turn_kss": {
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "strategies": {
+        "fold": 40.39218750000009,
+        "call": 40.39218750000009
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "kss"
+      ]
+    },
+    "weak_weak_made_turn_s": {
+      "regrets": {
+        "fold": -0.0031249999999999993,
+        "call": -0.0031249999999999993,
+        "raise_small": 0.0125,
+        "raise_medium": -0.0031249999999999993,
+        "raise_large": -0.0031249999999999993
+      },
+      "strategies": {
+        "fold": 0.0125,
+        "call": 0.0125,
+        "raise_small": 80.78125000000018,
+        "raise_medium": 0.0125,
+        "raise_large": 0.0125
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "s"
+      ]
+    },
+    "weak_weak_made_turn_ss": {
+      "regrets": {
+        "fold": 0.0125,
+        "call": -161.60000000000036
+      },
+      "strategies": {
+        "fold": 5.570312499999998,
+        "call": 0.0078125
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "ss"
+      ]
+    },
+    "weak_weak_made_flop_ks": {
+      "regrets": {
+        "fold": 0.024999999999999994,
+        "call": -9.700000000000001,
+        "raise_small": 0.024999999999999994,
+        "raise_medium": 0.024999999999999994,
+        "raise_large": 0.024999999999999994
+      },
+      "strategies": {
+        "fold": 0.04375,
+        "call": 0.0125,
+        "raise_small": 0.04375,
+        "raise_medium": 0.04375,
+        "raise_large": 0.04375
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "ks"
+      ]
+    },
+    "weak_weak_made_flop_kss": {
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "strategies": {
+        "fold": 7.29375,
+        "call": 7.29375
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "kss"
+      ]
+    },
+    "weak_weak_made_flop_s": {
+      "regrets": {
+        "fold": -0.012499999999999997,
+        "call": -0.012499999999999997,
+        "raise_small": 0.05,
+        "raise_medium": -0.012499999999999997,
+        "raise_large": -0.012499999999999997
+      },
+      "strategies": {
+        "fold": 0.05,
+        "call": 0.05,
+        "raise_small": 14.575,
+        "raise_medium": 0.05,
+        "raise_large": 0.05
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "s"
+      ]
+    },
+    "weak_weak_made_flop_ss": {
+      "regrets": {
+        "fold": 0.05,
+        "call": -29.299999999999997
+      },
+      "strategies": {
+        "fold": 4.88125,
+        "call": 0.03125
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "ss"
+      ]
+    },
+    "weak_ks": {
+      "regrets": {
+        "fold": 0.09999999999999998,
+        "call": -1.4,
+        "raise_small": 0.09999999999999998,
+        "raise_medium": 0.09999999999999998,
+        "raise_large": 0.09999999999999998
+      },
+      "strategies": {
+        "fold": 0.175,
+        "call": 0.05,
+        "raise_small": 0.175,
+        "raise_medium": 0.175,
+        "raise_large": 0.175
+      },
+      "key_parts": [
+        "weak",
+        "ks"
+      ]
+    },
+    "weak_kss": {
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "strategies": {
+        "fold": 1.125,
+        "call": 1.125
+      },
+      "key_parts": [
+        "weak",
+        "kss"
+      ]
+    },
+    "weak_s": {
+      "regrets": {
+        "fold": -0.04999999999999999,
+        "call": -0.04999999999999999,
+        "raise_small": 0.2,
+        "raise_medium": -0.04999999999999999,
+        "raise_large": -0.04999999999999999
+      },
+      "strategies": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 2.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "weak",
+        "s"
+      ]
+    },
+    "weak_ss": {
+      "regrets": {
+        "fold": 0.2,
+        "call": -5.0
+      },
+      "strategies": {
+        "fold": 2.125,
+        "call": 0.125
+      },
+      "key_parts": [
+        "weak",
+        "ss"
+      ]
+    }
+  }
+}

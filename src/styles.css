@@ -1,59 +1,87 @@
 /* Reset margins and allow full height */
-html, body, #root {
-    height: 100%;
-    margin: 0;
-    padding: 0;
-  }
-  
-  /* Fullscreen green background with centered content */
-  .website-container {
-    background-color: #065f46; /* Full green background */
-    height: 100vh;
-    width: 100vw;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-  }
-  
-  /* Logo styling */
-  .logo-container {
-    margin-bottom: 40px;
-  }
-  
-  .logo {
-    width: 500px;
-    max-width: 90vw;
-    height: auto;
-  }
-  
-  /* Poker table centered in middle of screen */
-  .poker-table {
-    width: 600px;
-    max-width: 90vw;
-    height: 400px;
-    background-color: #064e3b;
-    border: 12px solid #facc15;
-    border-radius: 999px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.7);
-  }
-  
-  /* Big red button */
-  .play-button {
-    padding: 20px 40px;
-    background-color: #dc2626;
-    color: white;
-    font-size: 22px;
-    font-weight: bold;
-    text-decoration: none;
-    border-radius: 10px;
-    transition: background-color 0.3s ease;
-  }
-  
-  .play-button:hover {
-    background-color: #b91c1c;
-  }
-  
+html,
+body,
+#root {
+	height: 100%;
+	margin: 0;
+	padding: 0;
+}
+
+/* Fullscreen green background with centered content */
+.website-container {
+	background-color: #065f46;
+	/* Full green background */
+	height: 100vh;
+	width: 100vw;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+}
+
+/* Logo styling */
+.logo-container {
+	margin-bottom: 40px;
+}
+
+.logo {
+	width: 500px;
+	max-width: 90vw;
+	height: auto;
+}
+
+/* Poker table centered in middle of screen */
+.poker-table {
+	width: 600px;
+	max-width: 90vw;
+	height: 400px;
+	background-color: #064e3b;
+	border: 12px solid #facc15;
+	border-radius: 999px;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	box-shadow: 0 8px 25px rgba(0, 0, 0, 0.7);
+}
+
+/* Big red button */
+.play-button {
+	padding: 20px 40px;
+	background-color: #dc2626;
+	color: white;
+	font-size: 22px;
+	font-weight: bold;
+	text-decoration: none;
+	border-radius: 10px;
+	transition: background-color 0.3s ease;
+}
+
+.play-button:hover {
+	background-color: #b91c1c;
+}
+
+
+.strategy-lookup-container {
+	max-width: 800px;
+	margin: 0 auto;
+	padding: 20px;
+}
+
+.lookup-button:hover {
+	background-color: #45a049 !important;
+}
+
+.play-button {
+	margin: 10px;
+	padding: 15px 30px;
+	text-decoration: none;
+	color: white;
+	background-color: #4CAF50;
+	border-radius: 10px;
+	display: inline-block;
+	transition: background-color 0.3s;
+}
+
+.play-button:hover {
+	background-color: #45a049;
+}
