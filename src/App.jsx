@@ -4,6 +4,7 @@ import viteLogo from '/vite.svg'
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Home from './pages/Home';
 import AiGame from './pages/AiGame';
+import StrategyLookup from './pages/StrategyLookup';
 import './styles.css';
 
 function App() {
@@ -12,6 +13,7 @@ function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/ai-game" element={<AiGame />} />
+        <Route path="/strategy-lookup" element={<StrategyLookup />} />
       </Routes>
     </Router>
   );

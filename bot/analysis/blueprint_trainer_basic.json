@@ -1,0 +1,8039 @@
+{
+  "total_info_sets": 404,
+  "training_summary": {
+    "info_sets_by_street": {
+      "preflop": 56,
+      "flop": 88,
+      "turn": 96,
+      "river": 88
+    },
+    "hand_bucket_distribution": {
+      "broadway": 96,
+      "weak": 136,
+      "small": 32,
+      "ace": 32,
+      "medium": 32
+    },
+    "action_pattern_distribution": {
+      "": 22,
+      "k": 19,
+      "ks": 22,
+      "kss": 19,
+      "ksm": 19,
+      "ksl": 19,
+      "km": 22,
+      "kl": 22,
+      "kms": 19,
+      "s": 19,
+      "ss": 22,
+      "sm": 22,
+      "sl": 22,
+      "m": 19,
+      "l": 19,
+      "ms": 22
+    }
+  },
+  "normalized_strategies": {
+    "broadway_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": -0.1792623397387922,
+        "bet_small": -0.10691255342040251,
+        "bet_medium": 0.19308744657959753,
+        "bet_large": 0.09308744657959744
+      },
+      "average_strategy": {
+        "check": 0.25,
+        "bet_small": 0.25,
+        "bet_medium": 0.25,
+        "bet_large": 0.25
+      },
+      "key_parts": [
+        "broadway",
+        ""
+      ]
+    },
+    "broadway_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": -0.04449492843815665,
+        "bet_small": -0.04433017840264851,
+        "bet_medium": 0.05691255342040258,
+        "bet_large": 0.03191255342040257
+      },
+      "average_strategy": {
+        "check": 0.08333333333333333,
+        "bet_small": 0.08333333333333333,
+        "bet_medium": 0.5104839850997148,
+        "bet_large": 0.32284934823361855
+      },
+      "key_parts": [
+        "broadway",
+        "k"
+      ]
+    },
+    "broadway_weak_made_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.21067387386142633,
+        "bet_small": -0.19393602061634502,
+        "bet_medium": -0.11893602061634502,
+        "bet_large": -0.0883804650607895
+      },
+      "average_strategy": {
+        "check": 0.878459802675896,
+        "bet_small": 0.02976190476190476,
+        "bet_medium": 0.048600945578423545,
+        "bet_large": 0.04317734698377572
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "flop",
+        ""
+      ]
+    },
+    "broadway_draw_flop_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.04885792741720389,
+        "bet_small": -1.5814850597141383,
+        "bet_medium": -1.708609664186214,
+        "bet_large": -1.714859664186214
+      },
+      "average_strategy": {
+        "check": 0.876047005843636,
+        "bet_small": 0.01579934101791887,
+        "bet_medium": 0.06623222153918731,
+        "bet_large": 0.041921431599257805
+      },
+      "key_parts": [
+        "broadway",
+        "draw",
+        "flop",
+        "k"
+      ]
+    },
+    "broadway_weak_made_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.05184375653482614,
+        "bet_small": -0.044564572272688036,
+        "bet_medium": -0.025814572272688036,
+        "bet_large": -0.018175683383799157
+      },
+      "average_strategy": {
+        "check": 0.9746688745463339,
+        "bet_small": 0.006183939355714,
+        "bet_medium": 0.010085285521040356,
+        "bet_large": 0.00906190057691177
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "turn",
+        ""
+      ]
+    },
+    "broadway_draw_turn_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.010794180585581835,
+        "bet_small": -2.2233780619680554,
+        "bet_medium": -2.4306515177023527,
+        "bet_large": -2.432181474508869
+      },
+      "average_strategy": {
+        "check": 0.9930402018857436,
+        "bet_small": 0.0007025606195741176,
+        "bet_medium": 0.004001780899908584,
+        "bet_large": 0.002255456594773676
+      },
+      "key_parts": [
+        "broadway",
+        "draw",
+        "turn",
+        "k"
+      ]
+    },
+    "broadway_weak_made_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.0035029268654528005,
+        "bet_small": -0.0026709963555209834,
+        "bet_medium": 0.0020165036444790172,
+        "bet_large": 0.003926225866701238
+      },
+      "average_strategy": {
+        "check": 0.36809272505595025,
+        "bet_small": 0.0013915456546686527,
+        "bet_medium": 0.21482175682681104,
+        "bet_large": 0.41569397246256995
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "river",
+        ""
+      ]
+    },
+    "broadway_weak_made_river_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.0010608196414745672,
+        "bet_small": -0.7035733115691398,
+        "bet_medium": -0.70240143656914,
+        "bet_large": -0.47404139504224624
+      },
+      "average_strategy": {
+        "check": 0.9999063158473724,
+        "bet_small": 1.678769714869196e-05,
+        "bet_medium": 6.0108758330147986e-05,
+        "bet_large": 1.678769714869196e-05
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "river",
+        "k"
+      ]
+    },
+    "broadway_weak_made_river_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.001953125,
+        "call": -0.001953125,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.9969756627937549,
+        "call": 0.0007560843015613185,
+        "raise_small": 0.0007560843015613185,
+        "raise_medium": 0.0007560843015613185,
+        "raise_large": 0.0007560843015613185
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "river",
+        "ks"
+      ]
+    },
+    "broadway_weak_made_river_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.0011718750000000002,
+        "call": 0.000390625
+      },
+      "average_strategy": {
+        "fold": 0.10915780866721178,
+        "call": 0.8908421913327882
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "river",
+        "kss"
+      ]
+    },
+    "broadway_weak_made_river_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.001953125,
+        "call": 0.000390625
+      },
+      "average_strategy": {
+        "fold": 0.08959731543624161,
+        "call": 0.9104026845637584
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "river",
+        "ksm"
+      ]
+    },
+    "broadway_weak_made_river_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.001953125,
+        "call": 0.000390625
+      },
+      "average_strategy": {
+        "fold": 0.08959731543624161,
+        "call": 0.9104026845637584
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "river",
+        "ksl"
+      ]
+    },
+    "broadway_weak_made_river_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.003125,
+        "call": -0.010861423220973783,
+        "raise_small": -0.010861423220973783,
+        "raise_medium": -0.010861423220973783,
+        "raise_large": -0.010861423220973783
+      },
+      "average_strategy": {
+        "fold": 0.9969756627937549,
+        "call": 0.0007560843015613185,
+        "raise_small": 0.0007560843015613185,
+        "raise_medium": 0.0007560843015613185,
+        "raise_large": 0.0007560843015613185
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "river",
+        "km"
+      ]
+    },
+    "broadway_weak_made_river_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.002734375,
+        "call": -0.0011718750000000002,
+        "raise_small": 0.0007812499999999998,
+        "raise_medium": -0.0011718750000000002,
+        "raise_large": -0.0011718750000000002
+      },
+      "average_strategy": {
+        "fold": 0.7755935342399342,
+        "call": 0.0007560843015613185,
+        "raise_small": 0.222138212855382,
+        "raise_medium": 0.0007560843015613185,
+        "raise_large": 0.0007560843015613185
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "river",
+        "kl"
+      ]
+    },
+    "broadway_weak_made_river_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.22914129152689358,
+        "call": 0.000390625
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "river",
+        "kms"
+      ]
+    },
+    "broadway_weak_made_river_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.001953125,
+        "call": 0.001953125,
+        "raise_small": 0.049772551296941525,
+        "raise_medium": 0.049772551296941525,
+        "raise_large": 0.049772551296941525
+      },
+      "average_strategy": {
+        "fold": 1.3430157718953601e-05,
+        "call": 0.7981625614145542,
+        "raise_small": 0.06727466947590896,
+        "raise_medium": 0.06727466947590896,
+        "raise_large": 0.06727466947590896
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "river",
+        "s"
+      ]
+    },
+    "broadway_weak_made_river_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0015625,
+        "call": -0.004687500000000001
+      },
+      "average_strategy": {
+        "fold": 0.9967820073078347,
+        "call": 0.003217992692165296
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "river",
+        "ss"
+      ]
+    },
+    "broadway_weak_made_river_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0015625,
+        "call": -0.0078125
+      },
+      "average_strategy": {
+        "fold": 0.9988989320824073,
+        "call": 0.0011010679175927067
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "river",
+        "sm"
+      ]
+    },
+    "broadway_weak_made_river_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0015625,
+        "call": -0.0078125
+      },
+      "average_strategy": {
+        "fold": 0.9988989320824073,
+        "call": 0.0011010679175927067
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "river",
+        "sl"
+      ]
+    },
+    "broadway_weak_made_river_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.5999076671563959,
+        "call": 0.003125,
+        "raise_small": -0.5501351158594543,
+        "raise_medium": -0.5501351158594543,
+        "raise_large": -0.5501351158594543
+      },
+      "average_strategy": {
+        "fold": 1.3430157718953564e-05,
+        "call": 0.999946279369124,
+        "raise_small": 1.3430157718953564e-05,
+        "raise_medium": 1.3430157718953564e-05,
+        "raise_large": 1.3430157718953564e-05
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "river",
+        "m"
+      ]
+    },
+    "broadway_weak_made_river_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -1.1639181496444897,
+        "call": 0.002989004629629629,
+        "raise_small": -0.34522254174347017,
+        "raise_medium": -1.1141455983475481,
+        "raise_large": -1.1141455983475481
+      },
+      "average_strategy": {
+        "fold": 1.3430157718953566e-05,
+        "call": 0.9999313569716586,
+        "raise_small": 2.8352555184457522e-05,
+        "raise_medium": 1.3430157718953566e-05,
+        "raise_large": 1.3430157718953566e-05
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "river",
+        "l"
+      ]
+    },
+    "broadway_weak_made_river_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0015625,
+        "call": -0.005034722222222222
+      },
+      "average_strategy": {
+        "fold": 0.9983262378734707,
+        "call": 0.0016737621265292108
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "river",
+        "ms"
+      ]
+    },
+    "broadway_weak_made_turn_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.008067129629629629,
+        "call": -0.00883101851851852,
+        "raise_small": 0.00025462962962962896,
+        "raise_medium": 0.00025462962962962896,
+        "raise_large": 0.00025462962962962896
+      },
+      "average_strategy": {
+        "fold": 0.9089724363304652,
+        "call": 0.0012689313298513524,
+        "raise_small": 0.029919544113227895,
+        "raise_medium": 0.029919544113227895,
+        "raise_large": 0.029919544113227895
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "turn",
+        "ks"
+      ]
+    },
+    "broadway_draw_turn_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.07518702746958202,
+        "call": 0.0015625
+      },
+      "average_strategy": {
+        "fold": 0.07467151530820115,
+        "call": 0.9253284846917988
+      },
+      "key_parts": [
+        "broadway",
+        "draw",
+        "turn",
+        "kss"
+      ]
+    },
+    "broadway_draw_turn_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.07837042763706131,
+        "call": 0.0015625
+      },
+      "average_strategy": {
+        "fold": 0.050472772919590854,
+        "call": 0.9495272270804092
+      },
+      "key_parts": [
+        "broadway",
+        "draw",
+        "turn",
+        "ksm"
+      ]
+    },
+    "broadway_draw_turn_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.07837042763706131,
+        "call": 0.0015625
+      },
+      "average_strategy": {
+        "fold": 0.050472772919590854,
+        "call": 0.9495272270804092
+      },
+      "key_parts": [
+        "broadway",
+        "draw",
+        "turn",
+        "ksl"
+      ]
+    },
+    "broadway_weak_made_turn_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.012467456806515977,
+        "call": -0.07666173044764912,
+        "raise_small": -0.07624044474027629,
+        "raise_medium": -0.07653244557767276,
+        "raise_large": -0.07653244557767276
+      },
+      "average_strategy": {
+        "fold": 0.9949242746805949,
+        "call": 0.0012689313298513527,
+        "raise_small": 0.0012689313298513527,
+        "raise_medium": 0.0012689313298513527,
+        "raise_large": 0.0012689313298513527
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "turn",
+        "km"
+      ]
+    },
+    "broadway_weak_made_turn_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.015382570670132911,
+        "call": -0.03477895035947105,
+        "raise_small": -0.026966450359471053,
+        "raise_medium": -0.03477895035947105,
+        "raise_large": -0.03477895035947105
+      },
+      "average_strategy": {
+        "fold": 0.9949242746805949,
+        "call": 0.0012689313298513527,
+        "raise_small": 0.0012689313298513527,
+        "raise_medium": 0.0012689313298513527,
+        "raise_large": 0.0012689313298513527
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "turn",
+        "kl"
+      ]
+    },
+    "broadway_draw_turn_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.0015625,
+        "call": 0.0015625
+      },
+      "average_strategy": {
+        "fold": 0.1557468720972252,
+        "call": 0.8442531279027748
+      },
+      "key_parts": [
+        "broadway",
+        "draw",
+        "turn",
+        "kms"
+      ]
+    },
+    "broadway_draw_turn_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.0078125,
+        "call": 0.0078125,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.0005620484956592941,
+        "call": 0.9977518060173629,
+        "raise_small": 0.0005620484956592941,
+        "raise_medium": 0.0005620484956592941,
+        "raise_large": 0.0005620484956592941
+      },
+      "key_parts": [
+        "broadway",
+        "draw",
+        "turn",
+        "s"
+      ]
+    },
+    "broadway_weak_made_turn_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.00625,
+        "call": -0.018750000000000003
+      },
+      "average_strategy": {
+        "fold": 0.809949785482722,
+        "call": 0.19005021451727797
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "turn",
+        "ss"
+      ]
+    },
+    "broadway_weak_made_turn_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.00625,
+        "call": -0.03125
+      },
+      "average_strategy": {
+        "fold": 0.8779379272542545,
+        "call": 0.12206207274574549
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "turn",
+        "sm"
+      ]
+    },
+    "broadway_weak_made_turn_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.00625,
+        "call": -0.03125
+      },
+      "average_strategy": {
+        "fold": 0.8779379272542545,
+        "call": 0.12206207274574549
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "turn",
+        "sl"
+      ]
+    },
+    "broadway_draw_turn_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.012982556862503544,
+        "call": 0.0125,
+        "raise_small": -0.012982556862503544,
+        "raise_medium": -0.012982556862503544,
+        "raise_large": -0.012982556862503544
+      },
+      "average_strategy": {
+        "fold": 0.0005620484956592941,
+        "call": 0.9977518060173629,
+        "raise_small": 0.0005620484956592941,
+        "raise_medium": 0.0005620484956592941,
+        "raise_large": 0.0005620484956592941
+      },
+      "key_parts": [
+        "broadway",
+        "draw",
+        "turn",
+        "m"
+      ]
+    },
+    "broadway_draw_turn_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.011023572316859532,
+        "call": 0.011873191116535769,
+        "raise_small": -0.003211072316859532,
+        "raise_medium": -0.011023572316859532,
+        "raise_large": -0.011023572316859532
+      },
+      "average_strategy": {
+        "fold": 0.0005620484956592941,
+        "call": 0.9971273076888526,
+        "raise_small": 0.0011865468241696205,
+        "raise_medium": 0.0005620484956592941,
+        "raise_large": 0.0005620484956592941
+      },
+      "key_parts": [
+        "broadway",
+        "draw",
+        "turn",
+        "l"
+      ]
+    },
+    "broadway_weak_made_turn_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.00625,
+        "call": -0.020138888888888887
+      },
+      "average_strategy": {
+        "fold": 0.658794570563395,
+        "call": 0.3412054294366051
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "turn",
+        "ms"
+      ]
+    },
+    "broadway_weak_made_flop_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.03256885159893476,
+        "call": -0.05347621022602631,
+        "raise_small": 0.0021289446169054354,
+        "raise_medium": -0.0033863312295547513,
+        "raise_large": -0.01754775464334745
+      },
+      "average_strategy": {
+        "fold": 0.8906600711425209,
+        "call": 0.006775928658601421,
+        "raise_small": 0.07975583492164742,
+        "raise_medium": 0.01603223661862882,
+        "raise_large": 0.006775928658601421
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "flop",
+        "ks"
+      ]
+    },
+    "broadway_draw_flop_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.14944547966374502,
+        "call": 0.0023146601479494227
+      },
+      "average_strategy": {
+        "fold": 0.0739710542612709,
+        "call": 0.9260289457387291
+      },
+      "key_parts": [
+        "broadway",
+        "draw",
+        "flop",
+        "kss"
+      ]
+    },
+    "broadway_draw_flop_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.04549343369179476,
+        "call": 0.00341771531724146
+      },
+      "average_strategy": {
+        "fold": 0.04895372803495122,
+        "call": 0.9510462719650488
+      },
+      "key_parts": [
+        "broadway",
+        "draw",
+        "flop",
+        "ksm"
+      ]
+    },
+    "broadway_draw_flop_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.03125,
+        "call": 0.00625
+      },
+      "average_strategy": {
+        "fold": 0.04895372803495122,
+        "call": 0.9510462719650488
+      },
+      "key_parts": [
+        "broadway",
+        "draw",
+        "flop",
+        "ksl"
+      ]
+    },
+    "broadway_weak_made_flop_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.05,
+        "call": -0.29109594092681484,
+        "raise_small": -0.29109594092681484,
+        "raise_medium": -0.29109594092681484,
+        "raise_large": -0.29109594092681484
+      },
+      "average_strategy": {
+        "fold": 0.9728962853655944,
+        "call": 0.006775928658601422,
+        "raise_small": 0.006775928658601422,
+        "raise_medium": 0.006775928658601422,
+        "raise_large": 0.006775928658601422
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "flop",
+        "km"
+      ]
+    },
+    "broadway_weak_made_flop_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.06347716784453235,
+        "call": -0.15241820489164545,
+        "raise_small": -0.12116820489164545,
+        "raise_medium": -0.15241820489164545,
+        "raise_large": -0.15241820489164545
+      },
+      "average_strategy": {
+        "fold": 0.9728962853655944,
+        "call": 0.006775928658601422,
+        "raise_small": 0.006775928658601422,
+        "raise_medium": 0.006775928658601422,
+        "raise_large": 0.006775928658601422
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "flop",
+        "kl"
+      ]
+    },
+    "broadway_draw_flop_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.00625,
+        "call": 0.00625
+      },
+      "average_strategy": {
+        "fold": 0.1447460388055061,
+        "call": 0.8552539611944939
+      },
+      "key_parts": [
+        "broadway",
+        "draw",
+        "flop",
+        "kms"
+      ]
+    },
+    "broadway_draw_flop_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.03125,
+        "call": 0.03125,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.009708737864077667,
+        "call": 0.9611650485436894,
+        "raise_small": 0.009708737864077667,
+        "raise_medium": 0.009708737864077667,
+        "raise_large": 0.009708737864077667
+      },
+      "key_parts": [
+        "broadway",
+        "draw",
+        "flop",
+        "s"
+      ]
+    },
+    "broadway_weak_made_flop_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.025,
+        "call": -0.07500000000000001
+      },
+      "average_strategy": {
+        "fold": 0.8101019511627678,
+        "call": 0.18989804883723216
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "flop",
+        "ss"
+      ]
+    },
+    "broadway_weak_made_flop_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.025,
+        "call": -0.125
+      },
+      "average_strategy": {
+        "fold": 0.877563532818116,
+        "call": 0.12243646718188411
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "flop",
+        "sm"
+      ]
+    },
+    "broadway_weak_made_flop_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.025,
+        "call": -0.125
+      },
+      "average_strategy": {
+        "fold": 0.877563532818116,
+        "call": 0.12243646718188411
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "flop",
+        "sl"
+      ]
+    },
+    "broadway_draw_flop_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.05206198571468945,
+        "call": 0.05,
+        "raise_small": -0.05206198571468945,
+        "raise_medium": -0.05206198571468945,
+        "raise_large": -0.05206198571468945
+      },
+      "average_strategy": {
+        "fold": 0.009708737864077667,
+        "call": 0.9611650485436894,
+        "raise_small": 0.009708737864077667,
+        "raise_medium": 0.009708737864077667,
+        "raise_large": 0.009708737864077667
+      },
+      "key_parts": [
+        "broadway",
+        "draw",
+        "flop",
+        "m"
+      ]
+    },
+    "broadway_draw_flop_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.04329094070167599,
+        "call": 0.04738148796425303,
+        "raise_small": -0.01204094070167599,
+        "raise_medium": -0.04329094070167599,
+        "raise_large": -0.04329094070167599
+      },
+      "average_strategy": {
+        "fold": 0.009708737864077667,
+        "call": 0.9503775620280477,
+        "raise_small": 0.020496224379719517,
+        "raise_medium": 0.009708737864077667,
+        "raise_large": 0.009708737864077667
+      },
+      "key_parts": [
+        "broadway",
+        "draw",
+        "flop",
+        "l"
+      ]
+    },
+    "broadway_weak_made_flop_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.025,
+        "call": -0.08055555555555555
+      },
+      "average_strategy": {
+        "fold": 0.6553527851874726,
+        "call": 0.34464721481252736
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "flop",
+        "ms"
+      ]
+    },
+    "broadway_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.09875726817694891,
+        "call": -0.16940017164431626,
+        "raise_small": 0.05442123222540274,
+        "raise_medium": 0.036900751385115726,
+        "raise_large": -0.02067908014315112
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "broadway",
+        "ks"
+      ]
+    },
+    "broadway_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.05886720719030924,
+        "call": 0.008867207190309234
+      },
+      "average_strategy": {
+        "fold": 0.07016748311857211,
+        "call": 0.9298325168814279
+      },
+      "key_parts": [
+        "broadway",
+        "kss"
+      ]
+    },
+    "broadway_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.11237130335836665,
+        "call": 0.012371303358366632
+      },
+      "average_strategy": {
+        "fold": 0.045454545454545456,
+        "call": 0.9545454545454546
+      },
+      "key_parts": [
+        "broadway",
+        "ksm"
+      ]
+    },
+    "broadway_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.12388726966402001,
+        "call": 0.02388726966402001
+      },
+      "average_strategy": {
+        "fold": 0.045454545454545456,
+        "call": 0.9545454545454546
+      },
+      "key_parts": [
+        "broadway",
+        "ksl"
+      ]
+    },
+    "broadway_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.2,
+        "call": -0.05,
+        "raise_small": -0.05,
+        "raise_medium": -0.05,
+        "raise_large": -0.05
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "broadway",
+        "km"
+      ]
+    },
+    "broadway_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.175,
+        "call": -0.07500000000000001,
+        "raise_small": 0.04999999999999999,
+        "raise_medium": -0.07500000000000001,
+        "raise_large": -0.07500000000000001
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "broadway",
+        "kl"
+      ]
+    },
+    "broadway_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.025,
+        "call": 0.025
+      },
+      "average_strategy": {
+        "fold": 0.12905916302645298,
+        "call": 0.8709408369735471
+      },
+      "key_parts": [
+        "broadway",
+        "kms"
+      ]
+    },
+    "broadway_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.40618562916758244,
+        "call": -0.11852670931429854,
+        "raise_small": 0.4149877686609523,
+        "raise_medium": 0.3471695924882322,
+        "raise_large": 0.32916515484367737
+      },
+      "average_strategy": {
+        "fold": 0.06666666666666667,
+        "call": 0.437037037037037,
+        "raise_small": 0.16543209876543208,
+        "raise_medium": 0.16543209876543208,
+        "raise_large": 0.16543209876543208
+      },
+      "key_parts": [
+        "broadway",
+        "s"
+      ]
+    },
+    "broadway_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.1,
+        "call": -0.30000000000000004
+      },
+      "average_strategy": {
+        "fold": 0.75,
+        "call": 0.25
+      },
+      "key_parts": [
+        "broadway",
+        "ss"
+      ]
+    },
+    "broadway_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.1,
+        "call": -0.5
+      },
+      "average_strategy": {
+        "fold": 0.8333333333333334,
+        "call": 0.16666666666666666
+      },
+      "key_parts": [
+        "broadway",
+        "sm"
+      ]
+    },
+    "broadway_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.1,
+        "call": -0.5
+      },
+      "average_strategy": {
+        "fold": 0.8333333333333334,
+        "call": 0.16666666666666666
+      },
+      "key_parts": [
+        "broadway",
+        "sl"
+      ]
+    },
+    "broadway_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.14523809523809517,
+        "call": 0.6047619047619048,
+        "raise_small": 0.18809523809523815,
+        "raise_medium": 0.18809523809523815,
+        "raise_large": 0.18809523809523815
+      },
+      "average_strategy": {
+        "fold": 0.06666666666666667,
+        "call": 0.46349206349206346,
+        "raise_small": 0.15661375661375662,
+        "raise_medium": 0.15661375661375662,
+        "raise_large": 0.15661375661375662
+      },
+      "key_parts": [
+        "broadway",
+        "m"
+      ]
+    },
+    "broadway_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.14907407407407408,
+        "call": 0.10092592592592592,
+        "raise_small": 0.30925925925925923,
+        "raise_medium": 0.18425925925925923,
+        "raise_large": 0.18425925925925923
+      },
+      "average_strategy": {
+        "fold": 0.06666666666666667,
+        "call": 0.3691284625886291,
+        "raise_small": 0.27312282556039985,
+        "raise_medium": 0.1455410225921522,
+        "raise_large": 0.1455410225921522
+      },
+      "key_parts": [
+        "broadway",
+        "l"
+      ]
+    },
+    "broadway_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.1,
+        "call": -0.1
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "broadway",
+        "ms"
+      ]
+    },
+    "weak_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": -0.5733871097432736,
+        "bet_small": 0.19347914504865105,
+        "bet_medium": 0.4443212006998666,
+        "bet_large": 0.02666916855564061
+      },
+      "average_strategy": {
+        "check": 0.03571428571428571,
+        "bet_small": 0.19934804097933223,
+        "bet_medium": 0.5243964951283754,
+        "bet_large": 0.24054117817800666
+      },
+      "key_parts": [
+        "weak",
+        ""
+      ]
+    },
+    "weak_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": -0.0021792652403582885,
+        "bet_small": 0.0229715573383409,
+        "bet_medium": 0.11487969507790927,
+        "bet_large": 0.0759544506718552
+      },
+      "average_strategy": {
+        "check": 0.07236693645294791,
+        "bet_small": 0.09538730415797518,
+        "bet_medium": 0.5073431126636071,
+        "bet_large": 0.3249026467254698
+      },
+      "key_parts": [
+        "weak",
+        "k"
+      ]
+    },
+    "weak_bluff_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.3908354294412261,
+        "bet_small": -0.1339372956841321,
+        "bet_medium": 0.5108570707860648,
+        "bet_large": 0.3843354908602407
+      },
+      "average_strategy": {
+        "check": 0.6753620553592004,
+        "bet_small": 0.05752843739556155,
+        "bet_medium": 0.16119435929026216,
+        "bet_large": 0.10591514795497599
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        ""
+      ]
+    },
+    "weak_bluff_flop_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.1069978260814338,
+        "bet_small": -3.448665072154019,
+        "bet_medium": -4.431675699941876,
+        "bet_large": -4.4441756999418764
+      },
+      "average_strategy": {
+        "check": 0.9762163032183816,
+        "bet_small": 0.002441654693720806,
+        "bet_medium": 0.01317037086835097,
+        "bet_large": 0.008171671219546626
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "k"
+      ]
+    },
+    "weak_bluff_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.114453125,
+        "bet_small": -0.1968429326249368,
+        "bet_medium": -0.03883486388721338,
+        "bet_large": -0.09366554728469828
+      },
+      "average_strategy": {
+        "check": 0.9924349867061587,
+        "bet_small": 0.0025216710979471904,
+        "bet_medium": 0.0025216710979471904,
+        "bet_large": 0.0025216710979471904
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        ""
+      ]
+    },
+    "weak_bluff_turn_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.024786392405063293,
+        "bet_small": -12.373995387012437,
+        "bet_medium": -12.442600119491003,
+        "bet_large": -12.453936416733939
+      },
+      "average_strategy": {
+        "check": 0.9985519259420154,
+        "bet_small": 0.00015032569064492578,
+        "bet_medium": 0.000848293580879847,
+        "bet_large": 0.00044945478645989207
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "k"
+      ]
+    },
+    "weak_bluff_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.04564571712532717,
+        "bet_small": 0.058145717125327165,
+        "bet_medium": -31.348169460340603,
+        "bet_large": 0.08799051573160968
+      },
+      "average_strategy": {
+        "check": 0.014988160877615831,
+        "bet_small": 0.31113237335634236,
+        "bet_medium": 0.34395663639965396,
+        "bet_large": 0.3299228293663877
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        ""
+      ]
+    },
+    "weak_weak_made_river_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.4949888831687027,
+        "bet_small": -0.5036048668312973,
+        "bet_medium": -0.5012611168312973,
+        "bet_large": -0.5020423668312972
+      },
+      "average_strategy": {
+        "check": 0.5548648050257176,
+        "bet_small": 0.053419024242031134,
+        "bet_medium": 0.2243458975909425,
+        "bet_large": 0.16737027314130884
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "k"
+      ]
+    },
+    "weak_bluff_river_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.020250629163769504,
+        "call": -37.31308270416954,
+        "raise_small": -18.650322287502885,
+        "raise_medium": -18.650322287502885,
+        "raise_large": -18.650322287502885
+      },
+      "average_strategy": {
+        "fold": 0.9897456973904304,
+        "call": 0.0025635756523923682,
+        "raise_small": 0.0025635756523923682,
+        "raise_medium": 0.0025635756523923682,
+        "raise_large": 0.0025635756523923682
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "ks"
+      ]
+    },
+    "weak_weak_made_river_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.0023437500000000003,
+        "call": 0.00078125
+      },
+      "average_strategy": {
+        "fold": 1.4789976878421515e-05,
+        "call": 0.9999852100231216
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "kss"
+      ]
+    },
+    "weak_weak_made_river_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.00390625,
+        "call": 0.00078125
+      },
+      "average_strategy": {
+        "fold": 9.228964184204642e-06,
+        "call": 0.9999907710358158
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "ksm"
+      ]
+    },
+    "weak_weak_made_river_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.00390625,
+        "call": 0.00078125
+      },
+      "average_strategy": {
+        "fold": 9.228964184204642e-06,
+        "call": 0.9999907710358158
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "ksl"
+      ]
+    },
+    "weak_bluff_river_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.022594379163769506,
+        "call": -37.31073895416954,
+        "raise_small": -18.651884787502883,
+        "raise_medium": -18.651884787502883,
+        "raise_large": -18.651884787502883
+      },
+      "average_strategy": {
+        "fold": 0.9897456973904304,
+        "call": 0.0025635756523923682,
+        "raise_small": 0.0025635756523923682,
+        "raise_medium": 0.0025635756523923682,
+        "raise_large": 0.0025635756523923682
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "km"
+      ]
+    },
+    "weak_bluff_river_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.021813129163769505,
+        "call": -37.31152020416954,
+        "raise_small": -18.648759787502886,
+        "raise_medium": -18.652666037502886,
+        "raise_large": -18.652666037502886
+      },
+      "average_strategy": {
+        "fold": 0.9897456973904304,
+        "call": 0.0025635756523923682,
+        "raise_small": 0.0025635756523923682,
+        "raise_medium": 0.0025635756523923682,
+        "raise_large": 0.0025635756523923682
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "kl"
+      ]
+    },
+    "weak_weak_made_river_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.00078125,
+        "call": 0.00078125
+      },
+      "average_strategy": {
+        "fold": 2.4545199660861493e-05,
+        "call": 0.9999754548003391
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "kms"
+      ]
+    },
+    "weak_weak_made_river_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -11.879627895412654,
+        "call": 0.00625,
+        "raise_small": -9.186657530796992,
+        "raise_medium": -9.186657530796992,
+        "raise_large": -9.186657530796992
+      },
+      "average_strategy": {
+        "fold": 6.573018834474447e-06,
+        "call": 0.999973707924662,
+        "raise_small": 6.573018834474447e-06,
+        "raise_medium": 6.573018834474447e-06,
+        "raise_large": 6.573018834474447e-06
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "s"
+      ]
+    },
+    "weak_bluff_river_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.017906879163769505,
+        "call": -64.16208118251724
+      },
+      "average_strategy": {
+        "fold": 0.5538248183275539,
+        "call": 0.4461751816724461
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "ss"
+      ]
+    },
+    "weak_bluff_river_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.017906879163769505,
+        "call": -95.2731922936296
+      },
+      "average_strategy": {
+        "fold": 0.5549021143747046,
+        "call": 0.4450978856252953
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "sm"
+      ]
+    },
+    "weak_bluff_river_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.017906879163769505,
+        "call": -95.2731922936296
+      },
+      "average_strategy": {
+        "fold": 0.5549021143747046,
+        "call": 0.4450978856252953
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "sl"
+      ]
+    },
+    "weak_weak_made_river_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -11.879627895412654,
+        "call": 0.00625,
+        "raise_small": -9.186657530796992,
+        "raise_medium": -9.186657530796992,
+        "raise_large": -9.186657530796992
+      },
+      "average_strategy": {
+        "fold": 6.573018834474447e-06,
+        "call": 0.999973707924662,
+        "raise_small": 6.573018834474447e-06,
+        "raise_medium": 6.573018834474447e-06,
+        "raise_large": 6.573018834474447e-06
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "m"
+      ]
+    },
+    "weak_weak_made_river_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -11.879627895412654,
+        "call": 0.00625,
+        "raise_small": -9.186657530796992,
+        "raise_medium": -9.186657530796992,
+        "raise_large": -9.186657530796992
+      },
+      "average_strategy": {
+        "fold": 6.573018834474447e-06,
+        "call": 0.999973707924662,
+        "raise_small": 6.573018834474447e-06,
+        "raise_medium": 6.573018834474447e-06,
+        "raise_large": 6.573018834474447e-06
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "l"
+      ]
+    },
+    "weak_bluff_river_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.023875838885026007,
+        "call": -49.75390193889253
+      },
+      "average_strategy": {
+        "fold": 0.5570411745970522,
+        "call": 0.44295882540294773
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "ms"
+      ]
+    },
+    "weak_bluff_turn_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.009375,
+        "call": 0.009375,
+        "raise_small": -0.00625,
+        "raise_medium": -0.00625,
+        "raise_large": -0.00625
+      },
+      "average_strategy": {
+        "fold": 0.49941885547942655,
+        "call": 0.49941885547942655,
+        "raise_small": 0.0003874296803822187,
+        "raise_medium": 0.0003874296803822187,
+        "raise_large": 0.0003874296803822187
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "ks"
+      ]
+    },
+    "weak_bluff_turn_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.11394972239761322,
+        "call": 0.003125
+      },
+      "average_strategy": {
+        "fold": 0.07526676829268292,
+        "call": 0.924733231707317
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "kss"
+      ]
+    },
+    "weak_bluff_turn_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.17259366455021438,
+        "call": 0.003125
+      },
+      "average_strategy": {
+        "fold": 0.05190538764783179,
+        "call": 0.9480946123521682
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "ksm"
+      ]
+    },
+    "weak_bluff_turn_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.17262908646010716,
+        "call": 0.003125
+      },
+      "average_strategy": {
+        "fold": 0.05190538764783179,
+        "call": 0.9480946123521682
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "ksl"
+      ]
+    },
+    "weak_bluff_turn_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.01875,
+        "call": 0.01875,
+        "raise_small": -0.15759493670886077,
+        "raise_medium": -0.15759493670886077,
+        "raise_large": -0.15759493670886077
+      },
+      "average_strategy": {
+        "fold": 0.49941885547942655,
+        "call": 0.49941885547942655,
+        "raise_small": 0.0003874296803822187,
+        "raise_medium": 0.0003874296803822187,
+        "raise_large": 0.0003874296803822187
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "km"
+      ]
+    },
+    "weak_bluff_turn_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.015625,
+        "call": 0.015625,
+        "raise_small": -0.06218354430379748,
+        "raise_medium": -0.07780854430379748,
+        "raise_large": -0.07780854430379748
+      },
+      "average_strategy": {
+        "fold": 0.49941885547942655,
+        "call": 0.49941885547942655,
+        "raise_small": 0.0003874296803822187,
+        "raise_medium": 0.0003874296803822187,
+        "raise_large": 0.0003874296803822187
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "kl"
+      ]
+    },
+    "weak_bluff_turn_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.05548249860190563,
+        "call": 0.003125
+      },
+      "average_strategy": {
+        "fold": 0.1672311600338696,
+        "call": 0.8327688399661304
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "kms"
+      ]
+    },
+    "weak_bluff_turn_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.29449809981124303,
+        "call": 0.008455152847168475,
+        "raise_small": 0.01677533768875776,
+        "raise_medium": 0.01677533768875776,
+        "raise_large": 0.01677533768875776
+      },
+      "average_strategy": {
+        "fold": 0.00012026055251594015,
+        "call": 0.42319789781057693,
+        "raise_small": 0.19222728054563573,
+        "raise_medium": 0.19222728054563573,
+        "raise_large": 0.19222728054563573
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "s"
+      ]
+    },
+    "weak_bluff_turn_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.03066226471584714,
+        "call": -26.740720566400242
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "ss"
+      ]
+    },
+    "weak_bluff_turn_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.03066226471584714,
+        "call": -31.61415773604224
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "sm"
+      ]
+    },
+    "weak_bluff_turn_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.03066226471584714,
+        "call": -31.61415773604224
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "sl"
+      ]
+    },
+    "weak_bluff_turn_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.28038503328662306,
+        "call": 0.021182675046710953,
+        "raise_small": 0.00970784865782221,
+        "raise_medium": 0.00970784865782221,
+        "raise_large": 0.00970784865782221
+      },
+      "average_strategy": {
+        "fold": 0.00012026055251594031,
+        "call": 0.5836575828842675,
+        "raise_small": 0.13874071885440556,
+        "raise_medium": 0.13874071885440556,
+        "raise_large": 0.13874071885440556
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "m"
+      ]
+    },
+    "weak_bluff_turn_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.2857566050389748,
+        "call": 0.01581110329435921,
+        "raise_small": 0.02551683246102587,
+        "raise_medium": 0.004336276905470291,
+        "raise_large": 0.004336276905470291
+      },
+      "average_strategy": {
+        "fold": 0.00012026055251594081,
+        "call": 0.5234666389968782,
+        "raise_small": 0.31855095046998266,
+        "raise_medium": 0.07893107499031166,
+        "raise_large": 0.07893107499031166
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "l"
+      ]
+    },
+    "weak_bluff_turn_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0548306833974849,
+        "call": -28.523741850816542
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "ms"
+      ]
+    },
+    "weak_bluff_flop_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.3157388534618527,
+        "call": -3.131159926269577,
+        "raise_small": -0.1414907915870758,
+        "raise_medium": -0.10833372867912822,
+        "raise_large": -0.3086916443996182
+      },
+      "average_strategy": {
+        "fold": 0.5322762162621583,
+        "call": 0.22017307006062306,
+        "raise_small": 0.18278227660758808,
+        "raise_medium": 0.042816684300743625,
+        "raise_large": 0.02195175276888691
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "ks"
+      ]
+    },
+    "weak_bluff_flop_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -1.1002163239903895,
+        "call": 0.002109375000000001
+      },
+      "average_strategy": {
+        "fold": 0.07819788290805198,
+        "call": 0.921802117091948
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "kss"
+      ]
+    },
+    "weak_bluff_flop_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.11591930379746837,
+        "call": 0.008544303797468355
+      },
+      "average_strategy": {
+        "fold": 0.05133042848931451,
+        "call": 0.9486695715106855
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "ksm"
+      ]
+    },
+    "weak_bluff_flop_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.11987500000000001,
+        "call": 0.0125
+      },
+      "average_strategy": {
+        "fold": 0.05133042848931451,
+        "call": 0.9486695715106855
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "ksl"
+      ]
+    },
+    "weak_bluff_flop_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.23197786452414515,
+        "call": -2.7651749132536336,
+        "raise_small": -0.6158049330270022,
+        "raise_medium": -0.5591656372712636,
+        "raise_large": -0.555586084473904
+      },
+      "average_strategy": {
+        "fold": 0.7120893776370638,
+        "call": 0.27933521344626927,
+        "raise_small": 0.0028584696388889766,
+        "raise_medium": 0.0028584696388889766,
+        "raise_large": 0.0028584696388889766
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "km"
+      ]
+    },
+    "weak_bluff_flop_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.21947786452414517,
+        "call": -2.791928188359119,
+        "raise_small": -0.23779836651588626,
+        "raise_medium": -0.30245992515469294,
+        "raise_large": -0.3009871854160833
+      },
+      "average_strategy": {
+        "fold": 0.7120893776370638,
+        "call": 0.27933521344626927,
+        "raise_small": 0.0028584696388889766,
+        "raise_medium": 0.0028584696388889766,
+        "raise_large": 0.0028584696388889766
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "kl"
+      ]
+    },
+    "weak_bluff_flop_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.03162500000000001,
+        "call": 0.0125
+      },
+      "average_strategy": {
+        "fold": 0.14939751172810106,
+        "call": 0.8506024882718989
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "kms"
+      ]
+    },
+    "weak_bluff_flop_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.18602400721802623,
+        "call": 0.07256857255518051,
+        "raise_small": 0.060525370845287,
+        "raise_medium": 0.060525370845287,
+        "raise_large": 0.060525370845287
+      },
+      "average_strategy": {
+        "fold": 0.001953323754976643,
+        "call": 0.5565811360703455,
+        "raise_small": 0.1471551800582259,
+        "raise_medium": 0.1471551800582259,
+        "raise_large": 0.1471551800582259
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "s"
+      ]
+    },
+    "weak_bluff_flop_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.12558229161931614,
+        "call": -8.307552640713547
+      },
+      "average_strategy": {
+        "fold": 0.9424643005432466,
+        "call": 0.057535699456753346
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "ss"
+      ]
+    },
+    "weak_bluff_flop_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.12558229161931614,
+        "call": -10.831265030209028
+      },
+      "average_strategy": {
+        "fold": 0.9418535203499689,
+        "call": 0.05814647965003109
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "sm"
+      ]
+    },
+    "weak_bluff_flop_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.12558229161931614,
+        "call": -10.837284776207188
+      },
+      "average_strategy": {
+        "fold": 0.9418535203499689,
+        "call": 0.05814647965003109
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "sl"
+      ]
+    },
+    "weak_bluff_flop_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.15859257977320673,
+        "call": 0.1,
+        "raise_small": -0.00225159131770266,
+        "raise_medium": -0.00291850751547211,
+        "raise_large": -0.0034400258863530667
+      },
+      "average_strategy": {
+        "fold": 0.001953323754976645,
+        "call": 0.9921867049800933,
+        "raise_small": 0.001953323754976645,
+        "raise_medium": 0.001953323754976645,
+        "raise_large": 0.001953323754976645
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "m"
+      ]
+    },
+    "weak_bluff_flop_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.2050790495109562,
+        "call": 0.05780186609426025,
+        "raise_small": 0.0929417838223773,
+        "raise_medium": -0.09455821617762271,
+        "raise_large": -0.09455821617762271
+      },
+      "average_strategy": {
+        "fold": 0.0019533237549766444,
+        "call": 0.6744597159269884,
+        "raise_small": 0.3196803128080816,
+        "raise_medium": 0.0019533237549766444,
+        "raise_large": 0.0019533237549766444
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "l"
+      ]
+    },
+    "weak_bluff_flop_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.12558229161931614,
+        "call": -11.02391297200696
+      },
+      "average_strategy": {
+        "fold": 0.9405922130241197,
+        "call": 0.05940778697588032
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "ms"
+      ]
+    },
+    "weak_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.172280139716872,
+        "call": -0.9338628891628065,
+        "raise_small": 0.13447492085838067,
+        "raise_medium": 0.011839703692035566,
+        "raise_large": -0.08075499759144993
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "weak",
+        "ks"
+      ]
+    },
+    "weak_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.15574046569197503,
+        "call": 0.006951369659810131
+      },
+      "average_strategy": {
+        "fold": 0.03456492778843834,
+        "call": 0.9654350722115617
+      },
+      "key_parts": [
+        "weak",
+        "kss"
+      ]
+    },
+    "weak_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.2872827783084398,
+        "call": 0.03147972619978942
+      },
+      "average_strategy": {
+        "fold": 0.022458592898437164,
+        "call": 0.9775414071015628
+      },
+      "key_parts": [
+        "weak",
+        "ksm"
+      ]
+    },
+    "weak_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.303761074168544,
+        "call": 0.05
+      },
+      "average_strategy": {
+        "fold": 0.022458592898437164,
+        "call": 0.9775414071015628
+      },
+      "key_parts": [
+        "weak",
+        "ksl"
+      ]
+    },
+    "weak_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.8529467942304149,
+        "call": -4.7961060053655515,
+        "raise_small": 0.34232047297540075,
+        "raise_medium": 0.34236012045515435,
+        "raise_large": 0.3423993043530761
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "weak",
+        "km"
+      ]
+    },
+    "weak_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.6127546849663597,
+        "call": -3.4456407448500608,
+        "raise_small": 0.35557235785792773,
+        "raise_medium": 0.10558980792996887,
+        "raise_large": 0.10560422693708511
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "weak",
+        "kl"
+      ]
+    },
+    "weak_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.050677276500681115,
+        "call": 0.05
+      },
+      "average_strategy": {
+        "fold": 0.06412177168546336,
+        "call": 0.9358782283145366
+      },
+      "key_parts": [
+        "weak",
+        "kms"
+      ]
+    },
+    "weak_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.23235294117647057,
+        "call": 0.26764705882352946,
+        "raise_small": 0.26764705882352946,
+        "raise_medium": 0.26764705882352946,
+        "raise_large": 0.26764705882352946
+      },
+      "average_strategy": {
+        "fold": 0.03333333333333333,
+        "call": 0.40343137254901956,
+        "raise_small": 0.18774509803921569,
+        "raise_medium": 0.18774509803921569,
+        "raise_large": 0.18774509803921569
+      },
+      "key_parts": [
+        "weak",
+        "s"
+      ]
+    },
+    "weak_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.21501633451567492,
+        "call": -2.996306441923229
+      },
+      "average_strategy": {
+        "fold": 0.8355115470883467,
+        "call": 0.16448845291165332
+      },
+      "key_parts": [
+        "weak",
+        "ss"
+      ]
+    },
+    "weak_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.17482778567258153,
+        "call": -3.912896688813091
+      },
+      "average_strategy": {
+        "fold": 0.8333333333333334,
+        "call": 0.16666666666666666
+      },
+      "key_parts": [
+        "weak",
+        "sm"
+      ]
+    },
+    "weak_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.1641584892906231,
+        "call": -4.12165819036519
+      },
+      "average_strategy": {
+        "fold": 0.8333333333333334,
+        "call": 0.16666666666666666
+      },
+      "key_parts": [
+        "weak",
+        "sl"
+      ]
+    },
+    "weak_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.12778777385964296,
+        "call": 0.43033752771800443,
+        "raise_small": 0.12221222614035702,
+        "raise_medium": 0.12221222614035702,
+        "raise_large": 0.12221222614035702
+      },
+      "average_strategy": {
+        "fold": 0.03333333333333333,
+        "call": 0.5267247255075167,
+        "raise_small": 0.14664731371971665,
+        "raise_medium": 0.14664731371971665,
+        "raise_large": 0.14664731371971665
+      },
+      "key_parts": [
+        "weak",
+        "m"
+      ]
+    },
+    "weak_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.14951960265297998,
+        "call": 0.36449869533516166,
+        "raise_small": 0.35048039734702,
+        "raise_medium": 0.10048039734702001,
+        "raise_large": 0.10048039734702001
+      },
+      "average_strategy": {
+        "fold": 0.03333333333333333,
+        "call": 0.47530657744022936,
+        "raise_small": 0.25451869521528087,
+        "raise_medium": 0.11842069700557824,
+        "raise_large": 0.11842069700557824
+      },
+      "key_parts": [
+        "weak",
+        "l"
+      ]
+    },
+    "weak_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.22222222222222218,
+        "call": -2.535301324322644
+      },
+      "average_strategy": {
+        "fold": 0.8267794853992432,
+        "call": 0.1732205146007569
+      },
+      "key_parts": [
+        "weak",
+        "ms"
+      ]
+    },
+    "weak_weak_made_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.08653968502455613,
+        "bet_small": 0.21313514492073068,
+        "bet_medium": 0.11157753648013219,
+        "bet_large": -0.4932444196624325
+      },
+      "average_strategy": {
+        "check": 0.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.7841776881910669,
+        "bet_large": 0.21582231180893308
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        ""
+      ]
+    },
+    "broadway_weak_made_flop_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.15697854485746887,
+        "bet_small": -0.4749910467694403,
+        "bet_medium": -0.8077738146266955,
+        "bet_large": -0.8077738146266955
+      },
+      "average_strategy": {
+        "check": 0.37673513140497045,
+        "bet_small": 0.22643947176963275,
+        "bet_medium": 0.1984126984126984,
+        "bet_large": 0.1984126984126984
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "flop",
+        "k"
+      ]
+    },
+    "weak_weak_made_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.37358083312196805,
+        "bet_small": -1.7224652537441387,
+        "bet_medium": -1.925800801541147,
+        "bet_large": -1.9733926559791817
+      },
+      "average_strategy": {
+        "check": 0.44167842137653357,
+        "bet_small": 0.09190213872964093,
+        "bet_medium": 0.3712816420835856,
+        "bet_large": 0.09513779781023987
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        ""
+      ]
+    },
+    "broadway_weak_made_turn_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "average_strategy": {
+        "check": 0.25,
+        "bet_small": 0.25,
+        "bet_medium": 0.25,
+        "bet_large": 0.25
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "turn",
+        "k"
+      ]
+    },
+    "weak_medium_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.1477333108617054,
+        "bet_small": -0.1566429382854591,
+        "bet_medium": -0.3013260629261829,
+        "bet_large": -0.3053306002864927
+      },
+      "average_strategy": {
+        "check": 0.6650238819660184,
+        "bet_small": 0.08400313220050036,
+        "bet_medium": 0.1284229417717323,
+        "bet_large": 0.12255004406174907
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        ""
+      ]
+    },
+    "weak_medium_river_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.005005671700387283,
+        "call": -22.013501272743497,
+        "raise_small": -11.004247800521558,
+        "raise_medium": -11.004247800521558,
+        "raise_large": -11.004247800521558
+      },
+      "average_strategy": {
+        "fold": 0.8752897520053111,
+        "call": 0.031177561998672266,
+        "raise_small": 0.031177561998672266,
+        "raise_medium": 0.031177561998672266,
+        "raise_large": 0.031177561998672266
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "ks"
+      ]
+    },
+    "weak_medium_river_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.005005671700387283,
+        "call": -22.013501272743497,
+        "raise_small": -11.004247800521558,
+        "raise_medium": -11.004247800521558,
+        "raise_large": -11.004247800521558
+      },
+      "average_strategy": {
+        "fold": 0.8752897520053111,
+        "call": 0.031177561998672266,
+        "raise_small": 0.031177561998672266,
+        "raise_medium": 0.031177561998672266,
+        "raise_large": 0.031177561998672266
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "km"
+      ]
+    },
+    "weak_medium_river_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.005005671700387283,
+        "call": -22.013501272743497,
+        "raise_small": -11.004247800521558,
+        "raise_medium": -11.004247800521558,
+        "raise_large": -11.004247800521558
+      },
+      "average_strategy": {
+        "fold": 0.8752897520053111,
+        "call": 0.031177561998672266,
+        "raise_small": 0.031177561998672266,
+        "raise_medium": 0.031177561998672266,
+        "raise_large": 0.031177561998672266
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "kl"
+      ]
+    },
+    "weak_medium_river_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.01316118067531429,
+        "call": -64.13000322307322
+      },
+      "average_strategy": {
+        "fold": 0.9702596324288741,
+        "call": 0.029740367571125824
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "ss"
+      ]
+    },
+    "weak_medium_river_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.01316118067531429,
+        "call": -80.52786433418198
+      },
+      "average_strategy": {
+        "fold": 0.9717100898474299,
+        "call": 0.028289910152570076
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "sm"
+      ]
+    },
+    "weak_medium_river_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.01316118067531429,
+        "call": -80.52786433418198
+      },
+      "average_strategy": {
+        "fold": 0.9717100898474299,
+        "call": 0.028289910152570076
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "sl"
+      ]
+    },
+    "weak_medium_river_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.004004537360309826,
+        "call": -16.393856573750153
+      },
+      "average_strategy": {
+        "fold": 0.5770335402705778,
+        "call": 0.4229664597294222
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "ms"
+      ]
+    },
+    "weak_weak_made_turn_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.03361490384465565,
+        "call": -39.994338292924596,
+        "raise_small": -2.0560800184872563,
+        "raise_medium": -2.0559411411236788,
+        "raise_large": -2.0557915113428127
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "ks"
+      ]
+    },
+    "broadway_weak_made_turn_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "turn",
+        "kss"
+      ]
+    },
+    "broadway_weak_made_turn_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "turn",
+        "ksm"
+      ]
+    },
+    "broadway_weak_made_turn_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "turn",
+        "ksl"
+      ]
+    },
+    "weak_weak_made_turn_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.03361490384465565,
+        "call": -39.99578029008332,
+        "raise_small": -2.055207946279211,
+        "raise_medium": -2.0548963413693624,
+        "raise_large": -2.054657787078818
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "km"
+      ]
+    },
+    "weak_weak_made_turn_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.03361490384465565,
+        "call": -39.99812018175705,
+        "raise_small": -2.054454307820735,
+        "raise_medium": -2.054454307820735,
+        "raise_large": -2.054454307820735
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "kl"
+      ]
+    },
+    "broadway_weak_made_turn_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "turn",
+        "kms"
+      ]
+    },
+    "broadway_weak_made_turn_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "turn",
+        "s"
+      ]
+    },
+    "weak_weak_made_turn_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.03203629888247861,
+        "call": -65.18593811428006
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "ss"
+      ]
+    },
+    "weak_weak_made_turn_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.03203629888247861,
+        "call": -97.7652872046764
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "sm"
+      ]
+    },
+    "weak_weak_made_turn_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.03203629888247861,
+        "call": -97.76582108250535
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "sl"
+      ]
+    },
+    "broadway_weak_made_turn_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "turn",
+        "m"
+      ]
+    },
+    "broadway_weak_made_turn_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "turn",
+        "l"
+      ]
+    },
+    "weak_weak_made_turn_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.03203629888247861,
+        "call": -32.53744190600765
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "ms"
+      ]
+    },
+    "weak_weak_made_flop_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.13443094548508586,
+        "call": -6.630874412326831,
+        "raise_small": 0.018134138651834004,
+        "raise_medium": 0.019157881301396805,
+        "raise_large": 0.020028069532508692
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "ks"
+      ]
+    },
+    "broadway_weak_made_flop_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.15982000910615668,
+        "call": 0.01571250598644656
+      },
+      "average_strategy": {
+        "fold": 0.46468077316377865,
+        "call": 0.5353192268362214
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "flop",
+        "kss"
+      ]
+    },
+    "broadway_weak_made_flop_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.1179749123499225,
+        "call": 0.035926282908259916
+      },
+      "average_strategy": {
+        "fold": 0.4743327203751177,
+        "call": 0.5256672796248822
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "flop",
+        "ksm"
+      ]
+    },
+    "broadway_weak_made_flop_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.05498784640117615,
+        "call": 0.028506494723866665
+      },
+      "average_strategy": {
+        "fold": 0.4743327203751177,
+        "call": 0.5256672796248822
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "flop",
+        "ksl"
+      ]
+    },
+    "weak_weak_made_flop_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.13296705392679709,
+        "call": -6.639749488015186,
+        "raise_small": 0.020642956312507132,
+        "raise_medium": 0.021213634552000368,
+        "raise_large": 0.021748820268004922
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "km"
+      ]
+    },
+    "weak_weak_made_flop_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.13193938299744626,
+        "call": -6.646639497743508,
+        "raise_small": 0.0221895483742409,
+        "raise_medium": 0.02264758712997584,
+        "raise_large": 0.02309835603636356
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "kl"
+      ]
+    },
+    "broadway_weak_made_flop_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "flop",
+        "kms"
+      ]
+    },
+    "broadway_weak_made_flop_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.19134095578837554,
+        "call": 0.027017450677926498,
+        "raise_small": -0.19134095578837554,
+        "raise_medium": -0.19134095578837554,
+        "raise_large": -0.19134095578837554
+      },
+      "average_strategy": {
+        "fold": 0.17142857142857146,
+        "call": 0.3142857142857142,
+        "raise_small": 0.17142857142857146,
+        "raise_medium": 0.17142857142857146,
+        "raise_large": 0.17142857142857146
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "flop",
+        "s"
+      ]
+    },
+    "weak_weak_made_flop_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.12814519552991444,
+        "call": -10.525606541293117
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "ss"
+      ]
+    },
+    "weak_weak_made_flop_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.12814519552991444,
+        "call": -15.422894202507877
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "sm"
+      ]
+    },
+    "weak_weak_made_flop_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.12814519552991444,
+        "call": -15.426124537252845
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "sl"
+      ]
+    },
+    "broadway_weak_made_flop_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.08685517272893092,
+        "call": 0.02000765889898672,
+        "raise_small": -0.08685517272893092,
+        "raise_medium": -0.08685517272893092,
+        "raise_large": -0.08685517272893092
+      },
+      "average_strategy": {
+        "fold": 0.15873015873015875,
+        "call": 0.3650793650793651,
+        "raise_small": 0.15873015873015875,
+        "raise_medium": 0.15873015873015875,
+        "raise_large": 0.15873015873015875
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "flop",
+        "m"
+      ]
+    },
+    "broadway_weak_made_flop_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.01680957321367274,
+        "call": 0.02494551963633673,
+        "raise_small": -0.01680957321367274,
+        "raise_medium": -0.01680957321367274,
+        "raise_large": -0.01680957321367274
+      },
+      "average_strategy": {
+        "fold": 0.15873015873015875,
+        "call": 0.3650793650793651,
+        "raise_small": 0.15873015873015875,
+        "raise_medium": 0.15873015873015875,
+        "raise_large": 0.15873015873015875
+      },
+      "key_parts": [
+        "broadway",
+        "weak",
+        "made",
+        "flop",
+        "l"
+      ]
+    },
+    "weak_weak_made_flop_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.12814519552991444,
+        "call": -4.765972451528907
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "ms"
+      ]
+    },
+    "small_pair_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": -0.30641757106610323,
+        "bet_small": 0.10213919035536767,
+        "bet_medium": 0.10213919035536767,
+        "bet_large": 0.10213919035536767
+      },
+      "average_strategy": {
+        "check": 0.25,
+        "bet_small": 0.25,
+        "bet_medium": 0.25,
+        "bet_large": 0.25
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        ""
+      ]
+    },
+    "small_pair_medium_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.007697069619972254,
+        "bet_small": 0.06813688981536266,
+        "bet_medium": 0.07787054459473669,
+        "bet_large": -0.088796953541771
+      },
+      "average_strategy": {
+        "check": 0.08324590950081154,
+        "bet_small": 0.4063762594948097,
+        "bet_medium": 0.4522738554692107,
+        "bet_large": 0.05810397553516824
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "flop",
+        ""
+      ]
+    },
+    "small_pair_medium_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": -0.04385292678778478,
+        "bet_small": -0.13816089769587062,
+        "bet_medium": 0.23684097311127264,
+        "bet_large": 0.11184034950889174
+      },
+      "average_strategy": {
+        "check": 0.07434136205871356,
+        "bet_small": 0.10224750402222668,
+        "bet_medium": 0.5226448353874132,
+        "bet_large": 0.3007662985316465
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "turn",
+        ""
+      ]
+    },
+    "small_pair_medium_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.02159183845377402,
+        "bet_small": -0.36706125371415205,
+        "bet_medium": 0.28069389989905785,
+        "bet_large": 0.06477551536131979
+      },
+      "average_strategy": {
+        "check": 0.15269252303842623,
+        "bet_small": 0.12275176089640157,
+        "bet_medium": 0.511981668742704,
+        "bet_large": 0.21257404732246823
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "river",
+        ""
+      ]
+    },
+    "weak_bluff_river_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": -0.03323112520032598,
+        "bet_small": 0.0003906249999999999,
+        "bet_medium": 0.0003906249999999999,
+        "bet_large": 0.0003906249999999999
+      },
+      "average_strategy": {
+        "check": 0.0,
+        "bet_small": 0.3333333333333333,
+        "bet_medium": 0.3333333333333333,
+        "bet_large": 0.3333333333333333
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "k"
+      ]
+    },
+    "small_pair_medium_river_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.08636735381509462,
+        "call": -74.58029931285165,
+        "raise_small": 0.08636735381509462,
+        "raise_medium": 0.08636735381509462,
+        "raise_large": 0.08636735381509462
+      },
+      "average_strategy": {
+        "fold": 0.20980426596739443,
+        "call": 0.16078293613042216,
+        "raise_small": 0.20980426596739443,
+        "raise_medium": 0.20980426596739443,
+        "raise_large": 0.20980426596739443
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "river",
+        "ks"
+      ]
+    },
+    "weak_bluff_river_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "kss"
+      ]
+    },
+    "weak_bluff_river_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "ksm"
+      ]
+    },
+    "weak_bluff_river_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "ksl"
+      ]
+    },
+    "small_pair_medium_river_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.08636735381509462,
+        "call": -74.58029931285165,
+        "raise_small": 0.08636735381509462,
+        "raise_medium": 0.08636735381509462,
+        "raise_large": 0.08636735381509462
+      },
+      "average_strategy": {
+        "fold": 0.20980426596739443,
+        "call": 0.16078293613042216,
+        "raise_small": 0.20980426596739443,
+        "raise_medium": 0.20980426596739443,
+        "raise_large": 0.20980426596739443
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "river",
+        "km"
+      ]
+    },
+    "small_pair_medium_river_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.08636735381509462,
+        "call": -74.58029931285165,
+        "raise_small": 0.08636735381509462,
+        "raise_medium": 0.08636735381509462,
+        "raise_large": 0.08636735381509462
+      },
+      "average_strategy": {
+        "fold": 0.20980426596739443,
+        "call": 0.16078293613042216,
+        "raise_small": 0.20980426596739443,
+        "raise_medium": 0.20980426596739443,
+        "raise_large": 0.20980426596739443
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "river",
+        "kl"
+      ]
+    },
+    "weak_bluff_river_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "kms"
+      ]
+    },
+    "weak_bluff_river_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.8346015625000391,
+        "call": -0.451372117446945,
+        "raise_small": 0.0015625,
+        "raise_medium": 0.0015625,
+        "raise_large": 0.0015625
+      },
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.3333333333333333,
+        "raise_medium": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "s"
+      ]
+    },
+    "small_pair_medium_river_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.21591838453773662,
+        "call": -149.1174149487961
+      },
+      "average_strategy": {
+        "fold": 0.8066993007247897,
+        "call": 0.19330069927521024
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "river",
+        "ss"
+      ]
+    },
+    "small_pair_medium_river_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.21591838453773662,
+        "call": -211.411609965862
+      },
+      "average_strategy": {
+        "fold": 0.7828262393991269,
+        "call": 0.21717376060087315
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "river",
+        "sm"
+      ]
+    },
+    "small_pair_medium_river_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.21591838453773662,
+        "call": -211.411609965862
+      },
+      "average_strategy": {
+        "fold": 0.7828262393991269,
+        "call": 0.21717376060087315
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "river",
+        "sl"
+      ]
+    },
+    "weak_bluff_river_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.9982603313915497,
+        "call": 0.052375764856897516,
+        "raise_small": -0.1628775188915105,
+        "raise_medium": -0.1628775188915105,
+        "raise_large": -0.1628775188915105
+      },
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 0.14044658845963115,
+        "raise_small": 0.2865178038467896,
+        "raise_medium": 0.2865178038467896,
+        "raise_large": 0.2865178038467896
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "m"
+      ]
+    },
+    "weak_bluff_river_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.8340807291667058,
+        "call": -0.06879014526792901,
+        "raise_small": 0.0020833333333333333,
+        "raise_medium": 0.0013020833333333333,
+        "raise_large": 0.0013020833333333333
+      },
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.4441231373245945,
+        "raise_medium": 0.2779384313377028,
+        "raise_large": 0.2779384313377028
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "l"
+      ]
+    },
+    "small_pair_medium_river_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.21591838453773662,
+        "call": -99.19569158132627
+      },
+      "average_strategy": {
+        "fold": 0.7112729365542193,
+        "call": 0.2887270634457807
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "river",
+        "ms"
+      ]
+    },
+    "small_pair_medium_turn_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "turn",
+        "ks"
+      ]
+    },
+    "small_pair_medium_turn_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "turn",
+        "km"
+      ]
+    },
+    "small_pair_medium_turn_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "turn",
+        "kl"
+      ]
+    },
+    "small_pair_medium_turn_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.12500062360238104,
+        "call": -17.188673296288602
+      },
+      "average_strategy": {
+        "fold": 0.8374428934588107,
+        "call": 0.16255710654118927
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "turn",
+        "ss"
+      ]
+    },
+    "small_pair_medium_turn_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.12500062360238104,
+        "call": -24.21251301537462
+      },
+      "average_strategy": {
+        "fold": 0.8357519468349607,
+        "call": 0.1642480531650393
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "turn",
+        "sm"
+      ]
+    },
+    "small_pair_medium_turn_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.12500062360238104,
+        "call": -24.21251301537462
+      },
+      "average_strategy": {
+        "fold": 0.8357519468349607,
+        "call": 0.1642480531650393
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "turn",
+        "sl"
+      ]
+    },
+    "small_pair_medium_turn_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.12500062360238046,
+        "call": -11.256581259959445
+      },
+      "average_strategy": {
+        "fold": 0.8300216737689645,
+        "call": 0.16997832623103556
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "turn",
+        "ms"
+      ]
+    },
+    "small_pair_medium_flop_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "flop",
+        "ks"
+      ]
+    },
+    "small_pair_medium_flop_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "flop",
+        "km"
+      ]
+    },
+    "small_pair_medium_flop_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "flop",
+        "kl"
+      ]
+    },
+    "small_pair_medium_flop_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.003244551593124744,
+        "call": -1.0604229666487974
+      },
+      "average_strategy": {
+        "fold": 0.9061436461416513,
+        "call": 0.0938563538583487
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "flop",
+        "ss"
+      ]
+    },
+    "small_pair_medium_flop_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.003244551593124744,
+        "call": -1.0604229666487974
+      },
+      "average_strategy": {
+        "fold": 0.8804022169800659,
+        "call": 0.11959778301993415
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "flop",
+        "sm"
+      ]
+    },
+    "small_pair_medium_flop_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.003244551593124744,
+        "call": -1.0604229666487974
+      },
+      "average_strategy": {
+        "fold": 0.8804022169800659,
+        "call": 0.11959778301993415
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "flop",
+        "sl"
+      ]
+    },
+    "small_pair_medium_flop_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "flop",
+        "ms"
+      ]
+    },
+    "small_pair_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "ks"
+      ]
+    },
+    "small_pair_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.26670455423897965,
+        "call": -1.0112623842437491,
+        "raise_small": 0.2667045542389796,
+        "raise_medium": 0.21114872152681002,
+        "raise_large": 0.26670455423897965
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "km"
+      ]
+    },
+    "small_pair_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.1418522071824912,
+        "call": -0.562637485591089,
+        "raise_small": 0.13708086404361516,
+        "raise_medium": 0.1418522071824912,
+        "raise_large": 0.1418522071824912
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "kl"
+      ]
+    },
+    "small_pair_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "ss"
+      ]
+    },
+    "small_pair_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "sm"
+      ]
+    },
+    "small_pair_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "sl"
+      ]
+    },
+    "small_pair_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "ms"
+      ]
+    },
+    "ace_x_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": -0.07007857214085544,
+        "bet_small": -0.27075812301187185,
+        "bet_medium": 0.2586536416940105,
+        "bet_large": 0.08218305345871646
+      },
+      "average_strategy": {
+        "check": 0.25,
+        "bet_small": 0.25,
+        "bet_medium": 0.25,
+        "bet_large": 0.25
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        ""
+      ]
+    },
+    "ace_x_bluff_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.12860495133324304,
+        "bet_small": 0.09454136089416984,
+        "bet_medium": 0.17339188747541212,
+        "bet_large": -0.1115731561137065
+      },
+      "average_strategy": {
+        "check": 0.2768622469200123,
+        "bet_small": 0.21141278509627542,
+        "bet_medium": 0.42243925369799795,
+        "bet_large": 0.08928571428571427
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        ""
+      ]
+    },
+    "ace_x_weak_made_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.04478693614216907,
+        "bet_small": -0.08367456129843726,
+        "bet_medium": 0.04478693614216907,
+        "bet_large": -0.005899310985900902
+      },
+      "average_strategy": {
+        "check": 0.49575740297990933,
+        "bet_small": 0.004242597020090672,
+        "bet_medium": 0.49575740297990933,
+        "bet_large": 0.004242597020090672
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "turn",
+        ""
+      ]
+    },
+    "ace_x_medium_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": -0.0162710732371472,
+        "bet_small": 0.005423691079049067,
+        "bet_medium": 0.005423691079049067,
+        "bet_large": 0.005423691079049067
+      },
+      "average_strategy": {
+        "check": 0.002122936103206249,
+        "bet_small": 0.33262568796559794,
+        "bet_medium": 0.33262568796559794,
+        "bet_large": 0.33262568796559794
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "river",
+        ""
+      ]
+    },
+    "ace_x_medium_river_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.00216246597000902,
+        "call": -24.707695172247806,
+        "raise_small": 0.00216246597000902,
+        "raise_medium": 0.00216246597000902,
+        "raise_large": 0.00216246597000902
+      },
+      "average_strategy": {
+        "fold": 0.19999999999999998,
+        "call": 0.19999999999999998,
+        "raise_small": 0.19999999999999998,
+        "raise_medium": 0.19999999999999998,
+        "raise_large": 0.19999999999999998
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "river",
+        "ks"
+      ]
+    },
+    "ace_x_medium_river_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.011286885813710545,
+        "call": -103.78145954113381,
+        "raise_small": 0.011286885813710545,
+        "raise_medium": 0.011286885813710545,
+        "raise_large": 0.011286885813710545
+      },
+      "average_strategy": {
+        "fold": 0.19999999999999998,
+        "call": 0.19999999999999998,
+        "raise_small": 0.19999999999999998,
+        "raise_medium": 0.19999999999999998,
+        "raise_large": 0.19999999999999998
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "river",
+        "km"
+      ]
+    },
+    "ace_x_medium_river_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.008245412532476704,
+        "call": -77.42353808483833,
+        "raise_small": 0.008245412532476704,
+        "raise_medium": 0.008245412532476704,
+        "raise_large": 0.008245412532476704
+      },
+      "average_strategy": {
+        "fold": 0.19999999999999998,
+        "call": 0.19999999999999998,
+        "raise_small": 0.19999999999999998,
+        "raise_medium": 0.19999999999999998,
+        "raise_large": 0.19999999999999998
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "river",
+        "kl"
+      ]
+    },
+    "ace_x_medium_river_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "river",
+        "ss"
+      ]
+    },
+    "ace_x_medium_river_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "river",
+        "sm"
+      ]
+    },
+    "ace_x_medium_river_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "river",
+        "sl"
+      ]
+    },
+    "ace_x_medium_river_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "river",
+        "ms"
+      ]
+    },
+    "ace_x_weak_made_turn_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.19999999999999998,
+        "call": 0.19999999999999998,
+        "raise_small": 0.19999999999999998,
+        "raise_medium": 0.19999999999999998,
+        "raise_large": 0.19999999999999998
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "turn",
+        "ks"
+      ]
+    },
+    "ace_x_weak_made_turn_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.19999999999999998,
+        "call": 0.19999999999999998,
+        "raise_small": 0.19999999999999998,
+        "raise_medium": 0.19999999999999998,
+        "raise_large": 0.19999999999999998
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "turn",
+        "km"
+      ]
+    },
+    "ace_x_weak_made_turn_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.19999999999999998,
+        "call": 0.19999999999999998,
+        "raise_small": 0.19999999999999998,
+        "raise_medium": 0.19999999999999998,
+        "raise_large": 0.19999999999999998
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "turn",
+        "kl"
+      ]
+    },
+    "ace_x_weak_made_turn_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.04101260212051909,
+        "call": -24.609354211687396
+      },
+      "average_strategy": {
+        "fold": 0.9957574029799093,
+        "call": 0.004242597020090672
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "turn",
+        "ss"
+      ]
+    },
+    "ace_x_weak_made_turn_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.04101260212051909,
+        "call": -29.112278899755484
+      },
+      "average_strategy": {
+        "fold": 0.9957930993482472,
+        "call": 0.004206900651752784
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "turn",
+        "sm"
+      ]
+    },
+    "ace_x_weak_made_turn_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.04101260212051909,
+        "call": -29.112278899755484
+      },
+      "average_strategy": {
+        "fold": 0.9957930993482472,
+        "call": 0.004206900651752784
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "turn",
+        "sl"
+      ]
+    },
+    "ace_x_weak_made_turn_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.05068624712806998,
+        "call": -26.18515695352925
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "turn",
+        "ms"
+      ]
+    },
+    "ace_x_bluff_flop_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "ks"
+      ]
+    },
+    "ace_x_bluff_flop_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "km"
+      ]
+    },
+    "ace_x_bluff_flop_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "kl"
+      ]
+    },
+    "ace_x_bluff_flop_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.02628350886041409,
+        "call": -3.009482710122094
+      },
+      "average_strategy": {
+        "fold": 0.9765229872743499,
+        "call": 0.02347701272565005
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "ss"
+      ]
+    },
+    "ace_x_bluff_flop_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.02628350886041409,
+        "call": -3.009482710122094
+      },
+      "average_strategy": {
+        "fold": 0.9794216906563494,
+        "call": 0.020578309343650562
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "sm"
+      ]
+    },
+    "ace_x_bluff_flop_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.02628350886041409,
+        "call": -3.009482710122094
+      },
+      "average_strategy": {
+        "fold": 0.9794216906563494,
+        "call": 0.020578309343650562
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "sl"
+      ]
+    },
+    "ace_x_bluff_flop_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.28496504358911856,
+        "call": -7.349228488320944
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "ms"
+      ]
+    },
+    "ace_x_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "ks"
+      ]
+    },
+    "ace_x_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.18525429228779974,
+        "call": -0.741017169151199,
+        "raise_small": 0.18525429228779974,
+        "raise_medium": 0.18525429228779974,
+        "raise_large": 0.18525429228779974
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "km"
+      ]
+    },
+    "ace_x_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.11256855586621337,
+        "call": -0.4502742234648536,
+        "raise_small": 0.11256855586621337,
+        "raise_medium": 0.11256855586621337,
+        "raise_large": 0.11256855586621337
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "kl"
+      ]
+    },
+    "ace_x_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.17647058823529413,
+        "call": -0.5294117647058824
+      },
+      "average_strategy": {
+        "fold": 0.75,
+        "call": 0.25
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "ss"
+      ]
+    },
+    "ace_x_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.17647058823529413,
+        "call": -0.8823529411764706
+      },
+      "average_strategy": {
+        "fold": 0.8333333333333334,
+        "call": 0.16666666666666666
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "sm"
+      ]
+    },
+    "ace_x_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.17647058823529413,
+        "call": -0.8823529411764706
+      },
+      "average_strategy": {
+        "fold": 0.8333333333333334,
+        "call": 0.16666666666666666
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "sl"
+      ]
+    },
+    "ace_x_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.17647058823529413,
+        "call": -0.17647058823529413
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "ms"
+      ]
+    },
+    "broadway_medium_turn_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.028301809641726006,
+        "bet_small": -1.3157664616104285,
+        "bet_medium": -1.3157664616104285,
+        "bet_large": -1.3157664616104285
+      },
+      "average_strategy": {
+        "check": 0.53730574456491,
+        "bet_small": 0.15423141847836333,
+        "bet_medium": 0.15423141847836333,
+        "bet_large": 0.15423141847836333
+      },
+      "key_parts": [
+        "broadway",
+        "medium",
+        "turn",
+        "k"
+      ]
+    },
+    "broadway_medium_river_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.02083485107859764,
+        "bet_small": -1.2999932101485312,
+        "bet_medium": -1.2999932101485312,
+        "bet_large": -1.2999932101485312
+      },
+      "average_strategy": {
+        "check": 0.512961760023586,
+        "bet_small": 0.162346079992138,
+        "bet_medium": 0.162346079992138,
+        "bet_large": 0.162346079992138
+      },
+      "key_parts": [
+        "broadway",
+        "medium",
+        "river",
+        "k"
+      ]
+    },
+    "broadway_medium_river_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "broadway",
+        "medium",
+        "river",
+        "kss"
+      ]
+    },
+    "broadway_medium_river_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "broadway",
+        "medium",
+        "river",
+        "ksm"
+      ]
+    },
+    "broadway_medium_river_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "broadway",
+        "medium",
+        "river",
+        "ksl"
+      ]
+    },
+    "broadway_medium_river_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "broadway",
+        "medium",
+        "river",
+        "kms"
+      ]
+    },
+    "broadway_medium_river_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.5474664186331111,
+        "call": 0.0645678347015502,
+        "raise_small": -0.5474664186331111,
+        "raise_medium": -0.5474664186331111,
+        "raise_large": -0.5474664186331111
+      },
+      "average_strategy": {
+        "fold": 0.12124360486747772,
+        "call": 0.515025580530089,
+        "raise_small": 0.12124360486747772,
+        "raise_medium": 0.12124360486747772,
+        "raise_large": 0.12124360486747772
+      },
+      "key_parts": [
+        "broadway",
+        "medium",
+        "river",
+        "s"
+      ]
+    },
+    "broadway_medium_river_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.07243581928330195,
+        "call": 0.12258369417174181,
+        "raise_small": -0.07243581928330195,
+        "raise_medium": -0.07243581928330195,
+        "raise_large": -0.07243581928330195
+      },
+      "average_strategy": {
+        "fold": 0.12090413207222883,
+        "call": 0.5163834717110846,
+        "raise_small": 0.12090413207222883,
+        "raise_medium": 0.12090413207222883,
+        "raise_large": 0.12090413207222883
+      },
+      "key_parts": [
+        "broadway",
+        "medium",
+        "river",
+        "m"
+      ]
+    },
+    "broadway_medium_river_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.055250267012893955,
+        "call": 0.0935004518679744,
+        "raise_small": -0.055250267012893955,
+        "raise_medium": -0.055250267012893955,
+        "raise_large": -0.055250267012893955
+      },
+      "average_strategy": {
+        "fold": 0.12090413207222883,
+        "call": 0.5163834717110846,
+        "raise_small": 0.12090413207222883,
+        "raise_medium": 0.12090413207222883,
+        "raise_large": 0.12090413207222883
+      },
+      "key_parts": [
+        "broadway",
+        "medium",
+        "river",
+        "l"
+      ]
+    },
+    "broadway_medium_turn_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "broadway",
+        "medium",
+        "turn",
+        "kss"
+      ]
+    },
+    "broadway_medium_turn_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "broadway",
+        "medium",
+        "turn",
+        "ksm"
+      ]
+    },
+    "broadway_medium_turn_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "broadway",
+        "medium",
+        "turn",
+        "ksl"
+      ]
+    },
+    "broadway_medium_turn_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "broadway",
+        "medium",
+        "turn",
+        "kms"
+      ]
+    },
+    "broadway_medium_turn_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.24306249579740788,
+        "call": 0.10003829449493365,
+        "raise_small": -0.24306249579740788,
+        "raise_medium": -0.24306249579740788,
+        "raise_large": -0.24306249579740788
+      },
+      "average_strategy": {
+        "fold": 0.11859347906297443,
+        "call": 0.525626083748102,
+        "raise_small": 0.11859347906297443,
+        "raise_medium": 0.11859347906297443,
+        "raise_large": 0.11859347906297443
+      },
+      "key_parts": [
+        "broadway",
+        "medium",
+        "turn",
+        "s"
+      ]
+    },
+    "broadway_medium_turn_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.15581172124162654,
+        "call": 0.043216829207943216,
+        "raise_small": -0.15581172124162654,
+        "raise_medium": -0.15581172124162654,
+        "raise_large": -0.15581172124162654
+      },
+      "average_strategy": {
+        "fold": 0.11610276693143888,
+        "call": 0.5355889322742446,
+        "raise_small": 0.11610276693143888,
+        "raise_medium": 0.11610276693143888,
+        "raise_large": 0.11610276693143888
+      },
+      "key_parts": [
+        "broadway",
+        "medium",
+        "turn",
+        "m"
+      ]
+    },
+    "broadway_medium_turn_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.030016063254758953,
+        "call": 0.058932039829013495,
+        "raise_small": -0.030016063254758953,
+        "raise_medium": -0.030016063254758953,
+        "raise_large": -0.030016063254758953
+      },
+      "average_strategy": {
+        "fold": 0.11610276693143888,
+        "call": 0.5355889322742446,
+        "raise_small": 0.11610276693143888,
+        "raise_medium": 0.11610276693143888,
+        "raise_large": 0.11610276693143888
+      },
+      "key_parts": [
+        "broadway",
+        "medium",
+        "turn",
+        "l"
+      ]
+    },
+    "weak_weak_made_flop_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "average_strategy": {
+        "check": 0.25,
+        "bet_small": 0.25,
+        "bet_medium": 0.25,
+        "bet_large": 0.25
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "k"
+      ]
+    },
+    "weak_weak_made_turn_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.10166824108712923,
+        "bet_small": 0.04671825136084963,
+        "bet_medium": 0.04671825136084963,
+        "bet_large": 0.04671825136084963
+      },
+      "average_strategy": {
+        "check": 0.6591256395633988,
+        "bet_small": 0.11362478681220038,
+        "bet_medium": 0.11362478681220038,
+        "bet_large": 0.11362478681220038
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "k"
+      ]
+    },
+    "weak_weak_made_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.0010072619529620348,
+        "bet_small": -37.18702754361293,
+        "bet_medium": -37.18702754361293,
+        "bet_large": -37.18702754361293
+      },
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        ""
+      ]
+    },
+    "weak_weak_made_river_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.000644645970605119,
+        "call": -13.037442910608576,
+        "raise_small": -23.944181191854707,
+        "raise_medium": -23.944181191854707,
+        "raise_large": -23.944181191854707
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "ks"
+      ]
+    },
+    "weak_weak_made_river_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0027075214729944163,
+        "call": -54.757430036027735,
+        "raise_small": -65.66416831727867,
+        "raise_medium": -65.66416831727867,
+        "raise_large": -65.66416831727867
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "km"
+      ]
+    },
+    "weak_weak_made_river_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.002019896305531317,
+        "call": -40.85076766088589,
+        "raise_small": -51.75750594213506,
+        "raise_medium": -51.75750594213506,
+        "raise_large": -51.75750594213506
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "kl"
+      ]
+    },
+    "weak_weak_made_river_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "ss"
+      ]
+    },
+    "weak_weak_made_river_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "sm"
+      ]
+    },
+    "weak_weak_made_river_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "sl"
+      ]
+    },
+    "weak_weak_made_river_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "ms"
+      ]
+    },
+    "weak_weak_made_turn_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "kss"
+      ]
+    },
+    "weak_weak_made_turn_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "ksm"
+      ]
+    },
+    "weak_weak_made_turn_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "ksl"
+      ]
+    },
+    "weak_weak_made_turn_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "kms"
+      ]
+    },
+    "weak_weak_made_turn_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.07720537095631468,
+        "call": 0.18565327473809165,
+        "raise_small": 0.08767770620256096,
+        "raise_medium": 0.08767770620256096,
+        "raise_large": 0.08767770620256096
+      },
+      "average_strategy": {
+        "fold": 0.08549297026964413,
+        "call": 0.5899285547767109,
+        "raise_small": 0.10819282498454834,
+        "raise_medium": 0.10819282498454834,
+        "raise_large": 0.10819282498454834
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "s"
+      ]
+    },
+    "weak_weak_made_turn_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.013674490850968063,
+        "call": 0.054697963403872264,
+        "raise_small": 0.06876704772846975,
+        "raise_medium": 0.06876704772846975,
+        "raise_large": 0.06876704772846975
+      },
+      "average_strategy": {
+        "fold": 0.08549297026964417,
+        "call": 0.5634182631598997,
+        "raise_small": 0.11702958885681866,
+        "raise_medium": 0.11702958885681866,
+        "raise_large": 0.11702958885681866
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "m"
+      ]
+    },
+    "weak_weak_made_turn_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.029642937909992527,
+        "call": -0.010416588155699036,
+        "raise_small": 0.1352401392488831,
+        "raise_medium": 0.052798600669445285,
+        "raise_large": 0.052798600669445285
+      },
+      "average_strategy": {
+        "fold": 0.08549297026964411,
+        "call": 0.5387745018725616,
+        "raise_small": 0.15091684979700648,
+        "raise_medium": 0.11240783903039396,
+        "raise_large": 0.11240783903039396
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "l"
+      ]
+    },
+    "weak_weak_made_flop_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "kss"
+      ]
+    },
+    "weak_weak_made_flop_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "ksm"
+      ]
+    },
+    "weak_weak_made_flop_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "ksl"
+      ]
+    },
+    "weak_weak_made_flop_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "kms"
+      ]
+    },
+    "weak_weak_made_flop_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.19999999999999998,
+        "call": 0.19999999999999998,
+        "raise_small": 0.19999999999999998,
+        "raise_medium": 0.19999999999999998,
+        "raise_large": 0.19999999999999998
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "s"
+      ]
+    },
+    "weak_weak_made_flop_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.014018297988141618,
+        "call": 0.056073191952566395,
+        "raise_small": -0.014018297988141618,
+        "raise_medium": -0.014018297988141618,
+        "raise_large": -0.014018297988141618
+      },
+      "average_strategy": {
+        "fold": 0.09121929026387632,
+        "call": 0.635122838944495,
+        "raise_small": 0.09121929026387632,
+        "raise_medium": 0.09121929026387632,
+        "raise_large": 0.09121929026387632
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "m"
+      ]
+    },
+    "weak_weak_made_flop_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.05812530157764749,
+        "call": 0.030775967204320978,
+        "raise_small": 0.25789921681102923,
+        "raise_medium": -0.05812530157764749,
+        "raise_large": -0.05812530157764749
+      },
+      "average_strategy": {
+        "fold": 0.0781512605042017,
+        "call": 0.5903478848398824,
+        "raise_small": 0.17519833364751258,
+        "raise_medium": 0.0781512605042017,
+        "raise_large": 0.0781512605042017
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "l"
+      ]
+    },
+    "weak_medium_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.02516246389849531,
+        "bet_small": -0.0020392750708606707,
+        "bet_medium": 0.06242548991870955,
+        "bet_large": -0.16595002071568227
+      },
+      "average_strategy": {
+        "check": 0.09781032230119753,
+        "bet_small": 0.0,
+        "bet_medium": 0.5724235233810512,
+        "bet_large": 0.32976615431775125
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "flop",
+        ""
+      ]
+    },
+    "weak_medium_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.06825483929073202,
+        "bet_small": -0.06487177356497194,
+        "bet_medium": 0.07831612634159031,
+        "bet_large": -0.07163790501649057
+      },
+      "average_strategy": {
+        "check": 0.36705566418366387,
+        "bet_small": 0.11905290938111197,
+        "bet_medium": 0.39483851705411216,
+        "bet_large": 0.11905290938111197
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "turn",
+        ""
+      ]
+    },
+    "weak_medium_turn_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.003353762350286102,
+        "call": -2.890623531035391,
+        "raise_small": 0.003353762350286102,
+        "raise_medium": 0.003353762350286102,
+        "raise_large": 0.003353762350286102
+      },
+      "average_strategy": {
+        "fold": 0.2256740759649043,
+        "call": 0.09730369614038271,
+        "raise_small": 0.2256740759649043,
+        "raise_medium": 0.2256740759649043,
+        "raise_large": 0.2256740759649043
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "turn",
+        "ks"
+      ]
+    },
+    "weak_medium_turn_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.003353762350286102,
+        "call": -2.890623531035391,
+        "raise_small": 0.003353762350286102,
+        "raise_medium": 0.003353762350286102,
+        "raise_large": 0.003353762350286102
+      },
+      "average_strategy": {
+        "fold": 0.2256740759649043,
+        "call": 0.09730369614038271,
+        "raise_small": 0.2256740759649043,
+        "raise_medium": 0.2256740759649043,
+        "raise_large": 0.2256740759649043
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "turn",
+        "km"
+      ]
+    },
+    "weak_medium_turn_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.003353762350286102,
+        "call": -2.890623531035391,
+        "raise_small": 0.003353762350286102,
+        "raise_medium": 0.003353762350286102,
+        "raise_large": 0.003353762350286102
+      },
+      "average_strategy": {
+        "fold": 0.2256740759649043,
+        "call": 0.09730369614038271,
+        "raise_small": 0.2256740759649043,
+        "raise_medium": 0.2256740759649043,
+        "raise_large": 0.2256740759649043
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "turn",
+        "kl"
+      ]
+    },
+    "weak_medium_turn_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.047729299968854076,
+        "call": -7.1742706504508424
+      },
+      "average_strategy": {
+        "fold": 0.8262479632026146,
+        "call": 0.1737520367973855
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "turn",
+        "ss"
+      ]
+    },
+    "weak_medium_turn_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.047729299968854076,
+        "call": -10.758190640474181
+      },
+      "average_strategy": {
+        "fold": 0.8119061935714075,
+        "call": 0.18809380642859255
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "turn",
+        "sm"
+      ]
+    },
+    "weak_medium_turn_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.047729299968854076,
+        "call": -10.758190640474181
+      },
+      "average_strategy": {
+        "fold": 0.8119061935714075,
+        "call": 0.18809380642859255
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "turn",
+        "sl"
+      ]
+    },
+    "weak_medium_turn_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.14995403135808247,
+        "call": -8.561734357214998
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "turn",
+        "ms"
+      ]
+    },
+    "weak_medium_flop_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0107441274982617,
+        "call": -3.489255872501738,
+        "raise_small": 0.0107441274982617,
+        "raise_medium": 0.0107441274982617,
+        "raise_large": 0.0107441274982617
+      },
+      "average_strategy": {
+        "fold": 0.25,
+        "call": 0.0,
+        "raise_small": 0.25,
+        "raise_medium": 0.25,
+        "raise_large": 0.25
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "flop",
+        "ks"
+      ]
+    },
+    "weak_medium_flop_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0107441274982617,
+        "call": -3.489255872501738,
+        "raise_small": 0.0107441274982617,
+        "raise_medium": 0.0107441274982617,
+        "raise_large": 0.0107441274982617
+      },
+      "average_strategy": {
+        "fold": 0.25,
+        "call": 0.0,
+        "raise_small": 0.25,
+        "raise_medium": 0.25,
+        "raise_large": 0.25
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "flop",
+        "km"
+      ]
+    },
+    "weak_medium_flop_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0107441274982617,
+        "call": -3.489255872501738,
+        "raise_small": 0.0107441274982617,
+        "raise_medium": 0.0107441274982617,
+        "raise_large": 0.0107441274982617
+      },
+      "average_strategy": {
+        "fold": 0.25,
+        "call": 0.0,
+        "raise_small": 0.25,
+        "raise_medium": 0.25,
+        "raise_large": 0.25
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "flop",
+        "kl"
+      ]
+    },
+    "weak_medium_flop_ss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.021488254996523407,
+        "call": -2.7785117450034784
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "flop",
+        "ss"
+      ]
+    },
+    "weak_medium_flop_sm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.021488254996523407,
+        "call": -2.7785117450034784
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "flop",
+        "sm"
+      ]
+    },
+    "weak_medium_flop_sl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.021488254996523407,
+        "call": -2.7785117450034784
+      },
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "flop",
+        "sl"
+      ]
+    },
+    "weak_medium_flop_ms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.15509002781823067,
+        "call": -2.562228020194474
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "flop",
+        "ms"
+      ]
+    },
+    "medium_pair_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "average_strategy": {
+        "check": 0.25,
+        "bet_small": 0.25,
+        "bet_medium": 0.25,
+        "bet_large": 0.25
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "k"
+      ]
+    },
+    "medium_pair_medium_flop_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.010074966746856408,
+        "bet_small": -0.31332447372358935,
+        "bet_medium": -0.3142951255262663,
+        "bet_large": -0.3142951255262663
+      },
+      "average_strategy": {
+        "check": 0.5972710047254879,
+        "bet_small": 0.14582291792644597,
+        "bet_medium": 0.12845303867403315,
+        "bet_large": 0.12845303867403315
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "medium",
+        "flop",
+        "k"
+      ]
+    },
+    "medium_pair_strong_turn_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.26296262959917754,
+        "bet_small": -1.6951881881834536,
+        "bet_medium": -1.6951881881834536,
+        "bet_large": -1.6951881881834536
+      },
+      "average_strategy": {
+        "check": 0.49158133106820495,
+        "bet_small": 0.1694728896439317,
+        "bet_medium": 0.1694728896439317,
+        "bet_large": 0.1694728896439317
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "strong",
+        "turn",
+        "k"
+      ]
+    },
+    "medium_pair_strong_river_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "regrets": {
+        "check": 0.014622655038336842,
+        "bet_small": -1.9873186485670171,
+        "bet_medium": -1.9873186485670171,
+        "bet_large": -1.9873186485670171
+      },
+      "average_strategy": {
+        "check": 0.6175814827230344,
+        "bet_small": 0.12747283909232188,
+        "bet_medium": 0.12747283909232188,
+        "bet_large": 0.12747283909232188
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "strong",
+        "river",
+        "k"
+      ]
+    },
+    "medium_pair_strong_river_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "strong",
+        "river",
+        "kss"
+      ]
+    },
+    "medium_pair_strong_river_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "strong",
+        "river",
+        "ksm"
+      ]
+    },
+    "medium_pair_strong_river_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "strong",
+        "river",
+        "ksl"
+      ]
+    },
+    "medium_pair_strong_river_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "strong",
+        "river",
+        "kms"
+      ]
+    },
+    "medium_pair_strong_river_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "strong",
+        "river",
+        "s"
+      ]
+    },
+    "medium_pair_strong_river_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "strong",
+        "river",
+        "m"
+      ]
+    },
+    "medium_pair_strong_river_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_small": 0.0,
+        "raise_medium": 0.0,
+        "raise_large": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "strong",
+        "river",
+        "l"
+      ]
+    },
+    "medium_pair_strong_turn_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "strong",
+        "turn",
+        "kss"
+      ]
+    },
+    "medium_pair_strong_turn_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "strong",
+        "turn",
+        "ksm"
+      ]
+    },
+    "medium_pair_strong_turn_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "strong",
+        "turn",
+        "ksl"
+      ]
+    },
+    "medium_pair_strong_turn_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "strong",
+        "turn",
+        "kms"
+      ]
+    },
+    "medium_pair_strong_turn_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.015311557154118288,
+        "call": 0.003899374676889824,
+        "raise_small": -0.015311557154118288,
+        "raise_medium": -0.015311557154118288,
+        "raise_large": -0.015311557154118288
+      },
+      "average_strategy": {
+        "fold": 0.10077375262938205,
+        "call": 0.5969049894824718,
+        "raise_small": 0.10077375262938205,
+        "raise_medium": 0.10077375262938205,
+        "raise_large": 0.10077375262938205
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "strong",
+        "turn",
+        "s"
+      ]
+    },
+    "medium_pair_strong_turn_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.004064807835139895,
+        "call": 0.004057082710957693,
+        "raise_small": -0.004064807835139895,
+        "raise_medium": -0.004064807835139895,
+        "raise_large": -0.004064807835139895
+      },
+      "average_strategy": {
+        "fold": 0.10077375262938205,
+        "call": 0.5969049894824718,
+        "raise_small": 0.10077375262938205,
+        "raise_medium": 0.10077375262938205,
+        "raise_large": 0.10077375262938205
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "strong",
+        "turn",
+        "m"
+      ]
+    },
+    "medium_pair_strong_turn_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.0006941558222283782,
+        "call": 0.0011408525850517901,
+        "raise_small": -0.0006941558222283782,
+        "raise_medium": -0.0006941558222283782,
+        "raise_large": -0.0006941558222283782
+      },
+      "average_strategy": {
+        "fold": 0.10077375262938205,
+        "call": 0.5969049894824718,
+        "raise_small": 0.10077375262938205,
+        "raise_medium": 0.10077375262938205,
+        "raise_large": 0.10077375262938205
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "strong",
+        "turn",
+        "l"
+      ]
+    },
+    "medium_pair_medium_flop_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": -0.0009706518026769683,
+        "call": 0.0009706518026769683
+      },
+      "average_strategy": {
+        "fold": 0.448191588935526,
+        "call": 0.551808411064474
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "medium",
+        "flop",
+        "kss"
+      ]
+    },
+    "medium_pair_medium_flop_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "medium",
+        "flop",
+        "ksm"
+      ]
+    },
+    "medium_pair_medium_flop_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "medium",
+        "flop",
+        "ksl"
+      ]
+    },
+    "medium_pair_medium_flop_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "medium",
+        "flop",
+        "kms"
+      ]
+    },
+    "medium_pair_medium_flop_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.13262495979638494,
+        "call": 0.012683911770326238,
+        "raise_small": -0.13262495979638494,
+        "raise_medium": -0.13262495979638494,
+        "raise_large": -0.13262495979638494
+      },
+      "average_strategy": {
+        "fold": 0.10276243093922653,
+        "call": 0.5889502762430939,
+        "raise_small": 0.10276243093922653,
+        "raise_medium": 0.10276243093922653,
+        "raise_large": 0.10276243093922653
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "medium",
+        "flop",
+        "s"
+      ]
+    },
+    "medium_pair_medium_flop_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.37402847143130546,
+        "call": 0.3421959406362866,
+        "raise_small": -0.37402847143130546,
+        "raise_medium": -0.37402847143130546,
+        "raise_large": -0.37402847143130546
+      },
+      "average_strategy": {
+        "fold": 0.138121546961326,
+        "call": 0.4475138121546961,
+        "raise_small": 0.138121546961326,
+        "raise_medium": 0.138121546961326,
+        "raise_large": 0.138121546961326
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "medium",
+        "flop",
+        "m"
+      ]
+    },
+    "medium_pair_medium_flop_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.2781759610287066,
+        "call": 0.24923806845345375,
+        "raise_small": -0.2781759610287066,
+        "raise_medium": -0.2781759610287066,
+        "raise_large": -0.2781759610287066
+      },
+      "average_strategy": {
+        "fold": 0.138121546961326,
+        "call": 0.4475138121546961,
+        "raise_small": 0.138121546961326,
+        "raise_medium": 0.138121546961326,
+        "raise_large": 0.138121546961326
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "medium",
+        "flop",
+        "l"
+      ]
+    },
+    "medium_pair_kss": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "kss"
+      ]
+    },
+    "medium_pair_ksm": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "ksm"
+      ]
+    },
+    "medium_pair_ksl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "ksl"
+      ]
+    },
+    "medium_pair_kms": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "kms"
+      ]
+    },
+    "medium_pair_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.0007964445533114009,
+        "call": 0.0031857782132456063,
+        "raise_small": -0.0007964445533114009,
+        "raise_medium": -0.0007964445533114009,
+        "raise_large": -0.0007964445533114009
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "s"
+      ]
+    },
+    "medium_pair_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.07127096198300475,
+        "call": 0.28508384793201913,
+        "raise_small": -0.07127096198300475,
+        "raise_medium": -0.07127096198300475,
+        "raise_large": -0.07127096198300475
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "m"
+      ]
+    },
+    "medium_pair_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_small",
+        "raise_medium",
+        "raise_large"
+      ],
+      "regrets": {
+        "fold": -0.14775749702021646,
+        "call": 0.591029988080866,
+        "raise_small": -0.14775749702021646,
+        "raise_medium": -0.14775749702021646,
+        "raise_large": -0.14775749702021646
+      },
+      "average_strategy": {
+        "fold": 0.2,
+        "call": 0.2,
+        "raise_small": 0.2,
+        "raise_medium": 0.2,
+        "raise_large": 0.2
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "l"
+      ]
+    }
+  }
+}
