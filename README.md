@@ -156,6 +156,7 @@ cd AllIn
 ```
 2. Install frontend dependencies:
 ```
+cd frontend
 npm install
 ```
 3. Start the React development server:
@@ -170,7 +171,7 @@ pip install flask flask-cors numpy phevaluator
 ```
 2. Start the Flask API server:
 ```
-cd backend
+cd backend/api
 python strategy_api.py
 ```
 
@@ -186,6 +187,7 @@ python strategy_api.py
 
 ## Training Your Own Strategies
 ```
+cd backend/bot
 python -m tests.test_blueprint_trainer
 ```
 ---
