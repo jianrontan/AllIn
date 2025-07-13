@@ -34,7 +34,7 @@ def debug_missing_patterns():
             # Calculate game state
             stack = game.calculate_player_stack_after_history(player, history)
             pot = game.calculate_current_pot_size(history)
-            legal_actions = game.get_legal_actions_simple(history)
+            legal_actions = game.get_legal_actions(history)
 
             print(f"    Stack: ${stack:.2f}")
             print(f"    Pot: ${pot:.2f}")

@@ -30,7 +30,7 @@ def test_forced_kml_ml_sequences():
         # Check if the sequence is even possible
         for i, action in enumerate(history):
             partial_history = history[:i]
-            legal_actions = trainer.game.get_legal_actions_simple(partial_history)
+            legal_actions = trainer.game.get_legal_actions(partial_history)
             
             print(f"  Step {i+1}: After {partial_history}")
             print(f"    Legal actions: {legal_actions}")

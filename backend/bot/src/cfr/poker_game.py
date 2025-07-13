@@ -13,11 +13,35 @@ class PokerGame:
         self.max_raises_per_street = 3  # Limit re-raising to prevent infinite loops
         self.hand_evaluator = HandEvaluator()  # For hand evaluation
 
-    def get_legal_actions_simple(self, history):
+    def get_legal_actions(self, history):
         """
         Stack-aware simplified legal actions
         Fixed to properly handle stack sizes and call amounts
         """
+
+        # Check round completion first before generating actions
+        if self.is_round_complete(history):
+            return []
+
+        # Check if someone folded
+        if 'fold' in history:
+            return []
+
+        # Check betting cap (industry standard: 1 bet + 3 raises = 4 total)
+        bet_and_raise_count = sum(1 for action in history
+                                  if action.startswith(('bet_', 'raise_')))
+
+        if bet_and_raise_count >= 4:  # Betting cap
+            call_amount = self.get_last_bet_amount_from_history(history)
+            player_stack = self.calculate_player_stack_after_history(
+                len(history) % 2, history)
+
+            # NEED TO FIX EVENTUALLY: ALL_IN
+            if player_stack >= call_amount:
+                return ['fold', 'call']
+            else:
+                return ['fold']
+
         # Calculate current player's stack and pot
         current_player = len(history) % 2
         player_stack = self.calculate_player_stack_after_history(
@@ -36,36 +60,42 @@ class PokerGame:
         if not history:  # First action
             actions = ['check']
             # Only add bet sizes player can afford
+            if player_stack >= 0.25 * current_pot:
+                actions.append('bet_tiny')
             if player_stack >= 0.33 * current_pot:
                 actions.append('bet_small')
             if player_stack >= 0.66 * current_pot:
                 actions.append('bet_medium')
             if player_stack >= 1.0 * current_pot:
                 actions.append('bet_large')
+            if player_stack >= 1.5 * current_pot:
+                actions.append('bet_overbet')
             return actions
 
-        if 'fold' in history:
-            return []
-        
         if len(history) >= 2 and history[-2:] == ['check', 'check']:
             return []  # Round complete
-        
+
         if history[-1] == 'call':
             return []  # Round complete
-        
-        raise_count = sum(1 for action in history if action.startswith('raise_'))
+
+        raise_count = sum(
+            1 for action in history if action.startswith('raise_'))
 
         last_action = history[-1]
 
         if last_action == 'check':
             actions = ['check']
             # Only add bet sizes player can afford
+            if player_stack >= 0.25 * current_pot:
+                actions.append('bet_tiny')
             if player_stack >= 0.33 * current_pot:
                 actions.append('bet_small')
             if player_stack >= 0.66 * current_pot:
                 actions.append('bet_medium')
             if player_stack >= 1.0 * current_pot:
                 actions.append('bet_large')
+            if player_stack >= 1.5 * current_pot:
+                actions.append('bet_overbet')
             return actions
 
         elif last_action.startswith('bet_'):
@@ -81,15 +111,22 @@ class PokerGame:
                 actions.append('call')
 
             # Can only raise if no raises yet AND have enough chips
-            if raise_count < 1:
+            if raise_count < 3:
                 remaining_after_call = player_stack - call_amount
-                if remaining_after_call >= 0.33 * current_pot:
-                    actions.append('raise_small')
-                if remaining_after_call >= 0.66 * current_pot:
-                    actions.append('raise_medium')
-                if remaining_after_call >= 1.0 * current_pot:
-                    actions.append('raise_large')
+                potential_raises = [
+                    ('raise_tiny', 0.25 * current_pot),
+                    ('raise_small', 0.33 * current_pot),
+                    ('raise_medium', 0.66 * current_pot),
+                    ('raise_large', 1.0 * current_pot),
+                    ('raise_overbet', 1.5 * current_pot)
+                ]
 
+                for raise_action, raise_amount in potential_raises:
+                    # Check if player can afford it
+                    if remaining_after_call >= raise_amount:
+                        # Check if it meets minimum raise requirement
+                        if self.validate_raise_meets_minimum(raise_action, history, current_pot):
+                            actions.append(raise_action)
             return actions
 
         elif last_action.startswith('raise_'):
@@ -101,6 +138,22 @@ class PokerGame:
             if player_stack >= call_amount:
                 actions.append('call')
 
+            # Can re-raise if under betting cap AND have enough chips
+            if raise_count < 3:  # Allow up to 3 total raises
+                remaining_after_call = player_stack - call_amount
+
+                potential_raises = [
+                    ('raise_tiny', 0.25 * current_pot),
+                    ('raise_small', 0.33 * current_pot),
+                    ('raise_medium', 0.66 * current_pot),
+                    ('raise_large', 1.0 * current_pot),
+                    ('raise_overbet', 1.5 * current_pot)
+                ]
+
+                for raise_action, raise_amount in potential_raises:
+                    if remaining_after_call >= raise_amount:
+                        if self.validate_raise_meets_minimum(raise_action, history, current_pot):
+                            actions.append(raise_action)
             return actions
 
         elif last_action == 'call':
@@ -109,113 +162,82 @@ class PokerGame:
         else:
             return ['fold', 'call'] if player_stack >= self.get_last_bet_amount_from_history(history) else ['fold']
 
-    def get_legal_actions(self, history):
-        """Legal actions based on stack sizes and game state"""
+    def get_minimum_raise_amount(self, history):
+        """
+        Calculate minimum raise amount based on last bet/raise size
+        """
+        if not history:
+            return 2  # Big blind as minimum
 
-        # Calculate current stacks
-        p0_stack = self.calculate_player_stack_after_history(0, history)
-        p1_stack = self.calculate_player_stack_after_history(1, history)
-        current_player = len(history) % 2
-        player_stack = p0_stack if current_player == 0 else p1_stack
+        # Find the last bet or raise
+        last_bet_amount = self.get_last_bet_amount_from_history(history)
 
-        # If player has no chips, they can only fold/call (if call is free)
-        if player_stack <= 0:
-            return ['fold'] if self.get_current_bet_amount(history) > 0 else ['check']
+        if last_bet_amount == 0:
+            return 2  # No bets yet, big blind minimum
 
-        # Check if anyone is already all-in this street
-        if self.is_anyone_all_in(history):
-            # If opponent went all-in, can only fold, call, or go all-in (if have chips)
-            current_bet = self.get_current_bet_amount(history)
-            if current_bet > 0:
-                actions = ['fold', 'call']
-                if player_stack > current_bet:  # Can only all-in if have more chips
-                    actions.append('all_in')
-                return actions
+        # Find what the last bet/raise was raising from
+        previous_bet = 0
+        last_bet_index = -1
+
+        # Find the index of the last bet/raise
+        for i in range(len(history) - 1, -1, -1):
+            if history[i].startswith(('bet_', 'raise_')):
+                last_bet_index = i
+                break
+
+        if last_bet_index == -1:
+            return 2  # No bets found, use big blind
+
+        # Determine what this bet/raise was raising from
+        if history[last_bet_index].startswith('bet_'):
+            # This is a bet - find what it was betting after
+            if last_bet_index == 0:
+                # Very first action was a bet (preflop open-raise)
+                previous_bet = 2  # Raising from big blind
             else:
-                return ['check']
-
-        # Normal betting (no all-ins yet)
-        if not history:  # First action
-            actions = ['check']
-            # Only add bet sizes that are <= stack
-            current_pot = 3  # Starting pot
-            if player_stack >= 0.33 * current_pot:
-                actions.append('bet_small')
-            if player_stack >= 0.66 * current_pot:
-                actions.append('bet_medium')
-            if player_stack >= 1.0 * current_pot:
-                actions.append('bet_large')
-            if player_stack >= 1.5 * current_pot:
-                actions.append('bet_overbet')
-            if player_stack > 0:
-                actions.append('all_in')
-            return actions
-
-        last_action = history[-1]
-
-        if last_action == 'check':
-            actions = ['check']
-            current_pot = self.calculate_current_pot_size(history)
-            # Only add bet sizes player can afford
-            if player_stack >= 0.33 * current_pot:
-                actions.append('bet_small')
-            if player_stack >= 0.66 * current_pot:
-                actions.append('bet_medium')
-            if player_stack >= 1.0 * current_pot:
-                actions.append('bet_large')
-            if player_stack >= 1.5 * current_pot:
-                actions.append('bet_overbet')
-            if player_stack > 0:
-                actions.append('all_in')
-            return actions
-
-        elif last_action.startswith('bet_'):
-            actions = ['fold', 'call']
-            current_pot = self.calculate_current_pot_size(history)
-
-            # Check raise limits
-            raise_count = self.count_raises_in_history(history)
-            if raise_count < self.max_raises_per_street:
-                # Only add raises player can afford
-                if player_stack >= 0.33 * current_pot:
-                    actions.append('raise_small')
-                if player_stack >= 0.66 * current_pot:
-                    actions.append('raise_medium')
-                if player_stack >= 1.0 * current_pot:
-                    actions.append('raise_large')
-                if player_stack >= 1.5 * current_pot:
-                    actions.append('raise_overbet')
-
-            if player_stack > 0:
-                actions.append('all_in')
-            return actions
-
-        elif last_action.startswith('raise_'):
-            raise_count = self.count_raises_in_history(history)
-            if raise_count >= self.max_raises_per_street:
-                actions = ['fold', 'call']
-            else:
-                actions = ['fold', 'call']
-                current_pot = self.calculate_current_pot_size(history)
-                # Only add raises player can afford
-                if player_stack >= 0.33 * current_pot:
-                    actions.append('raise_small')
-                if player_stack >= 0.66 * current_pot:
-                    actions.append('raise_medium')
-                if player_stack >= 1.0 * current_pot:
-                    actions.append('raise_large')
-                if player_stack >= 1.5 * current_pot:
-                    actions.append('raise_overbet')
-
-            if player_stack > 0:
-                actions.append('all_in')
-            return actions
-
-        elif last_action == 'call':
-            return []  # Round complete
-
+                # Look backwards to see what this bet was responding to
+                for i in range(last_bet_index - 1, -1, -1):
+                    if history[i].startswith(('bet_', 'raise_')):
+                        # Betting after a previous bet/raise
+                        pot_at_time = self.calculate_current_pot_size(
+                            history[:i])
+                        previous_bet = self.calculate_bet_amount_for_action(
+                            history[i], pot_at_time)
+                        break
+                    elif history[i] == 'check':
+                        # Betting after check(s) means raising from 0
+                        previous_bet = 0
+                        break
+                    elif history[i] == 'call':
+                        # Betting after a call - need to find what was called
+                        continue  # Keep looking backwards
+                else:
+                    # Default to 0 if no previous bet found
+                    previous_bet = 0
         else:
-            return ['fold', 'call']
+            # This is a raise - find the bet it was raising
+            for i in range(last_bet_index - 1, -1, -1):
+                if history[i].startswith(('bet_', 'raise_')):
+                    pot_at_time = self.calculate_current_pot_size(history[:i])
+                    previous_bet = self.calculate_bet_amount_for_action(
+                        history[i], pot_at_time)
+                    break
+            else:
+                previous_bet = 2  # Fallback to big blind
+
+        # Minimum raise = size of last raise
+        raise_size = last_bet_amount - previous_bet
+        return max(2, raise_size)  # At least big blind
+
+    def validate_raise_meets_minimum(self, raise_action, history, current_pot):
+        """Check if a raise action meets minimum raise requirement"""
+        proposed_amount = self.calculate_bet_amount_for_action(
+            raise_action, current_pot)
+        last_bet = self.get_last_bet_amount_from_history(history)
+        min_raise = self.get_minimum_raise_amount(history)
+
+        total_required = last_bet + min_raise
+        return proposed_amount >= total_required
 
     def is_anyone_all_in(self, history):
         """Check if anyone went all-in this betting round"""
@@ -238,8 +260,8 @@ class PokerGame:
                 current_bet = player_stack_at_time
 
             # Track which player made each action
-            if action in ['check', 'bet_small', 'bet_medium', 'bet_large', 'bet_overbet',
-                          'raise_small', 'raise_medium', 'raise_large', 'raise_overbet',
+            if action in ['check', 'bet_tiny', 'bet_small', 'bet_medium', 'bet_large', 'bet_overbet',
+                          'raise_tiny', 'raise_small', 'raise_medium', 'raise_large', 'raise_overbet',
                           'all_in', 'call', 'fold']:
                 current_player = 1 - current_player
 
@@ -365,7 +387,7 @@ class PokerGame:
         print(f"Terminal: {self.is_terminal(history, street)}")
         if history:
             # Can use simple also
-            print(f"Legal actions: {self.get_legal_actions_simple(history)}")
+            print(f"Legal actions: {self.get_legal_actions(history)}")
         print("---")
 
     def calculate_current_pot_size(self, history, starting_pot=3, starting_stack=100):
@@ -381,7 +403,11 @@ class PokerGame:
         player_contributions[1] = 2.0  # Big blind
 
         for action in history:
-            if action == 'bet_small':
+            if action == 'bet_tiny':
+                bet_amount = 0.25 * current_pot
+                accumulated_bets += bet_amount
+                player_contributions[current_player] += bet_amount
+            elif action == 'bet_small':
                 bet_amount = 0.33 * current_pot
                 accumulated_bets += bet_amount
                 player_contributions[current_player] += bet_amount
@@ -398,7 +424,9 @@ class PokerGame:
                 accumulated_bets += bet_amount
                 player_contributions[current_player] += bet_amount
             elif action.startswith('raise_'):
-                if 'small' in action:
+                if 'tiny' in action:
+                    raise_amount = 0.25 * (current_pot + accumulated_bets)
+                elif 'small' in action:
                     raise_amount = 0.33 * (current_pot + accumulated_bets)
                 elif 'medium' in action:
                     raise_amount = 0.66 * (current_pot + accumulated_bets)
@@ -430,8 +458,8 @@ class PokerGame:
                 player_contributions[current_player] += remaining_stack
 
             # Switch to next player (for all betting actions)
-            if action in ['check', 'bet_small', 'bet_medium', 'bet_large', 'bet_overbet',
-                          'raise_small', 'raise_medium', 'raise_large', 'raise_overbet',
+            if action in ['check', 'bet_tiny', 'bet_small', 'bet_medium', 'bet_large', 'bet_overbet',
+                          'raise_tiny', 'raise_small', 'raise_medium', 'raise_large', 'raise_overbet',
                           'all_in', 'call', 'fold']:
                 current_player = 1 - current_player
 
@@ -476,7 +504,10 @@ class PokerGame:
 
         for action in history:
             if current_player == player:
-                if action == 'bet_small':
+                if action == 'bet_tiny':
+                    contribution += 0.25 * current_pot
+                    current_pot += 0.25 * current_pot
+                elif action == 'bet_small':
                     contribution += 0.33 * current_pot
                     current_pot += 0.33 * current_pot
                 elif action == 'bet_medium':
@@ -489,7 +520,9 @@ class PokerGame:
                     contribution += 1.5 * current_pot
                     current_pot += 1.5 * current_pot
                 elif action.startswith('raise_'):
-                    if 'small' in action:
+                    if 'tiny' in action:
+                        raise_amount = 0.25 * current_pot
+                    elif 'small' in action:
                         raise_amount = 0.33 * current_pot
                     elif 'medium' in action:
                         raise_amount = 0.66 * current_pot
@@ -510,8 +543,8 @@ class PokerGame:
                     current_pot += call_amount
 
             # Advance to next player
-            if action in ['check', 'bet_small', 'bet_medium', 'bet_large', 'bet_overbet',
-                          'raise_small', 'raise_medium', 'raise_large', 'raise_overbet',
+            if action in ['check', 'bet_tiny', 'bet_small', 'bet_medium', 'bet_large', 'bet_overbet',
+                          'raise_tiny', 'raise_small', 'raise_medium', 'raise_large', 'raise_overbet',
                           'all_in', 'call', 'fold']:
                 current_player = 1 - current_player
 
@@ -519,7 +552,9 @@ class PokerGame:
 
     def calculate_bet_amount_for_action(self, action, pot_size):
         """Convert action to actual bet amount"""
-        if action == 'bet_small' or action == 'raise_small':
+        if action == 'bet_tiny' or action == 'raise_tiny':
+            return 0.25 * pot_size
+        elif action == 'bet_small' or action == 'raise_small':
             return 0.33 * pot_size
         elif action == 'bet_medium' or action == 'raise_medium':
             return 0.66 * pot_size

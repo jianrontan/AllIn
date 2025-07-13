@@ -71,7 +71,7 @@ class BlueprintTrainer:
         Core CFR algorithm - like the Leduc cfr method
         """
         # Infinite recursion catching
-        if depth > 20:
+        if depth > 50:
             print(
                 f"WARNING: Max depth reached at street {street}, history {history}")
             return 0
@@ -100,10 +100,8 @@ class BlueprintTrainer:
             self.info_sets[info_set_key] = InformationSet()
         info_set = self.info_sets[info_set_key]
 
-        # game_state = self.game_adapter.convert_round_state_to_game_state(round_state)
-
         # Get legal actions using my game logic
-        legal_actions = self.game.get_legal_actions_simple(history)
+        legal_actions = self.game.get_legal_actions(history)
         if not legal_actions:  # Round complete
             if street < 3:  # Only advance if not already at river
                 return self.cfr(p0_cards, p1_cards, community_cards, [],
@@ -127,17 +125,15 @@ class BlueprintTrainer:
             if current_player == 0:
                 action_utilities[action] = -self.cfr(
                     p0_cards, p1_cards, community_cards, next_history,
-                    p0_reach * strategy[i], p1_reach, street, depth + 1
-                )
+                    p0_reach * strategy[i], p1_reach, street, depth + 1)
             else:
                 action_utilities[action] = -self.cfr(
                     p0_cards, p1_cards, community_cards, next_history,
-                    p0_reach, p1_reach * strategy[i], street, depth + 1
-                )
+                    p0_reach, p1_reach * strategy[i], street, depth + 1)
 
             node_utility += strategy[i] * action_utilities[action]
 
-        # Update regrets - like Leduc implementation
+        # Update regrets for all actions
         for i, action in enumerate(legal_actions):
             regret = action_utilities[action] - node_utility
 
@@ -152,7 +148,7 @@ class BlueprintTrainer:
         return node_utility
 
     def create_round_state_for_info_set(self, community_cards, history, street):
-        """Create round_state with REAL pot-relative amounts - FIXED VERSION"""
+        """Create round_state with REAL pot-relative amounts"""
 
         street_names = ['preflop', 'flop', 'turn', 'river']
         community_for_street = community_cards[:self.game.get_community_cards_count(
@@ -185,11 +181,11 @@ class BlueprintTrainer:
                     p1_contribution += current_bet
 
             # Advance player
-            if action in ['check', 'bet_small', 'bet_medium', 'bet_large',
-                          'raise_small', 'raise_medium', 'raise_large', 'call', 'fold']:
+            if action in ['check', 'bet_tiny', 'bet_small', 'bet_medium', 'bet_large', 'bet_overbet',
+                          'raise_tiny', 'raise_small', 'raise_medium', 'raise_large', 'raise_overbet', 'call', 'fold']:
                 current_player = 1 - current_player
 
-        # FIXED: Convert actions with consistent pot calculation
+        # Convert actions with consistent pot calculation
         converted_actions = []
         for i, action in enumerate(history):
             if action.startswith('bet_') or action.startswith('raise_'):

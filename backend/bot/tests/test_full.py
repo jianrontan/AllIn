@@ -220,7 +220,7 @@ def test_poker_game():
     ]
 
     for history, description in action_scenarios:
-        actions = game.get_legal_actions_simple(history)
+        actions = game.get_legal_actions(history)
         print(f"  {description}: {history} → {actions}")
 
     # Test pot calculations

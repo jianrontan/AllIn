@@ -5,6 +5,7 @@ class ActionAbstraction:
 
     def __init__(self):
         self.bet_sizes = {
+            'tiny': 0.25,     # 1/4 pot
             'small': 0.33,    # 1/3 pot
             'medium': 0.66,   # 2/3 pot
             'large': 1.0,     # pot bet
@@ -63,13 +64,13 @@ class ActionAbstraction:
 
     def categorize_bet_size(self, action, game_state):
         """
-        Determine if bet is small/medium/large/overbet
+        Determine if bet is tiny/small/medium/large/overbet
         """
         bet_amount = action.get('amount', 0)
         pot_size = game_state.get('pot_size', 1)
-        
+
         pre_bet_pot_size = pot_size - bet_amount
-        
+
         if pre_bet_pot_size <= 0:
             pre_bet_pot_size = pot_size
 
@@ -81,13 +82,15 @@ class ActionAbstraction:
         bet_ratio = bet_amount / pre_bet_pot_size
 
         # Categorize based on defined bet sizes
-        if bet_ratio <= 0.5:
+        if bet_ratio <= 0.29:       # ≤ 29% pot
+            return 'tiny'
+        elif bet_ratio <= 0.49:     # 30-49% pot
             return 'small'
-        elif bet_ratio <= 0.8:
+        elif bet_ratio <= 0.7:      # 50-70% pot
             return 'medium'
-        elif bet_ratio <= 1.0:
+        elif bet_ratio <= 1.1:      # 71-110% pot
             return 'large'
-        else:
+        else:                       # > 110% pot
             return 'overbet'
 
     def pypoker_to_cfr_actions(self, pypoker_valid_actions, game_state):
