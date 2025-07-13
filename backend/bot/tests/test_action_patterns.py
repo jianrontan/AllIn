@@ -70,7 +70,6 @@ def test_bet_categorization():
         (33, 100, 'small'),   # 33% pot
         (66, 100, 'medium'),  # 66% pot
         (100, 100, 'large'),  # 100% pot
-        (150, 100, 'overbet')  # 150% pot
     ]
 
     for amount, pot_size, expected in test_bets:

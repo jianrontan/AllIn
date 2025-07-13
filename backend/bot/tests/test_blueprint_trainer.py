@@ -286,13 +286,13 @@ def run_all_tests():
         # trainer_basic, analysis_basic = test_blueprint_trainer_basic(10)
 
         # Test 3: Extended training
-        trainer_extended, analysis_extended = test_blueprint_trainer_extended(50)
+        trainer_extended, analysis_extended = test_blueprint_trainer_extended(1000)
 
         print("\n🎉 ALL BLUEPRINT TRAINER TESTS COMPLETED SUCCESSFULLY!")
         print("=" * 80)
         # print("Check the 'analysis' folder for saved strategy files:")
         # print("  - blueprint_trainer_basic.json (10 iterations)")
-        print("  - blueprint_trainer_extended.json (50 iterations)")
+        print("  - blueprint_trainer_extended.json (1000 iterations)")
 
     except Exception as e:
         print(f"❌ TEST FAILED: {e}")

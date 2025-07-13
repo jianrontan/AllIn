@@ -60,16 +60,12 @@ class PokerGame:
         if not history:  # First action
             actions = ['check']
             # Only add bet sizes player can afford
-            if player_stack >= 0.25 * current_pot:
-                actions.append('bet_tiny')
             if player_stack >= 0.33 * current_pot:
                 actions.append('bet_small')
             if player_stack >= 0.66 * current_pot:
                 actions.append('bet_medium')
             if player_stack >= 1.0 * current_pot:
                 actions.append('bet_large')
-            if player_stack >= 1.5 * current_pot:
-                actions.append('bet_overbet')
             return actions
 
         if len(history) >= 2 and history[-2:] == ['check', 'check']:
@@ -86,16 +82,12 @@ class PokerGame:
         if last_action == 'check':
             actions = ['check']
             # Only add bet sizes player can afford
-            if player_stack >= 0.25 * current_pot:
-                actions.append('bet_tiny')
             if player_stack >= 0.33 * current_pot:
                 actions.append('bet_small')
             if player_stack >= 0.66 * current_pot:
                 actions.append('bet_medium')
             if player_stack >= 1.0 * current_pot:
                 actions.append('bet_large')
-            if player_stack >= 1.5 * current_pot:
-                actions.append('bet_overbet')
             return actions
 
         elif last_action.startswith('bet_'):
@@ -114,11 +106,9 @@ class PokerGame:
             if raise_count < 3:
                 remaining_after_call = player_stack - call_amount
                 potential_raises = [
-                    ('raise_tiny', 0.25 * current_pot),
                     ('raise_small', 0.33 * current_pot),
                     ('raise_medium', 0.66 * current_pot),
-                    ('raise_large', 1.0 * current_pot),
-                    ('raise_overbet', 1.5 * current_pot)
+                    ('raise_large', 1.0 * current_pot)
                 ]
 
                 for raise_action, raise_amount in potential_raises:
@@ -143,11 +133,9 @@ class PokerGame:
                 remaining_after_call = player_stack - call_amount
 
                 potential_raises = [
-                    ('raise_tiny', 0.25 * current_pot),
                     ('raise_small', 0.33 * current_pot),
                     ('raise_medium', 0.66 * current_pot),
-                    ('raise_large', 1.0 * current_pot),
-                    ('raise_overbet', 1.5 * current_pot)
+                    ('raise_large', 1.0 * current_pot)
                 ]
 
                 for raise_action, raise_amount in potential_raises:
@@ -260,8 +248,8 @@ class PokerGame:
                 current_bet = player_stack_at_time
 
             # Track which player made each action
-            if action in ['check', 'bet_tiny', 'bet_small', 'bet_medium', 'bet_large', 'bet_overbet',
-                          'raise_tiny', 'raise_small', 'raise_medium', 'raise_large', 'raise_overbet',
+            if action in ['check', 'bet_small', 'bet_medium', 'bet_large',
+                          'raise_small', 'raise_medium', 'raise_large',
                           'all_in', 'call', 'fold']:
                 current_player = 1 - current_player
 
@@ -403,11 +391,7 @@ class PokerGame:
         player_contributions[1] = 2.0  # Big blind
 
         for action in history:
-            if action == 'bet_tiny':
-                bet_amount = 0.25 * current_pot
-                accumulated_bets += bet_amount
-                player_contributions[current_player] += bet_amount
-            elif action == 'bet_small':
+            if action == 'bet_small':
                 bet_amount = 0.33 * current_pot
                 accumulated_bets += bet_amount
                 player_contributions[current_player] += bet_amount
@@ -419,21 +403,13 @@ class PokerGame:
                 bet_amount = 1.0 * current_pot
                 accumulated_bets += bet_amount
                 player_contributions[current_player] += bet_amount
-            elif action == 'bet_overbet':
-                bet_amount = 1.5 * current_pot
-                accumulated_bets += bet_amount
-                player_contributions[current_player] += bet_amount
             elif action.startswith('raise_'):
-                if 'tiny' in action:
-                    raise_amount = 0.25 * (current_pot + accumulated_bets)
-                elif 'small' in action:
+                if 'small' in action:
                     raise_amount = 0.33 * (current_pot + accumulated_bets)
                 elif 'medium' in action:
                     raise_amount = 0.66 * (current_pot + accumulated_bets)
                 elif 'large' in action:
                     raise_amount = 1.0 * (current_pot + accumulated_bets)
-                elif 'overbet' in action:
-                    raise_amount = 1.5 * (current_pot + accumulated_bets)
                 else:
                     # Default for unknown raises
                     raise_amount = 1.0 * (current_pot + accumulated_bets)
@@ -458,8 +434,8 @@ class PokerGame:
                 player_contributions[current_player] += remaining_stack
 
             # Switch to next player (for all betting actions)
-            if action in ['check', 'bet_tiny', 'bet_small', 'bet_medium', 'bet_large', 'bet_overbet',
-                          'raise_tiny', 'raise_small', 'raise_medium', 'raise_large', 'raise_overbet',
+            if action in ['check', 'bet_small', 'bet_medium', 'bet_large',
+                          'raise_small', 'raise_medium', 'raise_large',
                           'all_in', 'call', 'fold']:
                 current_player = 1 - current_player
 
@@ -504,10 +480,7 @@ class PokerGame:
 
         for action in history:
             if current_player == player:
-                if action == 'bet_tiny':
-                    contribution += 0.25 * current_pot
-                    current_pot += 0.25 * current_pot
-                elif action == 'bet_small':
+                if action == 'bet_small':
                     contribution += 0.33 * current_pot
                     current_pot += 0.33 * current_pot
                 elif action == 'bet_medium':
@@ -516,20 +489,13 @@ class PokerGame:
                 elif action == 'bet_large':
                     contribution += 1.0 * current_pot
                     current_pot += 1.0 * current_pot
-                elif action == 'bet_overbet':
-                    contribution += 1.5 * current_pot
-                    current_pot += 1.5 * current_pot
                 elif action.startswith('raise_'):
-                    if 'tiny' in action:
-                        raise_amount = 0.25 * current_pot
-                    elif 'small' in action:
+                    if 'small' in action:
                         raise_amount = 0.33 * current_pot
                     elif 'medium' in action:
                         raise_amount = 0.66 * current_pot
                     elif 'large' in action:
                         raise_amount = 1.0 * current_pot
-                    elif 'overbet' in action:
-                        raise_amount = 1.5 * current_pot
                     contribution += raise_amount
                     current_pot += raise_amount
                 elif action == 'all_in':
@@ -543,8 +509,8 @@ class PokerGame:
                     current_pot += call_amount
 
             # Advance to next player
-            if action in ['check', 'bet_tiny', 'bet_small', 'bet_medium', 'bet_large', 'bet_overbet',
-                          'raise_tiny', 'raise_small', 'raise_medium', 'raise_large', 'raise_overbet',
+            if action in ['check', 'bet_small', 'bet_medium', 'bet_large',
+                          'raise_small', 'raise_medium', 'raise_large',
                           'all_in', 'call', 'fold']:
                 current_player = 1 - current_player
 
@@ -552,15 +518,11 @@ class PokerGame:
 
     def calculate_bet_amount_for_action(self, action, pot_size):
         """Convert action to actual bet amount"""
-        if action == 'bet_tiny' or action == 'raise_tiny':
-            return 0.25 * pot_size
-        elif action == 'bet_small' or action == 'raise_small':
+        if action == 'bet_small' or action == 'raise_small':
             return 0.33 * pot_size
         elif action == 'bet_medium' or action == 'raise_medium':
             return 0.66 * pot_size
         elif action == 'bet_large' or action == 'raise_large':
             return 1.0 * pot_size
-        elif action == 'bet_overbet' or action == 'raise_overbet':
-            return 1.5 * pot_size
         else:
             return 0

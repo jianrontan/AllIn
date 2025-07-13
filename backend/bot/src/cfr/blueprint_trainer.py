@@ -181,8 +181,8 @@ class BlueprintTrainer:
                     p1_contribution += current_bet
 
             # Advance player
-            if action in ['check', 'bet_tiny', 'bet_small', 'bet_medium', 'bet_large', 'bet_overbet',
-                          'raise_tiny', 'raise_small', 'raise_medium', 'raise_large', 'raise_overbet', 'call', 'fold']:
+            if action in ['check', 'bet_small', 'bet_medium', 'bet_large',
+                          'raise_small', 'raise_medium', 'raise_large', 'call', 'fold']:
                 current_player = 1 - current_player
 
         # Convert actions with consistent pot calculation
