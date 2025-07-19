@@ -120,9 +120,11 @@ class BlueprintTrainer:
                 info_set.cumulative_regrets[action] = 0
 
             if current_player == 0:
-                info_set.cumulative_regrets[action] += p1_reach * regret
+                info_set.cumulative_regrets[action] = max(
+                    0, info_set.cumulative_regrets.get(action, 0) + p1_reach * regret)
             else:
-                info_set.cumulative_regrets[action] += p0_reach * regret
+                info_set.cumulative_regrets[action] = max(
+                    0, info_set.cumulative_regrets.get(action, 0) + p0_reach * regret)
 
         return node_utility
 
