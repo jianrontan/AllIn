@@ -1,8 +1,10 @@
+# backend/bot/tests/test_blueprint_trainer.py
 from src.cfr.blueprint_trainer import BlueprintTrainer
 import sys
 import os
 import json
 from pathlib import Path
+import time
 
 # Add the parent directory to the path to import src modules
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -161,18 +163,31 @@ def test_blueprint_trainer_extended(iterations):
     print(f"Starting extended CFR training for {iterations} iterations...")
     expected_value = trainer.train_blueprint(iterations)
 
+    # Export with visit statistics
+    blueprint_data = trainer.export_blueprint_with_visit_stats(
+        'analysis/blueprint_trainer_extended_with_visits.json')
+
     print(f"\n✅ Extended training completed!")
     print(f"Expected value: {expected_value:.6f}")
     print(f"Total info sets created: {len(trainer.info_sets)}")
 
     # Save normalized strategies
     analysis_data = save_normalized_strategies(
-        trainer, "blueprint_trainer_extended.json")
+        trainer, "blueprint_trainer_extended_10.json")
 
     # Analyze strategy quality
     analyze_strategy_quality(analysis_data)
 
-    return trainer, analysis_data
+    # Print visit statistics summary
+    visit_stats = blueprint_data['visit_statistics']
+    print(f"\n📊 VISIT FREQUENCY ANALYSIS:")
+    print(f"Total visits across all info sets: {visit_stats['total_visits']}")
+    print(
+        f"Average visits per info set: {visit_stats['average_visits_per_infoset']:.2f}")
+    print(f"Most visited info set: {visit_stats['max_visits']} visits")
+    print(f"Least visited info set: {visit_stats['min_visits']} visits")
+
+    return trainer, analysis_data, blueprint_data
 
 
 def analyze_strategy_quality(analysis_data):
@@ -286,13 +301,13 @@ def run_all_tests():
         # trainer_basic, analysis_basic = test_blueprint_trainer_basic(10)
 
         # Test 3: Extended training
-        trainer_extended, analysis_extended = test_blueprint_trainer_extended(1000)
+        test_blueprint_trainer_extended(10)
 
         print("\n🎉 ALL BLUEPRINT TRAINER TESTS COMPLETED SUCCESSFULLY!")
         print("=" * 80)
         # print("Check the 'analysis' folder for saved strategy files:")
         # print("  - blueprint_trainer_basic.json (10 iterations)")
-        print("  - blueprint_trainer_extended.json (1000 iterations)")
+        print("  - blueprint_trainer_extended.json (10 iterations)")
 
     except Exception as e:
         print(f"❌ TEST FAILED: {e}")

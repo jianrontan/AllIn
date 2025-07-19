@@ -1,3 +1,4 @@
+# backend/bot/src/cfr/information_set.py
 import numpy as np
 
 
@@ -10,6 +11,8 @@ class InformationSet:
         self.cumulative_regrets = {}
         self.cumulative_strategy = {}
         self.legal_actions = []
+        self.visit_count = 0             # Track how often this infoset was visited
+        self.last_visited_iteration = 0  # Track recency
 
     def get_strategy(self, legal_actions, reach_probability):
         """
@@ -46,61 +49,3 @@ class InformationSet:
             return cumulative_strat / total
         else:
             return np.ones(len(legal_actions)) / len(legal_actions)
-
-    def get_strategy_with_adaptive_pruning(self, legal_actions, reach_probability, iteration=0):
-        """Strategy calculation with adaptive pruning thresholds"""
-
-        # Get adaptive threshold based on iteration
-        pruning_threshold = self.get_adaptive_threshold(iteration)
-
-        # Start with base strategy
-        base_strategy = self.get_strategy(legal_actions, reach_probability)
-
-        # Apply pruning if past the learning phase
-        if iteration >= 500:  # No pruning for first 500 iterations
-            pruned_strategy = self._apply_conservative_pruning(
-                base_strategy, legal_actions, iteration, pruning_threshold)
-            return pruned_strategy
-        else:
-            return base_strategy
-
-    def get_adaptive_threshold(self, iteration):
-        """Gradually reduce pruning threshold as training progresses"""
-        if iteration < 500:
-            return float('inf')  # No pruning
-        elif iteration < 1000:
-            return 100  # Very conservative
-        elif iteration < 2000:
-            return 75   # Moderately conservative
-        elif iteration < 5000:
-            return 50   # Standard
-        else:
-            return 25   # Aggressive (original target)
-
-    def _apply_conservative_pruning(self, strategy, legal_actions, iteration, threshold):
-        """Apply conservative pruning by modifying strategy probabilities"""
-        pruned_strategy = strategy.copy()
-        pruned_count = 0
-
-        for i, action in enumerate(legal_actions):
-            regret = self.cumulative_regrets.get(action, 0)
-
-            # Only prune if regret is very negative
-            if regret < -threshold:
-                # Higher minimum probability than before
-                pruned_strategy[i] = 0.1
-                pruned_count += 1
-
-        # Safety: Never leave fewer than 2 viable actions
-        viable_actions = sum(1 for p in pruned_strategy if p > 0.05)
-        if viable_actions < 2:
-            return strategy  # Return original if too aggressive
-
-        # Renormalize probabilities
-        total = np.sum(pruned_strategy)
-        if total > 0:
-            pruned_strategy = pruned_strategy / total
-        else:
-            return strategy
-
-        return pruned_strategy

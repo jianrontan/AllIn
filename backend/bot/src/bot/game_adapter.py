@@ -1,3 +1,4 @@
+# backend/bot/src/bot/game_adapter.py
 from ..abstractions.card_abstractions import CardAbstraction
 from ..abstractions.action_abstractions import ActionAbstraction
 
