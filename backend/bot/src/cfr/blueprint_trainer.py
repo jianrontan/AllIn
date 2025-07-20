@@ -9,6 +9,22 @@ import time
 import os
 import json
 
+try:
+    from ..cython_extensions.cfr_fast import (
+        update_regrets_cfr_plus_fast, calculate_node_utility_fast,
+        batch_action_utilities_fast, cfr_reach_update_fast,
+        terminal_utility_fast
+    )
+    from ..cython_extensions.blueprint_optimisation_fast import (
+        create_round_state_fast, fast_info_set_lookup,
+        update_visit_statistics_fast
+    )
+    CFR_CYTHON_AVAILABLE = True
+    print("✅ CFR Cython extensions loaded")
+except ImportError as e:
+    CFR_CYTHON_AVAILABLE = False
+    print(f"⚠️ CFR Cython extensions not available: {e}")
+
 
 class BlueprintTrainer:
     """
@@ -76,55 +92,84 @@ class BlueprintTrainer:
         current_player = len(history) % 2
         player_cards = p0_cards if current_player == 0 else p1_cards
 
-        # Create info set key using my GameAdapter
-        round_state = self.create_round_state_for_info_set(
-            community_cards, history, street)
+        # Create info set key - use Cython for round state creation
+        if CFR_CYTHON_AVAILABLE:
+            round_state = create_round_state_fast(
+                community_cards, history, street)
+        else:
+            round_state = self.create_round_state_for_info_set(
+                community_cards, history, street)
+
         info_set_key = self.game_adapter.create_info_set_key(
             player_cards, round_state)
 
-        # Get or create information set
-        if info_set_key not in self.info_sets:
-            self.info_sets[info_set_key] = InformationSet()
-        info_set = self.info_sets[info_set_key]
+        # Get or create information set - use Cython lookup
+        if CFR_CYTHON_AVAILABLE:
+            info_set, created_new = fast_info_set_lookup(
+                self.info_sets, info_set_key)
+        else:
+            if info_set_key not in self.info_sets:
+                self.info_sets[info_set_key] = InformationSet()
+            info_set = self.info_sets[info_set_key]
 
         # Get strategy from information set
         reach_prob = p0_reach if current_player == 0 else p1_reach
         strategy = info_set.get_strategy(legal_actions, reach_prob)
-        if info_set.last_visited_iteration != iteration:
-            info_set.visit_count += 1
-            info_set.last_visited_iteration = iteration
+
+        # Update visit statistics - use Cython
+        if CFR_CYTHON_AVAILABLE:
+            update_visit_statistics_fast(info_set, iteration)
+        else:
+            if info_set.last_visited_iteration != iteration:
+                info_set.visit_count += 1
+                info_set.last_visited_iteration = iteration
 
         # Calculate utilities for each action
         action_utilities = {}
-        node_utility = 0
 
         for i, action in enumerate(legal_actions):
             next_history = history + [action]
 
             if current_player == 0:
+                new_p0_reach = p0_reach * \
+                    strategy[i] if CFR_CYTHON_AVAILABLE else p0_reach * \
+                    strategy[i]
                 action_utilities[action] = -self.cfr(
                     p0_cards, p1_cards, community_cards, next_history,
-                    p0_reach * strategy[i], p1_reach, street, depth + 1, iteration)
+                    new_p0_reach, p1_reach, street, depth + 1, iteration)
             else:
+                new_p1_reach = p1_reach * \
+                    strategy[i] if CFR_CYTHON_AVAILABLE else p1_reach * \
+                    strategy[i]
                 action_utilities[action] = -self.cfr(
                     p0_cards, p1_cards, community_cards, next_history,
-                    p0_reach, p1_reach * strategy[i], street, depth + 1, iteration)
+                    p0_reach, new_p1_reach, street, depth + 1, iteration)
 
-            node_utility += strategy[i] * action_utilities[action]
+        # Calculate node utility - use Cython
+        if CFR_CYTHON_AVAILABLE:
+            node_utility = calculate_node_utility_fast(
+                legal_actions, strategy, action_utilities)
+        else:
+            node_utility = sum(strategy[i] * action_utilities[action]
+                               for i, action in enumerate(legal_actions))
 
-        # Update regrets for all actions
-        for i, action in enumerate(legal_actions):
-            regret = action_utilities[action] - node_utility
+        # Update regrets - use Cython CFR+
+        reach_probability = p1_reach if current_player == 0 else p0_reach
 
-            if action not in info_set.cumulative_regrets:
-                info_set.cumulative_regrets[action] = 0
+        if CFR_CYTHON_AVAILABLE:
+            update_regrets_cfr_plus_fast(
+                info_set.cumulative_regrets, legal_actions,
+                action_utilities, node_utility, reach_probability)
+        else:
+            # Fallback to Python implementation
+            for action in legal_actions:
+                regret = action_utilities[action] - node_utility
+                if action not in info_set.cumulative_regrets:
+                    info_set.cumulative_regrets[action] = 0
 
-            if current_player == 0:
-                info_set.cumulative_regrets[action] = max(
-                    0, info_set.cumulative_regrets.get(action, 0) + p1_reach * regret)
-            else:
-                info_set.cumulative_regrets[action] = max(
-                    0, info_set.cumulative_regrets.get(action, 0) + p0_reach * regret)
+                current_regret = info_set.cumulative_regrets[action]
+                new_regret = current_regret + reach_probability * regret
+                info_set.cumulative_regrets[action] = max(0.0, new_regret)
 
         return node_utility
 

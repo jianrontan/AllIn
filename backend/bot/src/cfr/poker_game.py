@@ -1,6 +1,18 @@
 # backend/bot/src/cfr/poker_game.py
 from ..abstractions.hand_evaluator import HandEvaluator
 
+try:
+    from ..cython_extensions.game_logic_fast import (
+        calculate_current_pot_size_fast, is_round_complete_fast,
+        count_bet_actions_fast, get_last_bet_amount_fast,
+        calculate_player_stack_fast
+    )
+    GAME_CYTHON_AVAILABLE = True
+    print("✅ Game logic Cython extensions loaded")
+except ImportError as e:
+    GAME_CYTHON_AVAILABLE = False
+    print(f"⚠️ Game logic Cython extensions not available: {e}")
+
 
 class PokerGame:
     """
@@ -265,6 +277,13 @@ class PokerGame:
         return raise_count
 
     def is_round_complete(self, history):
+        """Check if betting round is complete - now with Cython acceleration"""
+        if GAME_CYTHON_AVAILABLE:
+            return is_round_complete_fast(history)
+        else:
+            return self._is_round_complete(history)
+
+    def _is_round_complete(self, history):
         """Check if betting round is complete - like Leduc round_complete"""
         if not history:
             return False
@@ -380,6 +399,13 @@ class PokerGame:
         print("---")
 
     def calculate_current_pot_size(self, history, starting_pot=3, starting_stack=100):
+        """Calculate actual pot size - now with Cython acceleration"""
+        if GAME_CYTHON_AVAILABLE:
+            return calculate_current_pot_size_fast(history, starting_pot, starting_stack)
+        else:
+            return self._calculate_current_pot_size(history, starting_pot, starting_stack)
+
+    def _calculate_current_pot_size(self, history, starting_pot=3, starting_stack=100):
         """Calculate actual pot size based on betting history including all_in"""
         current_pot = starting_pot
         accumulated_bets = 0
@@ -443,6 +469,18 @@ class PokerGame:
         return current_pot + accumulated_bets
 
     def get_last_bet_amount_from_history(self, history):
+        """Get the amount of the last bet/raise - now with Cython acceleration"""
+        if GAME_CYTHON_AVAILABLE:
+            if not history:
+                return 0
+            # Calculate pot size for the Cython function
+            pot_at_bet_time = self.calculate_current_pot_size(
+                history[:-1], 3, 100)
+            return get_last_bet_amount_fast(history, pot_at_bet_time)
+        else:
+            return self._get_last_bet_amount_from_history(history)
+
+    def _get_last_bet_amount_from_history(self, history):
         """Get the amount of the last bet/raise"""
         if not history:
             return 0
@@ -468,6 +506,13 @@ class PokerGame:
         return self.calculate_bet_amount_for_action(last_bet_action, pot_at_bet_time)
 
     def calculate_player_stack_after_history(self, player, history, starting_stack=100):
+        """Calculate player's remaining stack - now with Cython acceleration"""
+        if GAME_CYTHON_AVAILABLE:
+            return calculate_player_stack_fast(player, history, starting_stack)
+        else:
+            return self._calculate_player_stack_after_history(player, history, starting_stack)
+
+    def _calculate_player_stack_after_history(self, player, history, starting_stack=100):
         """Calculate player's remaining stack after contributing to pot"""
         contribution = 0
         current_player = 0

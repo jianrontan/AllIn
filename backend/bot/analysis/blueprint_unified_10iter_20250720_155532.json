@@ -1,0 +1,1447 @@
+{
+  "training_metadata": {
+    "iterations": 10,
+    "expected_value": 0.38911091068351544,
+    "training_duration_seconds": 323.3137483596802,
+    "iterations_per_second": 0.030929708528432874,
+    "start_time": "2025-07-20T15:55:32.145489",
+    "end_time": "2025-07-20T16:00:55.459850",
+    "memory_usage": {
+      "start_mb": 33.9453125,
+      "end_mb": 34.0859375,
+      "delta_mb": 0.140625
+    },
+    "total_info_sets": 32,
+    "export_timestamp": "2025-07-20T16:00:55.459850"
+  },
+  "visit_statistics": {
+    "total_visits": 66,
+    "total_info_sets": 32,
+    "average_visits_per_infoset": 2.0625,
+    "visit_distribution": {
+      "max_visits": 9,
+      "min_visits": 0,
+      "median_visits": 1.0,
+      "p75_visits": 1.0,
+      "p90_visits": 1.0,
+      "p95_visits": 0.0
+    },
+    "visit_frequency_distribution": {
+      "max_frequency": 0.9,
+      "min_frequency": 0.0,
+      "median_frequency": 0.15476190476190477,
+      "average_frequency": 0.27393353174603174
+    },
+    "zero_visit_count": 3,
+    "low_visit_count": 29,
+    "high_visit_count": 0
+  },
+  "strategy_analysis": {
+    "total_strategies_analyzed": 32,
+    "pure_strategies": {
+      "count": 17,
+      "percentage": 53.125
+    },
+    "mixed_strategies": {
+      "count": 13,
+      "percentage": 40.625
+    },
+    "uniform_strategies": {
+      "count": 2,
+      "percentage": 6.25
+    },
+    "strategy_errors": 0,
+    "entropy_analysis": {
+      "average_entropy": 0.35013245796688597,
+      "max_entropy": 0.9853892518087018,
+      "min_entropy": 4.982892142331044e-09,
+      "entropy_distribution": {
+        "decisive_strategies": 17,
+        "mixed_strategies": 4,
+        "uniform_strategies": 11
+      }
+    }
+  },
+  "convergence_metrics": {
+    "expected_value": 0.38911091068351544,
+    "total_cumulative_regret": 33.12271262405368,
+    "average_regret_magnitude": 0.14786925278595395,
+    "regret_distribution": {
+      "positive_regrets": 125,
+      "negative_regrets": 99,
+      "max_regret": 2.722056111846441,
+      "min_regret": 0.0
+    },
+    "convergence_indicators": {
+      "regret_balance": 0.5580357142857143,
+      "exploitability_proxy": 0.38911091068351544
+    }
+  },
+  "street_distribution": {
+    "counts": {
+      "preflop": 5,
+      "flop": 9,
+      "turn": 9,
+      "river": 9
+    },
+    "percentages": {
+      "preflop": 15.625,
+      "flop": 28.125,
+      "turn": 28.125,
+      "river": 28.125
+    }
+  },
+  "hand_bucket_analysis": {
+    "distribution": {
+      "weak": 13,
+      "suited": 7,
+      "ace": 4,
+      "small": 4,
+      "medium": 4
+    },
+    "most_common": [
+      [
+        "weak",
+        13
+      ],
+      [
+        "suited",
+        7
+      ],
+      [
+        "ace",
+        4
+      ],
+      [
+        "small",
+        4
+      ],
+      [
+        "medium",
+        4
+      ]
+    ],
+    "unique_buckets": 5
+  },
+  "action_pattern_analysis": {
+    "pattern_distribution": {
+      "": 32
+    },
+    "most_common_patterns": [
+      [
+        "",
+        32
+      ]
+    ],
+    "unique_patterns": 1,
+    "action_diversity": {
+      "unique_actions": [
+        "bet_large",
+        "bet_medium",
+        "bet_small",
+        "check"
+      ],
+      "total_unique_actions": 4
+    }
+  },
+  "normalized_strategies": {
+    "suited_connector_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.5087180829414351,
+        "bet_small": 0.16376063901952162,
+        "bet_medium": 0.16376063901952173,
+        "bet_large": 0.16376063901952162
+      },
+      "regrets": {
+        "fold": 0.5104109361799399,
+        "call": 0.0,
+        "raise_large": 0.36354227501913744,
+        "check": 1.148130628797743,
+        "bet_small": 0.36959292730989624,
+        "bet_medium": 0.36959292730989646,
+        "bet_large": 0.36959292730989624
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 6,
+        "visit_frequency": 0.14285714285714285
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 0.5087180829414351,
+        "min_probability": 0.16376063901952162,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "suited",
+        "connector",
+        ""
+      ]
+    },
+    "weak_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.014043748185491152,
+        "bet_small": 0.9859562518145089,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.371233549261728,
+        "call": 1.6306447492599454,
+        "raise_large": 0.1303990962168276,
+        "check": 0.02096218929021859,
+        "bet_small": 1.4716727549816393,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 9,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.9
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_small",
+        "max_probability": 0.9859562518145089,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        ""
+      ]
+    },
+    "suited_connector_draw_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.02314814814814815,
+        "call": 0.02314814814814815,
+        "raise_large": 0.0,
+        "check": 0.28696695963541663,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 0,
+        "last_visited_iteration": 0,
+        "visit_frequency": 0.0
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "suited",
+        "connector",
+        "draw",
+        "flop",
+        ""
+      ]
+    },
+    "weak_weak_made_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.02624565140610565,
+        "bet_small": 0.7223554337052267,
+        "bet_medium": 0.16105997109181905,
+        "bet_large": 0.0903389437968486
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.06524613427613372,
+        "raise_large": 0.026377974168673952,
+        "check": 0.009870876557479473,
+        "bet_small": 0.2716747702848057,
+        "bet_medium": 0.060573962078484166,
+        "bet_large": 0.03397608802898001
+      },
+      "visit_metadata": {
+        "visit_count": 5,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.5555555555555556
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_small",
+        "max_probability": 0.7223554337052267,
+        "min_probability": 0.02624565140610565,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        ""
+      ]
+    },
+    "suited_connector_weak_made_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.005787037037037038,
+        "call": 0.005787037037037038,
+        "raise_large": 0.0,
+        "check": 0.07147894965277778,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 0,
+        "last_visited_iteration": 0,
+        "visit_frequency": 0.0
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "suited",
+        "connector",
+        "weak",
+        "made",
+        "turn",
+        ""
+      ]
+    },
+    "weak_medium_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.015391196105946104,
+        "raise_large": 0.0,
+        "check": 0.02554600402209373,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "turn",
+        ""
+      ]
+    },
+    "suited_connector_medium_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0014467592592592594,
+        "call": 0.0014467592592592594,
+        "raise_large": 0.0,
+        "check": 0.016818576388888888,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 0,
+        "last_visited_iteration": 0,
+        "visit_frequency": 0.0
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "suited",
+        "connector",
+        "medium",
+        "river",
+        ""
+      ]
+    },
+    "weak_strong_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0020254629629629633,
+        "raise_large": 0.0,
+        "check": 0.005606192129629629,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 5,
+        "visit_frequency": 0.16666666666666666
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "strong",
+        "river",
+        ""
+      ]
+    },
+    "weak_bluff_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.41666302027761426,
+        "bet_small": 0.1512846664975249,
+        "bet_medium": 0.20126292601361248,
+        "bet_large": 0.23078938721124845
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.2566794950206014,
+        "raise_large": 9.196565956144193e-14,
+        "check": 0.32661653176918093,
+        "bet_small": 0.11859001321585126,
+        "bet_medium": 0.15776729795815553,
+        "bet_large": 0.18091269335552884
+      },
+      "visit_metadata": {
+        "visit_count": 5,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.625
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 0.41666302027761426,
+        "min_probability": 0.1512846664975249,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        ""
+      ]
+    },
+    "weak_bluff_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.16702222134095868,
+        "bet_small": 0.2865637736242291,
+        "bet_medium": 0.27320697152869244,
+        "bet_large": 0.2732070335061198
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.15106122568872302,
+        "raise_large": 0.0,
+        "check": 0.5210249489841581,
+        "bet_small": 0.8939341983033333,
+        "bet_medium": 0.8522677237794918,
+        "bet_large": 0.8522679171177534
+      },
+      "visit_metadata": {
+        "visit_count": 4,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_small",
+        "max_probability": 0.2865637736242291,
+        "min_probability": 0.16702222134095868,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        ""
+      ]
+    },
+    "weak_weak_made_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.9607325508961596,
+        "bet_small": 0.012061499187477955,
+        "bet_medium": 0.012926839243180055,
+        "bet_large": 0.014279110673182355
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.09882088450678307,
+        "raise_large": 0.0003858024691358025,
+        "check": 0.9465844179180943,
+        "bet_small": 0.011883876711524488,
+        "bet_medium": 0.012736473422402996,
+        "bet_large": 0.01406883076081314
+      },
+      "visit_metadata": {
+        "visit_count": 6,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.6666666666666666
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 0.9607325508961596,
+        "min_probability": 0.012061499187477955,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        ""
+      ]
+    },
+    "weak_bluff_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.02314814814814815,
+        "call": 0.02314814814814815,
+        "raise_large": 0.0,
+        "check": 0.2690972222222222,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        ""
+      ]
+    },
+    "weak_weak_made_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.0,
+        "bet_small": 0.8208839867444492,
+        "bet_medium": 0.0004336724252671779,
+        "bet_large": 0.17868234083028364
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.22421600798439023,
+        "check": 0.0,
+        "bet_small": 0.35549132980188863,
+        "bet_medium": 0.00018780581622508024,
+        "bet_large": 0.07738002443656677
+      },
+      "visit_metadata": {
+        "visit_count": 7,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.7777777777777778
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_small",
+        "max_probability": 0.8208839867444492,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        ""
+      ]
+    },
+    "ace_x_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.0,
+        "bet_small": 1.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.4898357739763342,
+        "raise_large": 0.0,
+        "check": 0.0,
+        "bet_small": 1.1264272248047376,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_small",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        ""
+      ]
+    },
+    "ace_x_weak_made_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.45448148915428344,
+        "raise_large": 0.0,
+        "check": 1.7432136685310895,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "flop",
+        ""
+      ]
+    },
+    "ace_x_medium_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.09605554404635248,
+        "raise_large": 0.0,
+        "check": 0.49574946828794597,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "turn",
+        ""
+      ]
+    },
+    "ace_x_medium_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.33913805087877097,
+        "raise_large": 0.0,
+        "check": 1.5,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "river",
+        ""
+      ]
+    },
+    "weak_medium_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 1.160038182769425,
+        "raise_large": 0.0,
+        "check": 0.1364414912925743,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 4,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.4
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        ""
+      ]
+    },
+    "weak_draw_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.16951838285577406,
+        "bet_small": 0.0008343463833504764,
+        "bet_medium": 0.41404631942855236,
+        "bet_large": 0.41560095133232317
+      },
+      "regrets": {
+        "fold": 2.722056111846441,
+        "call": 0.0,
+        "raise_large": 0.44554040459529776,
+        "check": 0.1712776590147893,
+        "bet_small": 0.0008430053009018427,
+        "bet_medium": 0.41834332725877926,
+        "bet_large": 0.41991409326434054
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.375
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_large",
+        "max_probability": 0.41560095133232317,
+        "min_probability": 0.0008343463833504764,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "draw",
+        "flop",
+        ""
+      ]
+    },
+    "weak_draw_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.1618125759212816e-09,
+        "bet_small": 0.3198841512300124,
+        "bet_medium": 0.3349042032960373,
+        "bet_large": 0.3452116443121377
+      },
+      "regrets": {
+        "fold": 0.20203595658402615,
+        "call": 0.0,
+        "raise_large": 0.1724284085076103,
+        "check": 2.9468052477121536e-10,
+        "bet_small": 0.08113497091018033,
+        "bet_medium": 0.08494463601162532,
+        "bet_large": 0.08755900100527693
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_large",
+        "max_probability": 0.3452116443121377,
+        "min_probability": 1.1618125759212816e-09,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "draw",
+        "turn",
+        ""
+      ]
+    },
+    "suited_connector_weak_made_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 3.024136970019507e-14,
+        "bet_small": 0.3333333333333232,
+        "bet_medium": 0.3333333333333232,
+        "bet_large": 0.3333333333333232
+      },
+      "regrets": {
+        "fold": 0.02387679103679945,
+        "call": 0.0,
+        "raise_large": 0.02387679103679945,
+        "check": 5.489400385565165e-16,
+        "bet_small": 0.006050652290758718,
+        "bet_medium": 0.006050652290758718,
+        "bet_large": 0.006050652290758718
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 6,
+        "visit_frequency": 0.14285714285714285
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_small",
+        "max_probability": 0.3333333333333232,
+        "min_probability": 3.024136970019507e-14,
+        "strategy_sum": 0.9999999999999999
+      },
+      "key_parts": [
+        "suited",
+        "connector",
+        "weak",
+        "made",
+        "flop",
+        ""
+      ]
+    },
+    "suited_connector_medium_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.5,
+        "bet_large": 0.5
+      },
+      "regrets": {
+        "fold": 0.0012705220283017902,
+        "call": 0.0,
+        "raise_large": 0.0005075484485089583,
+        "check": 0.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.00032581812623558727,
+        "bet_large": 0.00032581812623558727
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 6,
+        "visit_frequency": 0.14285714285714285
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_medium",
+        "max_probability": 0.5,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "suited",
+        "connector",
+        "medium",
+        "turn",
+        ""
+      ]
+    },
+    "suited_connector_strong_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.0,
+        "bet_small": 0.3333333333333333,
+        "bet_medium": 0.3333333333333333,
+        "bet_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.002899660865758825,
+        "call": 0.0,
+        "raise_large": 0.0016569490661479,
+        "check": 0.0,
+        "bet_small": 0.0004142372665369748,
+        "bet_medium": 0.0004142372665369748,
+        "bet_large": 0.0004142372665369748
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 6,
+        "visit_frequency": 0.14285714285714285
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_small",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "suited",
+        "connector",
+        "strong",
+        "river",
+        ""
+      ]
+    },
+    "small_pair_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.0,
+        "bet_small": 0.3333333333333333,
+        "bet_medium": 0.3333333333333333,
+        "bet_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.7532038878448537,
+        "call": 0.0,
+        "raise_large": 0.5661292643507723,
+        "check": 0.0,
+        "bet_small": 0.141532316087693,
+        "bet_medium": 0.141532316087693,
+        "bet_large": 0.141532316087693
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_small",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        ""
+      ]
+    },
+    "small_pair_medium_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.0,
+        "bet_small": 0.3333333333333333,
+        "bet_medium": 0.3333333333333333,
+        "bet_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.49511304027877445,
+        "call": 0.0,
+        "raise_large": 0.39880415903040756,
+        "check": 0.0,
+        "bet_small": 0.09970103975760188,
+        "bet_medium": 0.09970103975760188,
+        "bet_large": 0.09970103975760188
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_small",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "flop",
+        ""
+      ]
+    },
+    "small_pair_medium_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.0,
+        "bet_small": 0.33333333333333337,
+        "bet_medium": 0.33333333333333337,
+        "bet_large": 0.33333333333333337
+      },
+      "regrets": {
+        "fold": 0.004206959068134754,
+        "call": 0.0,
+        "raise_large": 0.004206959068134754,
+        "check": 0.0,
+        "bet_small": 0.025682612076672367,
+        "bet_medium": 0.025682612076672367,
+        "bet_large": 0.025682612076672367
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_small",
+        "max_probability": 0.33333333333333337,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "turn",
+        ""
+      ]
+    },
+    "small_pair_medium_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.0,
+        "bet_small": 0.3333333333333333,
+        "bet_medium": 0.3333333333333333,
+        "bet_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.6896644246698831,
+        "call": 0.0,
+        "raise_large": 0.3940939569542189,
+        "check": 0.0,
+        "bet_small": 0.09852348923855472,
+        "bet_medium": 0.09852348923855472,
+        "bet_large": 0.09852348923855472
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_small",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "small",
+        "pair",
+        "medium",
+        "river",
+        ""
+      ]
+    },
+    "medium_pair_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.29318593017690936,
+        "bet_small": 0.7068140698230906,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.8367504925551036,
+        "call": 0.1312036974736747,
+        "raise_large": 0.2526427885170578,
+        "check": 0.14771556360827687,
+        "bet_small": 0.35611340089607296,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.1
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_small",
+        "max_probability": 0.7068140698230906,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        ""
+      ]
+    },
+    "medium_pair_weak_made_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.007212737283449597,
+        "call": 0.0,
+        "raise_large": 0.0,
+        "check": 0.3470602470609979,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.1
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "weak",
+        "made",
+        "flop",
+        ""
+      ]
+    },
+    "weak_medium_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.022021158990999663,
+        "raise_large": 0.0,
+        "check": 0.07278483198721006,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.1
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "flop",
+        ""
+      ]
+    },
+    "medium_pair_weak_made_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.003982588529504078,
+        "call": 0.0,
+        "raise_large": 0.0,
+        "check": 0.002259582659354906,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.1
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "weak",
+        "made",
+        "turn",
+        ""
+      ]
+    },
+    "medium_pair_weak_made_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "fold": 7.545273134336966e-07,
+        "call": 7.545273134336966e-07,
+        "raise_large": 0.0,
+        "check": 0.04326695329122464,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.1
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "medium",
+        "pair",
+        "weak",
+        "made",
+        "river",
+        ""
+      ]
+    }
+  }
+}

@@ -1,36 +1,37 @@
-# backend/bot/src/cfr/information_set.py
 import numpy as np
+
+try:
+    from ..cython_extensions.information_set_fast import (
+        get_strategy_fast, get_average_strategy_fast, update_cumulative_regrets_fast
+    )
+    CYTHON_AVAILABLE = True
+    print("✅ Cython extensions loaded with absolute path")
+except ImportError:
+    CYTHON_AVAILABLE = False
+    print("Cython extensions not available, using Python fallback")
 
 
 class InformationSet:
-    """
-    Core logic stays the same as Leduc, just handles more action types
-    """
-
     def __init__(self):
         self.cumulative_regrets = {}
         self.cumulative_strategy = {}
         self.legal_actions = []
-        self.visit_count = 0             # Track how often this infoset was visited
-        self.last_visited_iteration = 0  # Track recency
+        self.visit_count = 0
+        self.last_visited_iteration = 0
 
     def get_strategy(self, legal_actions, reach_probability):
-        """CFR+ implementation - prevents negative regrets"""
+        """Strategy calculation with Cython acceleration"""
         if not self.legal_actions:
             self.legal_actions = legal_actions.copy()
 
-        # CFR+ key difference: max with 0 before storing regrets
-        regrets = np.array([max(0, self.cumulative_regrets.get(action, 0))
-                            for action in legal_actions])
-
-        total = np.sum(regrets)
-
-        if total > 0:
-            strategy = regrets / total
+        if CYTHON_AVAILABLE:
+            strategy = get_strategy_fast(
+                self.cumulative_regrets, legal_actions, reach_probability)
         else:
-            strategy = np.ones(len(legal_actions)) / len(legal_actions)
+            strategy = self._get_strategy_python(
+                legal_actions, reach_probability)
 
-        # Accumulate strategy (existing logic works fine)
+        # Accumulate strategy for average calculation
         for i, action in enumerate(legal_actions):
             if action not in self.cumulative_strategy:
                 self.cumulative_strategy[action] = 0.0
@@ -39,15 +40,30 @@ class InformationSet:
         return strategy
 
     def get_average_strategy(self, legal_actions):
-        """Direct regret-to-strategy conversion - simple math with CFR+"""
-        
-        # Since CFR+ guarantees regrets >= 0, just use them directly
+        """Average strategy calculation with direct regret conversion"""
+        if CYTHON_AVAILABLE:
+            return get_average_strategy_fast(self.cumulative_regrets, legal_actions)
+        else:
+            return self._get_average_strategy_python(legal_actions)
+
+    def _get_strategy_python(self, legal_actions, reach_probability):
+        """Python fallback implementation"""
         regrets = np.array([max(0, self.cumulative_regrets.get(action, 0))
-                        for action in legal_actions])
-        
+                           for action in legal_actions])
         total = np.sum(regrets)
-        if total > 1e-12:  # Very small threshold
+
+        if total > 1e-12:
             return regrets / total
         else:
-            # Only fall back to uniform if ALL regrets are exactly zero
+            return np.ones(len(legal_actions)) / len(legal_actions)
+
+    def _get_average_strategy_python(self, legal_actions):
+        """Python fallback for average strategy"""
+        regrets = np.array([max(0, self.cumulative_regrets.get(action, 0))
+                           for action in legal_actions])
+        total = np.sum(regrets)
+
+        if total > 1e-12:
+            return regrets / total
+        else:
             return np.ones(len(legal_actions)) / len(legal_actions)

@@ -1,0 +1,8395 @@
+{
+  "training_metadata": {
+    "iterations": 10,
+    "expected_value": 0.403663117711608,
+    "training_duration_seconds": 392.43924021720886,
+    "iterations_per_second": 0.025481651616859616,
+    "start_time": "2025-07-20T16:16:25.195998",
+    "end_time": "2025-07-20T16:22:57.635239",
+    "memory_usage": {
+      "start_mb": 33.96484375,
+      "end_mb": 34.265625,
+      "delta_mb": 0.30078125
+    },
+    "total_info_sets": 238,
+    "export_timestamp": "2025-07-20T16:22:57.635239"
+  },
+  "visit_statistics": {
+    "total_visits": 504,
+    "total_info_sets": 238,
+    "average_visits_per_infoset": 2.1176470588235294,
+    "visit_distribution": {
+      "max_visits": 8,
+      "min_visits": 1,
+      "median_visits": 1.0,
+      "p75_visits": 1.0,
+      "p90_visits": 1.0,
+      "p95_visits": 1.0
+    },
+    "visit_frequency_distribution": {
+      "max_frequency": 0.8,
+      "min_frequency": 0.1111111111111111,
+      "median_frequency": 0.3,
+      "average_frequency": 0.32172035480859007
+    },
+    "zero_visit_count": 0,
+    "low_visit_count": 238,
+    "high_visit_count": 0
+  },
+  "strategy_analysis": {
+    "total_strategies_analyzed": 238,
+    "pure_strategies": {
+      "count": 157,
+      "percentage": 65.96638655462185
+    },
+    "mixed_strategies": {
+      "count": 20,
+      "percentage": 8.403361344537815
+    },
+    "uniform_strategies": {
+      "count": 61,
+      "percentage": 25.630252100840334
+    },
+    "strategy_errors": 0,
+    "entropy_analysis": {
+      "average_entropy": 0.30723139871309646,
+      "max_entropy": 1.0,
+      "min_entropy": 3.3219280948873626e-09,
+      "entropy_distribution": {
+        "decisive_strategies": 157,
+        "mixed_strategies": 15,
+        "uniform_strategies": 66
+      }
+    }
+  },
+  "convergence_metrics": {
+    "expected_value": 0.403663117711608,
+    "total_cumulative_regret": 18.433550572045302,
+    "average_regret_magnitude": 0.025817297719951404,
+    "regret_distribution": {
+      "positive_regrets": 204,
+      "negative_regrets": 510,
+      "max_regret": 2.3011047111431893,
+      "min_regret": 0.0
+    },
+    "convergence_indicators": {
+      "regret_balance": 0.2857142857142857,
+      "exploitability_proxy": 0.403663117711608
+    }
+  },
+  "street_distribution": {
+    "counts": {
+      "preflop": 35,
+      "flop": 63,
+      "turn": 63,
+      "river": 77
+    },
+    "percentages": {
+      "preflop": 14.705882352941178,
+      "flop": 26.47058823529412,
+      "turn": 26.47058823529412,
+      "river": 32.35294117647059
+    }
+  },
+  "hand_bucket_analysis": {
+    "distribution": {
+      "weak": 126,
+      "ace": 84,
+      "premium": 28
+    },
+    "most_common": [
+      [
+        "weak",
+        126
+      ],
+      [
+        "ace",
+        84
+      ],
+      [
+        "premium",
+        28
+      ]
+    ],
+    "unique_buckets": 3
+  },
+  "action_pattern_analysis": {
+    "pattern_distribution": {
+      "k": 20,
+      "ksl": 20,
+      "ksssl": 20,
+      "s": 20,
+      "ssl": 20,
+      "m": 20,
+      "l": 20,
+      "": 14,
+      "ks": 14,
+      "kssl": 14,
+      "km": 14,
+      "kl": 14,
+      "sl": 14,
+      "sssl": 14
+    },
+    "most_common_patterns": [
+      [
+        "k",
+        20
+      ],
+      [
+        "ksl",
+        20
+      ],
+      [
+        "ksssl",
+        20
+      ],
+      [
+        "s",
+        20
+      ],
+      [
+        "ssl",
+        20
+      ],
+      [
+        "m",
+        20
+      ],
+      [
+        "l",
+        20
+      ],
+      [
+        "",
+        14
+      ],
+      [
+        "ks",
+        14
+      ],
+      [
+        "kssl",
+        14
+      ]
+    ],
+    "unique_patterns": 14,
+    "action_diversity": {
+      "unique_actions": [
+        "bet_large",
+        "bet_medium",
+        "bet_small",
+        "call",
+        "check",
+        "fold",
+        "raise_large"
+      ],
+      "total_unique_actions": 7
+    }
+  },
+  "normalized_strategies": {
+    "weak_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.5565242855355613,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 8,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.8
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        ""
+      ]
+    },
+    "weak_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.4507514428921691,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 5,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "k"
+      ]
+    },
+    "weak_bluff_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.53821636318921,
+        "bet_small": 0.16085164323253925,
+        "bet_medium": 0.15517385699874478,
+        "bet_large": 0.1457581365795061
+      },
+      "regrets": {
+        "check": 2.3011047111431893,
+        "bet_small": 0.6877094405756633,
+        "bet_medium": 0.6634344806431364,
+        "bet_large": 0.6231782563857918
+      },
+      "visit_metadata": {
+        "visit_count": 5,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.5555555555555556
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 0.53821636318921,
+        "min_probability": 0.1457581365795061,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        ""
+      ]
+    },
+    "weak_weak_made_flop_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.0620740252043396,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "k"
+      ]
+    },
+    "weak_bluff_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.05577855386123905,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        ""
+      ]
+    },
+    "weak_weak_made_turn_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.023728447542211324,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 4,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.4
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "k"
+      ]
+    },
+    "weak_bluff_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.019249042851989997,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        ""
+      ]
+    },
+    "weak_weak_made_river_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.004304108796296296,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 6,
+        "visit_frequency": 0.2857142857142857
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "k"
+      ]
+    },
+    "weak_bluff_river_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.004203523702993166,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "ks"
+      ]
+    },
+    "weak_weak_made_river_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0015914351851851853,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 6,
+        "visit_frequency": 0.2857142857142857
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "ksl"
+      ]
+    },
+    "weak_bluff_river_kssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0014976251849483392,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "kssl"
+      ]
+    },
+    "weak_weak_made_river_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.00043402777777777775
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 6,
+        "visit_frequency": 0.2857142857142857
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "ksssl"
+      ]
+    },
+    "weak_bluff_river_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.006124835729841686,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "km"
+      ]
+    },
+    "weak_bluff_river_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.006124835729841686,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "kl"
+      ]
+    },
+    "weak_weak_made_river_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.004918981481481481,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 6,
+        "visit_frequency": 0.2857142857142857
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "s"
+      ]
+    },
+    "weak_bluff_river_sl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.005411797036089653,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "sl"
+      ]
+    },
+    "weak_weak_made_river_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.001736111111111111,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 6,
+        "visit_frequency": 0.2857142857142857
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "ssl"
+      ]
+    },
+    "weak_bluff_river_sssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "regrets": {
+        "fold": 0.0014181298762274152,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "sssl"
+      ]
+    },
+    "weak_weak_made_river_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.005208333333333333,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 6,
+        "visit_frequency": 0.2857142857142857
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "m"
+      ]
+    },
+    "weak_weak_made_river_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.005208333333333333,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 6,
+        "visit_frequency": 0.2857142857142857
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "l"
+      ]
+    },
+    "weak_bluff_turn_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.01709496111489653,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "ks"
+      ]
+    },
+    "weak_weak_made_turn_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.006365740740740741,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 4,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.4
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "ksl"
+      ]
+    },
+    "weak_bluff_turn_kssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.013012438547960437,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "kssl"
+      ]
+    },
+    "weak_weak_made_turn_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.001736111111111111
+      },
+      "visit_metadata": {
+        "visit_count": 4,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.4
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "ksssl"
+      ]
+    },
+    "weak_bluff_turn_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.04218652975407214,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "km"
+      ]
+    },
+    "weak_bluff_turn_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.023533796606700023,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "kl"
+      ]
+    },
+    "weak_weak_made_turn_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.019675925925925923,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 4,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.4
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "s"
+      ]
+    },
+    "weak_bluff_turn_sl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.021647188144358613,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "sl"
+      ]
+    },
+    "weak_weak_made_turn_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.006944444444444444,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 4,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.4
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "ssl"
+      ]
+    },
+    "weak_bluff_turn_sssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "regrets": {
+        "fold": 0.005672519504909661,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "sssl"
+      ]
+    },
+    "weak_weak_made_turn_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.020833333333333332,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 4,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.4
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "m"
+      ]
+    },
+    "weak_weak_made_turn_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.020833333333333332,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 4,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.4
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "l"
+      ]
+    },
+    "weak_bluff_flop_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.03744553376906318,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 5,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.5555555555555556
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "ks"
+      ]
+    },
+    "weak_weak_made_flop_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.025462962962962965,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "ksl"
+      ]
+    },
+    "weak_bluff_flop_kssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.05544142704805317,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 5,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.5555555555555556
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "kssl"
+      ]
+    },
+    "weak_weak_made_flop_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.006944444444444444
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "ksssl"
+      ]
+    },
+    "weak_bluff_flop_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.19014536309698313,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 5,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.5555555555555556
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "km"
+      ]
+    },
+    "weak_bluff_flop_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.14590712875321318,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 5,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.5555555555555556
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "kl"
+      ]
+    },
+    "weak_weak_made_flop_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.07870370370370369,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "s"
+      ]
+    },
+    "weak_bluff_flop_sl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.10402391314465632,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 5,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.5555555555555556
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "sl"
+      ]
+    },
+    "weak_weak_made_flop_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.027777777777777776,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "ssl"
+      ]
+    },
+    "weak_bluff_flop_sssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "regrets": {
+        "fold": 0.02674839367817905,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 5,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.5555555555555556
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "sssl"
+      ]
+    },
+    "weak_weak_made_flop_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.08333333333333333,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "m"
+      ]
+    },
+    "weak_weak_made_flop_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.08333333333333333,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "l"
+      ]
+    },
+    "weak_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.12593528205517024,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 8,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.8
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "ks"
+      ]
+    },
+    "weak_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.10185185185185186,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 5,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "ksl"
+      ]
+    },
+    "weak_kssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.2127272495150927,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 8,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.8
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "kssl"
+      ]
+    },
+    "weak_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.027777777777777776
+      },
+      "visit_metadata": {
+        "visit_count": 5,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "ksssl"
+      ]
+    },
+    "weak_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.4427308895482183,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 8,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.8
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "km"
+      ]
+    },
+    "weak_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.4691420085418129,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 8,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.8
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "kl"
+      ]
+    },
+    "weak_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.31481481481481477,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 5,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "s"
+      ]
+    },
+    "weak_sl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.24074074074074076,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 8,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.8
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "sl"
+      ]
+    },
+    "weak_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.1111111111111111,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 5,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "ssl"
+      ]
+    },
+    "weak_sssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "regrets": {
+        "fold": 0.05555555555555555,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 8,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.8
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "sssl"
+      ]
+    },
+    "weak_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.34191955164672644,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 5,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "m"
+      ]
+    },
+    "weak_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.3333333333333333,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 5,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "l"
+      ]
+    },
+    "weak_bluff_flop_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.485880182892948,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 5,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "k"
+      ]
+    },
+    "weak_bluff_turn_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.4406299303094504,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "k"
+      ]
+    },
+    "weak_bluff_river_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.2683656849090336,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "k"
+      ]
+    },
+    "weak_bluff_river_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "ksl"
+      ]
+    },
+    "weak_bluff_river_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.5,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "ksssl"
+      ]
+    },
+    "weak_bluff_river_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.00534061064495579,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "s"
+      ]
+    },
+    "weak_bluff_river_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "ssl"
+      ]
+    },
+    "weak_bluff_river_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.23498686837805938,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "m"
+      ]
+    },
+    "weak_bluff_river_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.23498686837805938,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "river",
+        "l"
+      ]
+    },
+    "weak_bluff_turn_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.023306575371142342,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "ksl"
+      ]
+    },
+    "weak_bluff_turn_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.5,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "ksssl"
+      ]
+    },
+    "weak_bluff_turn_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.05274371033839218,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "s"
+      ]
+    },
+    "weak_bluff_turn_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "ssl"
+      ]
+    },
+    "weak_bluff_turn_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.026878797141337063,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "m"
+      ]
+    },
+    "weak_bluff_turn_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.026878797141337063,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 1,
+        "visit_frequency": 0.5
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "turn",
+        "l"
+      ]
+    },
+    "weak_bluff_flop_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.030891628538142413,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 5,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "ksl"
+      ]
+    },
+    "weak_bluff_flop_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0061323137639440325
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 5,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "ksssl"
+      ]
+    },
+    "weak_bluff_flop_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.018666930229538616,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 5,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "s"
+      ]
+    },
+    "weak_bluff_flop_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 5,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "ssl"
+      ]
+    },
+    "weak_bluff_flop_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.06227866254777937,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 5,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "m"
+      ]
+    },
+    "weak_bluff_flop_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.06510252868283797,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 5,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "bluff",
+        "flop",
+        "l"
+      ]
+    },
+    "ace_x_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.9914137816866069,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        ""
+      ]
+    },
+    "ace_x_bluff_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.25,
+        "bet_small": 0.25,
+        "bet_medium": 0.25,
+        "bet_large": 0.25
+      },
+      "regrets": {
+        "check": 0.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 0.25,
+        "min_probability": 0.25,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        ""
+      ]
+    },
+    "ace_x_bluff_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.25,
+        "bet_small": 0.25,
+        "bet_medium": 0.25,
+        "bet_large": 0.25
+      },
+      "regrets": {
+        "check": 0.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 0.25,
+        "min_probability": 0.25,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "turn",
+        ""
+      ]
+    },
+    "ace_x_weak_made_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.25,
+        "bet_small": 0.25,
+        "bet_medium": 0.25,
+        "bet_large": 0.25
+      },
+      "regrets": {
+        "check": 0.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 0.25,
+        "min_probability": 0.25,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "river",
+        ""
+      ]
+    },
+    "weak_medium_river_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.004304108796296296,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "k"
+      ]
+    },
+    "ace_x_weak_made_river_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "river",
+        "ks"
+      ]
+    },
+    "weak_medium_river_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0015914351851851853,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "ksl"
+      ]
+    },
+    "ace_x_weak_made_river_kssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "river",
+        "kssl"
+      ]
+    },
+    "weak_medium_river_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.00043402777777777775
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "ksssl"
+      ]
+    },
+    "ace_x_weak_made_river_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "river",
+        "km"
+      ]
+    },
+    "ace_x_weak_made_river_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "river",
+        "kl"
+      ]
+    },
+    "weak_medium_river_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.004918981481481481,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "s"
+      ]
+    },
+    "ace_x_weak_made_river_sl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "river",
+        "sl"
+      ]
+    },
+    "weak_medium_river_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.001736111111111111,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "ssl"
+      ]
+    },
+    "ace_x_weak_made_river_sssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.5,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "river",
+        "sssl"
+      ]
+    },
+    "weak_medium_river_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.004340277777777778,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "m"
+      ]
+    },
+    "weak_medium_river_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.004340277777777778,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "l"
+      ]
+    },
+    "ace_x_bluff_turn_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "turn",
+        "ks"
+      ]
+    },
+    "ace_x_bluff_turn_kssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "turn",
+        "kssl"
+      ]
+    },
+    "ace_x_bluff_turn_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "turn",
+        "km"
+      ]
+    },
+    "ace_x_bluff_turn_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "turn",
+        "kl"
+      ]
+    },
+    "ace_x_bluff_turn_sl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "turn",
+        "sl"
+      ]
+    },
+    "ace_x_bluff_turn_sssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.5,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "turn",
+        "sssl"
+      ]
+    },
+    "ace_x_bluff_flop_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "ks"
+      ]
+    },
+    "ace_x_bluff_flop_kssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "kssl"
+      ]
+    },
+    "ace_x_bluff_flop_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "km"
+      ]
+    },
+    "ace_x_bluff_flop_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "kl"
+      ]
+    },
+    "ace_x_bluff_flop_sl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "sl"
+      ]
+    },
+    "ace_x_bluff_flop_sssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.5,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "sssl"
+      ]
+    },
+    "ace_x_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "ks"
+      ]
+    },
+    "ace_x_kssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "kssl"
+      ]
+    },
+    "ace_x_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.2754306697791184,
+        "call": 0.2754306697791184,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "km"
+      ]
+    },
+    "ace_x_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.3912359968875484,
+        "call": 0.3912359968875484,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "kl"
+      ]
+    },
+    "ace_x_sl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.017172436626786285,
+        "call": 0.017172436626786285,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "sl"
+      ]
+    },
+    "ace_x_sssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 2,
+        "visit_frequency": 0.3333333333333333
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.5,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "sssl"
+      ]
+    },
+    "ace_x_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.02197889535835003,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.375
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "k"
+      ]
+    },
+    "weak_weak_made_flop_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.6268289391201188,
+        "bet_small": 0.12439035362662706,
+        "bet_medium": 0.12439035362662706,
+        "bet_large": 0.12439035362662706
+      },
+      "regrets": {
+        "check": 0.26027162447707275,
+        "bet_small": 0.05164930555555558,
+        "bet_medium": 0.05164930555555558,
+        "bet_large": 0.05164930555555558
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 0.6268289391201188,
+        "min_probability": 0.12439035362662706,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        ""
+      ]
+    },
+    "ace_x_medium_flop_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.016024951098191572,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 3,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "flop",
+        "k"
+      ]
+    },
+    "weak_medium_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.06603603603603603,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 3,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "turn",
+        ""
+      ]
+    },
+    "ace_x_medium_turn_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.005665112207537353,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "turn",
+        "k"
+      ]
+    },
+    "weak_medium_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.5,
+        "bet_large": 0.5
+      },
+      "regrets": {
+        "check": 0.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.002115885416666666,
+        "bet_large": 0.002115885416666666
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_medium",
+        "max_probability": 0.5,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        ""
+      ]
+    },
+    "ace_x_medium_river_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.00035310142956893547,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "river",
+        "k"
+      ]
+    },
+    "weak_medium_river_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.001953125,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "ks"
+      ]
+    },
+    "ace_x_medium_river_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.00020177224546796314,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "river",
+        "ksl"
+      ]
+    },
+    "weak_medium_river_kssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0006510416666666666,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "kssl"
+      ]
+    },
+    "ace_x_medium_river_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 6.725741515598771e-05
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "river",
+        "ksssl"
+      ]
+    },
+    "weak_medium_river_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.002604166666666667,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "km"
+      ]
+    },
+    "weak_medium_river_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.002604166666666667,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "kl"
+      ]
+    },
+    "ace_x_medium_river_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0006053167364038894,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "river",
+        "s"
+      ]
+    },
+    "weak_medium_river_sl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0026041666666666665,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "sl"
+      ]
+    },
+    "ace_x_medium_river_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.00020177224546796314,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "river",
+        "ssl"
+      ]
+    },
+    "weak_medium_river_sssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "regrets": {
+        "fold": 0.0008680555555555555,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "river",
+        "sssl"
+      ]
+    },
+    "ace_x_medium_river_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0008070889818718526,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "river",
+        "m"
+      ]
+    },
+    "ace_x_medium_river_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0008070889818718526,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "river",
+        "l"
+      ]
+    },
+    "weak_medium_turn_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0078125,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 3,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "turn",
+        "ks"
+      ]
+    },
+    "ace_x_medium_turn_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0008070889818718526,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "turn",
+        "ksl"
+      ]
+    },
+    "weak_medium_turn_kssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0026041666666666665,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 3,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "turn",
+        "kssl"
+      ]
+    },
+    "ace_x_medium_turn_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.00026902966062395084
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "turn",
+        "ksssl"
+      ]
+    },
+    "weak_medium_turn_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.010416666666666668,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 3,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "turn",
+        "km"
+      ]
+    },
+    "weak_medium_turn_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.010416666666666668,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 3,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "turn",
+        "kl"
+      ]
+    },
+    "ace_x_medium_turn_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0024212669456155577,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "turn",
+        "s"
+      ]
+    },
+    "weak_medium_turn_sl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.010416666666666666,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 3,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "turn",
+        "sl"
+      ]
+    },
+    "ace_x_medium_turn_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0008070889818718526,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "turn",
+        "ssl"
+      ]
+    },
+    "weak_medium_turn_sssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "regrets": {
+        "fold": 0.003472222222222222,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 3,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "medium",
+        "turn",
+        "sssl"
+      ]
+    },
+    "ace_x_medium_turn_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0032283559274874103,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "turn",
+        "m"
+      ]
+    },
+    "ace_x_medium_turn_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0032283559274874103,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 2,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "turn",
+        "l"
+      ]
+    },
+    "weak_weak_made_flop_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.02991707600275082,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "ks"
+      ]
+    },
+    "ace_x_medium_flop_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.007563865103822267,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 3,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "flop",
+        "ksl"
+      ]
+    },
+    "weak_weak_made_flop_kssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.016355192428224516,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "kssl"
+      ]
+    },
+    "ace_x_medium_flop_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0010761186424958033
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 3,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "flop",
+        "ksssl"
+      ]
+    },
+    "weak_weak_made_flop_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.03228985731723565,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "km"
+      ]
+    },
+    "weak_weak_made_flop_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.03644208158683551,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "kl"
+      ]
+    },
+    "ace_x_medium_flop_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.00968506778246223,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 3,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "flop",
+        "s"
+      ]
+    },
+    "weak_weak_made_flop_sl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.041666666666666664,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "sl"
+      ]
+    },
+    "ace_x_medium_flop_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0032283559274874103,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 3,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "flop",
+        "ssl"
+      ]
+    },
+    "weak_weak_made_flop_sssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "regrets": {
+        "fold": 0.013888888888888888,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.3
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "flop",
+        "sssl"
+      ]
+    },
+    "ace_x_medium_flop_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.012913423709949641,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 3,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "flop",
+        "m"
+      ]
+    },
+    "ace_x_medium_flop_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.012913423709949641,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 3,
+        "visit_frequency": 0.25
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "medium",
+        "flop",
+        "l"
+      ]
+    },
+    "ace_x_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 0.8761227456609042,
+        "raise_large": 0.12387725433909579
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.005838544275654192,
+        "raise_large": 0.0008255268314711907
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.375
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 0.8761227456609042,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "ksl"
+      ]
+    },
+    "ace_x_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.001238290247206788
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.375
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "ksssl"
+      ]
+    },
+    "ace_x_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.22500451983490724,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.375
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "s"
+      ]
+    },
+    "ace_x_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.375
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "ssl"
+      ]
+    },
+    "ace_x_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.3150069453803251,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.375
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "m"
+      ]
+    },
+    "ace_x_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.375
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "l"
+      ]
+    },
+    "ace_x_bluff_flop_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.06813922888911583,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "k"
+      ]
+    },
+    "weak_weak_made_turn_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.46557443111890856,
+        "bet_small": 0.5344255688810914,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.07529352332002266,
+        "bet_small": 0.08642825151858,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 6,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.6
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_small",
+        "max_probability": 0.5344255688810914,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        ""
+      ]
+    },
+    "ace_x_bluff_turn_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.0,
+        "bet_small": 0.46583850931677023,
+        "bet_medium": 0.26708074534161486,
+        "bet_large": 0.26708074534161486
+      },
+      "regrets": {
+        "check": 0.0,
+        "bet_small": 0.01908661873644702,
+        "bet_medium": 0.010942994742229623,
+        "bet_large": 0.010942994742229623
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_small",
+        "max_probability": 0.46583850931677023,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "turn",
+        "k"
+      ]
+    },
+    "weak_weak_made_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.5,
+        "bet_large": 0.5
+      },
+      "regrets": {
+        "check": 0.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.012152777777777776,
+        "bet_large": 0.012152777777777776
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.375
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_medium",
+        "max_probability": 0.5,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        ""
+      ]
+    },
+    "ace_x_bluff_river_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.0,
+        "bet_small": 0.42857142857142866,
+        "bet_medium": 0.28571428571428564,
+        "bet_large": 0.28571428571428564
+      },
+      "regrets": {
+        "check": 0.0,
+        "bet_small": 0.0061077179956630446,
+        "bet_medium": 0.004071811997108695,
+        "bet_large": 0.004071811997108695
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_small",
+        "max_probability": 0.42857142857142866,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "river",
+        "k"
+      ]
+    },
+    "weak_weak_made_river_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.5882352941176471,
+        "call": 0.0,
+        "raise_large": 0.4117647058823529
+      },
+      "regrets": {
+        "fold": 0.011574074074074075,
+        "call": 0.0,
+        "raise_large": 0.008101851851851851
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.375
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5882352941176471,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "ks"
+      ]
+    },
+    "ace_x_bluff_river_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 1.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.004071811997108696
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "raise_large",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "river",
+        "ksl"
+      ]
+    },
+    "weak_weak_made_river_kssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.0,
+        "raise_large": 0.5
+      },
+      "regrets": {
+        "fold": 0.0034722222222222225,
+        "call": 0.0,
+        "raise_large": 0.0034722222222222225
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.375
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "kssl"
+      ]
+    },
+    "ace_x_bluff_river_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.5,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "river",
+        "ksssl"
+      ]
+    },
+    "weak_weak_made_river_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.0,
+        "raise_large": 0.5
+      },
+      "regrets": {
+        "fold": 0.010416666666666668,
+        "call": 0.0,
+        "raise_large": 0.010416666666666668
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.375
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "km"
+      ]
+    },
+    "weak_weak_made_river_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.0,
+        "raise_large": 0.5
+      },
+      "regrets": {
+        "fold": 0.010416666666666668,
+        "call": 0.0,
+        "raise_large": 0.010416666666666668
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.375
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "kl"
+      ]
+    },
+    "ace_x_bluff_river_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 1.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.014251341989880439
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "raise_large",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "river",
+        "s"
+      ]
+    },
+    "weak_weak_made_river_sl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.6363636363636364,
+        "call": 0.0,
+        "raise_large": 0.36363636363636365
+      },
+      "regrets": {
+        "fold": 0.016203703703703703,
+        "call": 0.0,
+        "raise_large": 0.009259259259259259
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.375
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.6363636363636364,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "sl"
+      ]
+    },
+    "ace_x_bluff_river_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 1.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0061077179956630446
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "raise_large",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "river",
+        "ssl"
+      ]
+    },
+    "weak_weak_made_river_sssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "regrets": {
+        "fold": 0.006944444444444444,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 3,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.375
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "river",
+        "sssl"
+      ]
+    },
+    "ace_x_bluff_river_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "river",
+        "m"
+      ]
+    },
+    "ace_x_bluff_river_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "river",
+        "l"
+      ]
+    },
+    "weak_weak_made_turn_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.8397879667208539,
+        "call": 0.0,
+        "raise_large": 0.1602120332791461
+      },
+      "regrets": {
+        "fold": 0.05619047607611226,
+        "call": 0.0,
+        "raise_large": 0.01071983736350626
+      },
+      "visit_metadata": {
+        "visit_count": 6,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.6
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.8397879667208539,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "ks"
+      ]
+    },
+    "ace_x_bluff_turn_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 1.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.016287247988434783
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "raise_large",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "turn",
+        "ksl"
+      ]
+    },
+    "weak_weak_made_turn_kssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.020123531536872755,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 6,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.6
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "kssl"
+      ]
+    },
+    "ace_x_bluff_turn_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.5,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "turn",
+        "ksssl"
+      ]
+    },
+    "weak_weak_made_turn_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.802187871873852,
+        "call": 0.0,
+        "raise_large": 0.19781212812614796
+      },
+      "regrets": {
+        "fold": 0.05944126008998016,
+        "call": 0.0,
+        "raise_large": 0.014657666326259138
+      },
+      "visit_metadata": {
+        "visit_count": 6,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.6
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.802187871873852,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "km"
+      ]
+    },
+    "weak_weak_made_turn_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.7982881047173609,
+        "call": 0.0,
+        "raise_large": 0.2017118952826392
+      },
+      "regrets": {
+        "fold": 0.05933692558284127,
+        "call": 0.0,
+        "raise_large": 0.014993288323890935
+      },
+      "visit_metadata": {
+        "visit_count": 6,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.6
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.7982881047173609,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "kl"
+      ]
+    },
+    "ace_x_bluff_turn_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 1.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.057005367959521755
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "raise_large",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "turn",
+        "s"
+      ]
+    },
+    "weak_weak_made_turn_sl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.07701430751319205,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 6,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.6
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "sl"
+      ]
+    },
+    "ace_x_bluff_turn_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 1.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.024430871982652178
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "raise_large",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "turn",
+        "ssl"
+      ]
+    },
+    "weak_weak_made_turn_sssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "regrets": {
+        "fold": 0.027777777777777776,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 6,
+        "last_visited_iteration": 9,
+        "visit_frequency": 0.6
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "weak",
+        "made",
+        "turn",
+        "sssl"
+      ]
+    },
+    "ace_x_bluff_turn_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "turn",
+        "m"
+      ]
+    },
+    "ace_x_bluff_turn_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "turn",
+        "l"
+      ]
+    },
+    "ace_x_bluff_flop_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "ksl"
+      ]
+    },
+    "ace_x_bluff_flop_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.5,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "ksssl"
+      ]
+    },
+    "ace_x_bluff_flop_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "s"
+      ]
+    },
+    "ace_x_bluff_flop_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "ssl"
+      ]
+    },
+    "ace_x_bluff_flop_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "m"
+      ]
+    },
+    "ace_x_bluff_flop_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 4,
+        "visit_frequency": 0.2
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "bluff",
+        "flop",
+        "l"
+      ]
+    },
+    "ace_x_weak_made_flop_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 1.1721917719457609,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.125
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "flop",
+        "k"
+      ]
+    },
+    "ace_x_weak_made_flop_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.125
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "flop",
+        "ksl"
+      ]
+    },
+    "ace_x_weak_made_flop_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.125
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.5,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "flop",
+        "ksssl"
+      ]
+    },
+    "ace_x_weak_made_flop_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.09002527144978541,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.125
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "flop",
+        "s"
+      ]
+    },
+    "ace_x_weak_made_flop_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.125
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "flop",
+        "ssl"
+      ]
+    },
+    "ace_x_weak_made_flop_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.09002527144978541,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.125
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "flop",
+        "m"
+      ]
+    },
+    "ace_x_weak_made_flop_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.09002527144978541,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 7,
+        "visit_frequency": 0.125
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "ace",
+        "x",
+        "weak",
+        "made",
+        "flop",
+        "l"
+      ]
+    },
+    "premium_pair_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.14521259155278388,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "k"
+      ]
+    },
+    "premium_pair_weak_made_flop_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.25,
+        "bet_small": 0.25,
+        "bet_medium": 0.25,
+        "bet_large": 0.25
+      },
+      "regrets": {
+        "check": 0.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 0.25,
+        "min_probability": 0.25,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "weak",
+        "made",
+        "flop",
+        "k"
+      ]
+    },
+    "premium_pair_weak_made_turn_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.07211112176394245,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "weak",
+        "made",
+        "turn",
+        "k"
+      ]
+    },
+    "weak_strong_river_": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 0.0,
+        "bet_small": 0.3333333333333333,
+        "bet_medium": 0.3333333333333333,
+        "bet_large": 0.3333333333333333
+      },
+      "regrets": {
+        "check": 0.0,
+        "bet_small": 0.018836751183502046,
+        "bet_medium": 0.018836751183502046,
+        "bet_large": 0.018836751183502046
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "bet_small",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "strong",
+        "river",
+        ""
+      ]
+    },
+    "premium_pair_strong_river_k": {
+      "legal_actions": [
+        "check",
+        "bet_small",
+        "bet_medium",
+        "bet_large"
+      ],
+      "average_strategy": {
+        "check": 1.0,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "regrets": {
+        "check": 0.12488991247990855,
+        "bet_small": 0.0,
+        "bet_medium": 0.0,
+        "bet_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "check",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "strong",
+        "river",
+        "k"
+      ]
+    },
+    "weak_strong_river_ks": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.001953125,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "strong",
+        "river",
+        "ks"
+      ]
+    },
+    "premium_pair_strong_river_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "strong",
+        "river",
+        "ksl"
+      ]
+    },
+    "weak_strong_river_kssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0006510416666666666,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "strong",
+        "river",
+        "kssl"
+      ]
+    },
+    "premium_pair_strong_river_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.5,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "strong",
+        "river",
+        "ksssl"
+      ]
+    },
+    "weak_strong_river_km": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0019965277777777776,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "strong",
+        "river",
+        "km"
+      ]
+    },
+    "weak_strong_river_kl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0019965277777777776,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "strong",
+        "river",
+        "kl"
+      ]
+    },
+    "premium_pair_strong_river_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.004245993248526934,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "strong",
+        "river",
+        "s"
+      ]
+    },
+    "weak_strong_river_sl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0026041666666666665,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "strong",
+        "river",
+        "sl"
+      ]
+    },
+    "premium_pair_strong_river_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "strong",
+        "river",
+        "ssl"
+      ]
+    },
+    "weak_strong_river_sssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 1.0,
+        "call": 0.0
+      },
+      "regrets": {
+        "fold": 0.0008680555555555555,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "weak",
+        "strong",
+        "river",
+        "sssl"
+      ]
+    },
+    "premium_pair_strong_river_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.004245993248526934,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "strong",
+        "river",
+        "m"
+      ]
+    },
+    "premium_pair_strong_river_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.004245993248526934,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "strong",
+        "river",
+        "l"
+      ]
+    },
+    "premium_pair_weak_made_turn_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.01971252957889013,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "weak",
+        "made",
+        "turn",
+        "ksl"
+      ]
+    },
+    "premium_pair_weak_made_turn_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.5,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "weak",
+        "made",
+        "turn",
+        "ksssl"
+      ]
+    },
+    "premium_pair_weak_made_turn_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.08891377526543642,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "weak",
+        "made",
+        "turn",
+        "s"
+      ]
+    },
+    "premium_pair_weak_made_turn_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.00493837812609438,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "weak",
+        "made",
+        "turn",
+        "ssl"
+      ]
+    },
+    "premium_pair_weak_made_turn_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.02693025086340836,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "weak",
+        "made",
+        "turn",
+        "m"
+      ]
+    },
+    "premium_pair_weak_made_turn_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.10630457341616892,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "weak",
+        "made",
+        "turn",
+        "l"
+      ]
+    },
+    "premium_pair_weak_made_flop_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "weak",
+        "made",
+        "flop",
+        "ksl"
+      ]
+    },
+    "premium_pair_weak_made_flop_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.5,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "weak",
+        "made",
+        "flop",
+        "ksssl"
+      ]
+    },
+    "premium_pair_weak_made_flop_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.05013906438256499,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "weak",
+        "made",
+        "flop",
+        "s"
+      ]
+    },
+    "premium_pair_weak_made_flop_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "weak",
+        "made",
+        "flop",
+        "ssl"
+      ]
+    },
+    "premium_pair_weak_made_flop_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.11487229086930298,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "weak",
+        "made",
+        "flop",
+        "m"
+      ]
+    },
+    "premium_pair_weak_made_flop_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.0,
+        "call": 1.0,
+        "raise_large": 0.0
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.2222222222222222,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "call",
+        "max_probability": 1.0,
+        "min_probability": 0.0,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "weak",
+        "made",
+        "flop",
+        "l"
+      ]
+    },
+    "premium_pair_ksl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "ksl"
+      ]
+    },
+    "premium_pair_ksssl": {
+      "legal_actions": [
+        "fold",
+        "call"
+      ],
+      "average_strategy": {
+        "fold": 0.5,
+        "call": 0.5
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.5,
+        "min_probability": 0.5,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "ksssl"
+      ]
+    },
+    "premium_pair_s": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "s"
+      ]
+    },
+    "premium_pair_ssl": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "ssl"
+      ]
+    },
+    "premium_pair_m": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "m"
+      ]
+    },
+    "premium_pair_l": {
+      "legal_actions": [
+        "fold",
+        "call",
+        "raise_large"
+      ],
+      "average_strategy": {
+        "fold": 0.3333333333333333,
+        "call": 0.3333333333333333,
+        "raise_large": 0.3333333333333333
+      },
+      "regrets": {
+        "fold": 0.0,
+        "call": 0.0,
+        "raise_large": 0.0
+      },
+      "visit_metadata": {
+        "visit_count": 1,
+        "last_visited_iteration": 8,
+        "visit_frequency": 0.1111111111111111
+      },
+      "strategy_metadata": {
+        "dominant_action": "fold",
+        "max_probability": 0.3333333333333333,
+        "min_probability": 0.3333333333333333,
+        "strategy_sum": 1.0
+      },
+      "key_parts": [
+        "premium",
+        "pair",
+        "l"
+      ]
+    }
+  }
+}
