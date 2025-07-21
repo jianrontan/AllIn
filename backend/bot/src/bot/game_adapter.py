@@ -9,26 +9,30 @@ class GameAdapter:
         self.action_abstractions = ActionAbstraction()
 
     def create_info_set_key(self, hole_card, round_state):
-        """
-        Leduc: f"{card}_{history}" or f"{card}_{community_card}_{history}"
-        """
-
-        betting_pattern = self.extract_betting_history(round_state)
-
+        """Generate info set key directly from CFR history without conversion"""
+        
+        # Extract cfr history
+        cfr_history = round_state.get('cfr_history', [])
+        betting_pattern = ''.join([self.cfr_action_to_char(action) for action in cfr_history])
+        
         if round_state.get('street') == 'preflop':
-            # Preflop: just starting hand
             card_bucket = self.card_abstractions.get_bucket(hole_card, None)
             return f"{card_bucket}_{betting_pattern}"
         else:
-            # Postflop: starting hand + current strength + street
-            starting_hand = self.card_abstractions.get_bucket(
-                hole_card, None)  # Preflop bucket
+            starting_hand = self.card_abstractions.get_bucket(hole_card, None)
             current_strength = self.card_abstractions.get_bucket(
-                # Postflop bucket
                 hole_card, round_state.get('community_card'))
             street = round_state.get('street')
-
             return f"{starting_hand}_{current_strength}_{street}_{betting_pattern}"
+
+    def cfr_action_to_char(self, cfr_action):
+        """Convert CFR action to single character"""
+        mapping = {
+            'check': 'k', 'call': 'c', 'fold': 'f',
+            'bet_small': 's', 'bet_medium': 'm', 'bet_large': 'l',
+            'raise_small': 's', 'raise_medium': 'm', 'raise_large': 'l'
+        }
+        return mapping.get(cfr_action, 'x')
 
     def extract_betting_history(self, round_state):
         """

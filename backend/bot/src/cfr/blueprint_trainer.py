@@ -42,7 +42,7 @@ class BlueprintTrainer:
 
         return p0_cards, p1_cards, community_cards
 
-    def cfr(self, p0_cards, p1_cards, community_cards, history, p0_reach, p1_reach, street, depth=0, iteration=0):
+    def cfr(self, p0_cards, p1_cards, community_cards, history, p0_reach, p1_reach, street, depth=0, iteration=0, accumulated_pot=None):
         """
         Core CFR algorithm - like the Leduc cfr method
         """
@@ -54,23 +54,26 @@ class BlueprintTrainer:
 
         if street > 3:
             return self.game.get_utility(p0_cards, p1_cards, community_cards,
-                                         history, 3)
+                                         history, 3, accumulated_pot)
 
         # Check if terminal
         if self.game.is_terminal(history, street):
             return self.game.get_utility(p0_cards, p1_cards, community_cards,
-                                         history, street)
+                                         history, street, accumulated_pot)
+
+        if accumulated_pot is None:
+            accumulated_pot = 3
 
         # Get legal actions using my game logic
-        legal_actions = self.game.get_legal_actions(history)
+        legal_actions = self.game.get_legal_actions(street, history, accumulated_pot)
         if not legal_actions:  # Round complete
             if street < 3:  # Only advance if not already at river
                 return self.cfr(p0_cards, p1_cards, community_cards, [],
-                                p0_reach, p1_reach, street + 1, depth + 1, iteration)
+                                p0_reach, p1_reach, street + 1, depth + 1, iteration, accumulated_pot)
             else:
                 # Already at river, game should be terminal
                 return self.game.get_utility(p0_cards, p1_cards, community_cards,
-                                             history, street)
+                                             history, street, accumulated_pot)
 
         # Determine current player
         current_player = len(history) % 2
@@ -78,7 +81,7 @@ class BlueprintTrainer:
 
         # Create info set key using my GameAdapter
         round_state = self.create_round_state_for_info_set(
-            community_cards, history, street)
+            community_cards, history, street, accumulated_pot)
         info_set_key = self.game_adapter.create_info_set_key(
             player_cards, round_state)
 
@@ -101,14 +104,17 @@ class BlueprintTrainer:
         for i, action in enumerate(legal_actions):
             next_history = history + [action]
 
+            new_accumulated_pot = self.calculate_pot_after_action(
+                action, street, accumulated_pot, history)
+
             if current_player == 0:
                 action_utilities[action] = -self.cfr(
                     p0_cards, p1_cards, community_cards, next_history,
-                    p0_reach * strategy[i], p1_reach, street, depth + 1, iteration)
+                    p0_reach * strategy[i], p1_reach, street, depth + 1, iteration, new_accumulated_pot)
             else:
                 action_utilities[action] = -self.cfr(
                     p0_cards, p1_cards, community_cards, next_history,
-                    p0_reach, p1_reach * strategy[i], street, depth + 1, iteration)
+                    p0_reach, p1_reach * strategy[i], street, depth + 1, iteration, new_accumulated_pot)
 
             node_utility += strategy[i] * action_utilities[action]
 
@@ -128,72 +134,58 @@ class BlueprintTrainer:
 
         return node_utility
 
-    def create_round_state_for_info_set(self, community_cards, history, street):
-        """Create round_state with REAL pot-relative amounts"""
+    def calculate_pot_after_action(self, action, street, current_accumulated_pot, history):
+        """Calculate what the pot size will be after taking this action"""
 
+        if action in ['check', 'fold']:
+            return current_accumulated_pot  # No change to pot
+
+        elif action == 'call':
+            # Add the call amount to the pot
+            call_amount = self.game.get_call_amount_from_history(street, history, current_accumulated_pot)
+            return current_accumulated_pot + call_amount
+
+        elif action.startswith('bet_'):
+            # Add the bet amount to the pot
+            if action.endswith('_small'):
+                bet_amount = 0.33 * current_accumulated_pot
+            elif action.endswith('_medium'):
+                bet_amount = 0.66 * current_accumulated_pot
+            elif action.endswith('_large'):
+                bet_amount = 1.0 * current_accumulated_pot
+            else:
+                bet_amount = 0
+            return current_accumulated_pot + bet_amount
+
+        elif action.startswith('raise_'):
+            # Add the raise amount to the pot
+            current_player = len(history) % 2
+            contribution = self.game.get_player_contribution_this_round(history, current_accumulated_pot, current_player)
+            if action.endswith('_small'):
+                raise_amount = (0.33 * current_accumulated_pot) - contribution
+            elif action.endswith('_medium'):
+                raise_amount = (0.66 * current_accumulated_pot) - contribution
+            elif action.endswith('_large'):
+                raise_amount = (1.0 * current_accumulated_pot) - contribution
+            else:
+                raise_amount = 0
+            return current_accumulated_pot + raise_amount
+
+        else:
+            return current_accumulated_pot
+
+    def create_round_state_for_info_set(self, community_cards, history, street, accumulated_pot):
+        """Simplified version that passes CFR history directly"""
+        
         street_names = ['preflop', 'flop', 'turn', 'river']
-        community_for_street = community_cards[:self.game.get_community_cards_count(
-            street)]
-
-        # Calculate REAL game state
-        current_pot_size = self.game.calculate_current_pot_size(history)
-        p0_stack = self.game.calculate_player_stack_after_history(0, history)
-        p1_stack = self.game.calculate_player_stack_after_history(1, history)
-
-        # Calculate current bet and contributions
-        current_bet = 0
-        p0_contribution = 0
-        p1_contribution = 0
-        current_player = 0
-
-        for action in history:
-            if action.startswith('bet_') or action.startswith('raise_'):
-                bet_amount = self.game.calculate_bet_amount_for_action(
-                    action, current_pot_size)
-                current_bet = bet_amount
-                if current_player == 0:
-                    p0_contribution += bet_amount
-                else:
-                    p1_contribution += bet_amount
-            elif action == 'call':
-                if current_player == 0:
-                    p0_contribution += current_bet
-                else:
-                    p1_contribution += current_bet
-
-            # Advance player
-            if action in ['check', 'bet_small', 'bet_medium', 'bet_large',
-                          'raise_small', 'raise_medium', 'raise_large', 'call', 'fold']:
-                current_player = 1 - current_player
-
-        # Convert actions with consistent pot calculation
-        converted_actions = []
-        for i, action in enumerate(history):
-            if action.startswith('bet_') or action.startswith('raise_'):
-                # Use pot size at the time of this specific action
-                partial_history = history[:i]
-                pot_at_action_time = self.game.calculate_current_pot_size(
-                    partial_history, 3)
-                bet_amount = self.game.calculate_bet_amount_for_action(
-                    action, pot_at_action_time)
-
-                action_type = 'bet' if action.startswith('bet_') else 'raise'
-                converted_actions.append(
-                    {'action': action_type, 'amount': bet_amount})
-            elif action in ['check', 'call', 'fold']:
-                converted_actions.append({'action': action, 'amount': 0})
-
+        community_for_street = community_cards[:self.game.get_community_cards_count(street)]
+        
         return {
             'street': street_names[street],
             'community_card': community_for_street,
-            'action_histories': {
-                street_names[street]: converted_actions
-            },
-            'pot': {'main': {'amount': current_pot_size}},
-            'seats': [
-                {'stack': p0_stack, 'uuid': 'player_0'},
-                {'stack': p1_stack, 'uuid': 'player_1'}
-            ]
+            'cfr_history': history,
+            'pot': {'main': {'amount': accumulated_pot}},
+            'accumulated_pot': accumulated_pot
         }
 
     def train_blueprint(self, iterations):
@@ -210,7 +202,7 @@ class BlueprintTrainer:
 
             # Run CFR iteration
             util = self.cfr(p0_cards, p1_cards,
-                            community_cards, [], 1.0, 1.0, 0, 0, i)
+                            community_cards, [], 1.0, 1.0, 0, 0, i, 3)
             expected_value += util
 
             print(f"Completed iteration {i + 1}, utility: {util}")
