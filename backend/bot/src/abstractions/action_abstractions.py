@@ -1,3 +1,4 @@
+# backend/bot/abstractions/action_abstractions.py
 class ActionAbstraction:
     """
     Like ['k', 'b', 'c', 'r', 'f'] but with bet sizing
@@ -8,18 +9,17 @@ class ActionAbstraction:
             'small': 0.33,    # 1/3 pot
             'medium': 0.66,   # 2/3 pot
             'large': 1.0,     # pot bet
-            'overbet': 1.5,   # 1.5x pot
         }
 
     def is_legal_bet_size(self, game_state, multiplier):
         """
         Check if bet size is legal
-        Based on search results[4]: min bet = max(big blind, current bet), max = stack
+        min bet = max(big blind, current bet), max = stack
         """
         pot_size = game_state.get('pot_size', 0)
         player_stack = game_state.get('player_stack', 0)
         current_bet = game_state.get('current_bet', 0)
-        big_blind = game_state.get('big_blind', 1)
+        big_blind = game_state.get('big_blind', 2)
 
         # Calculate actual bet amount
         if multiplier == 'stack':  # All-in case
@@ -27,8 +27,8 @@ class ActionAbstraction:
         else:
             bet_amount = multiplier * pot_size
 
-        # Minimum bet requirement (from search results[4])
-        min_bet = max(big_blind, current_bet)
+        # Minimum bet requirement
+        min_bet = max(big_blind, current_bet, 2)
 
         # Check constraints
         if bet_amount < min_bet:
@@ -63,13 +63,13 @@ class ActionAbstraction:
 
     def categorize_bet_size(self, action, game_state):
         """
-        Determine if bet is small/medium/large/overbet
+        Determine if bet is small/medium/large
         """
         bet_amount = action.get('amount', 0)
         pot_size = game_state.get('pot_size', 1)
-        
+
         pre_bet_pot_size = pot_size - bet_amount
-        
+
         if pre_bet_pot_size <= 0:
             pre_bet_pot_size = pot_size
 
@@ -81,14 +81,12 @@ class ActionAbstraction:
         bet_ratio = bet_amount / pre_bet_pot_size
 
         # Categorize based on defined bet sizes
-        if bet_ratio <= 0.5:
+        if bet_ratio <= 0.49:       # 30-49% pot
             return 'small'
-        elif bet_ratio <= 0.8:
+        elif bet_ratio <= 0.7:      # 50-70% pot
             return 'medium'
-        elif bet_ratio <= 1.0:
+        else:                       # >70% pit
             return 'large'
-        else:
-            return 'overbet'
 
     def pypoker_to_cfr_actions(self, pypoker_valid_actions, game_state):
         """
@@ -107,10 +105,6 @@ class ActionAbstraction:
                     if self.is_legal_bet_size(game_state, multiplier):
                         cfr_actions.append(f"{action_type}_{size_name}")
 
-                # Add all-in option
-                if self.is_legal_bet_size(game_state, 'stack'):
-                    cfr_actions.append('all_in')
-
         # Remove duplicates while preserving order
         return list(dict.fromkeys(cfr_actions))
 
@@ -122,14 +116,13 @@ class ActionAbstraction:
         if cfr_action == 'fold':
             return 'fold', 0
         elif cfr_action == 'call':
-            required_call = game_state.get('current_bet', 0) - game_state.get('player_contribution', 0)
+            required_call = game_state.get(
+                'current_bet', 0) - game_state.get('player_contribution', 0)
             player_stack = game_state.get('player_stack', 0)
             call_amount = min(required_call, player_stack)
             return 'call', call_amount
         elif cfr_action == 'check':
             return 'check', 0
-        elif cfr_action == 'all_in':
-            return 'raise', game_state.get('player_stack', 0)
         elif cfr_action.startswith('bet_'):
             size_name = cfr_action.split('_')[1]
             multiplier = self.bet_sizes[size_name]
