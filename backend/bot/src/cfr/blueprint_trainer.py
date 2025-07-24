@@ -23,6 +23,7 @@ class BlueprintTrainer:
 
         # Create deck for dealing
         self.deck = self.create_deck()
+        self.BET_MULTIPLIERS = {'small': 0.33, 'medium': 0.66, 'large': 1.00}
 
     def create_deck(self):
         """Create standard 52-card deck"""
@@ -65,7 +66,8 @@ class BlueprintTrainer:
             accumulated_pot = 3
 
         # Get legal actions using my game logic
-        legal_actions = self.game.get_legal_actions(street, history, accumulated_pot)
+        legal_actions = self.game.get_legal_actions(
+            street, history, accumulated_pot)
         if not legal_actions:  # Round complete
             if street < 3:  # Only advance if not already at river
                 return self.cfr(p0_cards, p1_cards, community_cards, [],
@@ -142,33 +144,54 @@ class BlueprintTrainer:
 
         elif action == 'call':
             # Add the call amount to the pot
-            call_amount = self.game.get_call_amount_from_history(street, history, current_accumulated_pot)
+            call_amount = self.game.get_call_amount_from_history(
+                street, history, current_accumulated_pot)
             return current_accumulated_pot + call_amount
 
         elif action.startswith('bet_'):
-            # Add the bet amount to the pot
-            if action.endswith('_small'):
-                bet_amount = 0.33 * current_accumulated_pot
-            elif action.endswith('_medium'):
-                bet_amount = 0.66 * current_accumulated_pot
-            elif action.endswith('_large'):
-                bet_amount = 1.0 * current_accumulated_pot
+            current_player = len(history) % 2
+
+            if street == 0:  # Preflop - use BB-based amounts
+                action_type = self.game.get_preflop_action_type(history)
+                bet_amounts = self.game.get_preflop_bet_amounts(
+                    action_type, current_accumulated_pot)
+                size = action.split('_')[1]
+                target_amount = bet_amounts[size]  # Total commitment
+
+                # Subtract existing contribution (same logic as raises)
+                existing_contribution = self.game.get_player_contribution_this_round(
+                    history, street, current_accumulated_pot, current_player)
+                additional_amount = target_amount - existing_contribution
+            # Postflop - use pot-relative (no existing contribution issue)
             else:
-                bet_amount = 0
-            return current_accumulated_pot + bet_amount
+                size = action.split('_')[1]
+                additional_amount = self.game.BET_MULTIPLIERS[size] * \
+                    current_accumulated_pot
+
+            return current_accumulated_pot + additional_amount
 
         elif action.startswith('raise_'):
-            # Add the raise amount to the pot
             current_player = len(history) % 2
-            contribution = self.game.get_player_contribution_this_round(history, current_accumulated_pot, current_player)
-            if action.endswith('_small'):
-                raise_amount = (0.33 * current_accumulated_pot) - contribution
-            elif action.endswith('_medium'):
-                raise_amount = (0.66 * current_accumulated_pot) - contribution
-            elif action.endswith('_large'):
-                raise_amount = (1.0 * current_accumulated_pot) - contribution
-            else:
-                raise_amount = 0
+            contribution = self.game.get_player_contribution_this_round(
+                history, street, current_accumulated_pot, current_player)
+
+            if street == 0:  # Preflop - use BB-based amounts
+                action_type = self.game.get_preflop_action_type(history)
+                if action_type != 'pot_relative':  # BB-multiple phase
+                    bet_amounts = self.game.get_preflop_bet_amounts(
+                        action_type, current_accumulated_pot)
+                    size = action.split('_')[1]
+                    target_amount = bet_amounts[size]
+                else:  # Switched to pot-relative
+                    size = action.split('_')[1]
+                    target_amount = self.game.BET_MULTIPLIERS[size] * \
+                        current_accumulated_pot
+            else:  # Postflop - use pot-relative
+                size = action.split('_')[1]
+                target_amount = self.game.BET_MULTIPLIERS[size] * \
+                    current_accumulated_pot
+
+            raise_amount = target_amount - contribution
             return current_accumulated_pot + raise_amount
 
         else:
@@ -176,10 +199,11 @@ class BlueprintTrainer:
 
     def create_round_state_for_info_set(self, community_cards, history, street, accumulated_pot):
         """Simplified version that passes CFR history directly"""
-        
+
         street_names = ['preflop', 'flop', 'turn', 'river']
-        community_for_street = community_cards[:self.game.get_community_cards_count(street)]
-        
+        community_for_street = community_cards[:self.game.get_community_cards_count(
+            street)]
+
         return {
             'street': street_names[street],
             'community_card': community_for_street,
