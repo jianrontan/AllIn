@@ -43,45 +43,56 @@ class BlueprintTrainer:
 
         return p0_cards, p1_cards, community_cards
 
-    def cfr(self, p0_cards, p1_cards, community_cards, history, p0_reach, p1_reach, street, depth=0, iteration=0, accumulated_pot=None):
+    def cfr(self, p0_cards, p1_cards, community_cards, history, p0_reach, p1_reach, street, updating_player, depth=0, iteration=0, accumulated_pot=None):
         """
-        Core CFR algorithm - like the Leduc cfr method
+        Monte Carlo CFR+ with External Sampling
+        - Updating player: explores all actions
+        - Opponent: samples single action based on strategy
         """
-        # Infinite recursion catching
+
+        # Depth limiting to prevent infinite recursion
         if depth > 50:
             print(
                 f"WARNING: Max depth reached at street {street}, history {history}")
-            return 0
+            if accumulated_pot is None:
+                accumulated_pot = 3
+            return self.game.get_utility(p0_cards, p1_cards, community_cards,
+                                         history, min(street, 3), accumulated_pot)
 
+        # Initialize accumulated pot if not provided
+        if accumulated_pot is None:
+            accumulated_pot = 3  # Starting pot: SB(1) + BB(2)
+
+        # Check for terminal states
         if street > 3:
             return self.game.get_utility(p0_cards, p1_cards, community_cards,
                                          history, 3, accumulated_pot)
 
-        # Check if terminal
         if self.game.is_terminal(history, street):
             return self.game.get_utility(p0_cards, p1_cards, community_cards,
                                          history, street, accumulated_pot)
-
-        if accumulated_pot is None:
-            accumulated_pot = 3
-
-        # Get legal actions using my game logic
-        legal_actions = self.game.get_legal_actions(
-            street, history, accumulated_pot)
-        if not legal_actions:  # Round complete
-            if street < 3:  # Only advance if not already at river
-                return self.cfr(p0_cards, p1_cards, community_cards, [],
-                                p0_reach, p1_reach, street + 1, depth + 1, iteration, accumulated_pot)
-            else:
-                # Already at river, game should be terminal
-                return self.game.get_utility(p0_cards, p1_cards, community_cards,
-                                             history, street, accumulated_pot)
 
         # Determine current player
         current_player = len(history) % 2
         player_cards = p0_cards if current_player == 0 else p1_cards
 
-        # Create info set key using my GameAdapter
+        # Get legal actions for current situation
+        legal_actions = self.game.get_legal_actions(
+            street, history, accumulated_pot, current_player)
+
+        # If no legal actions, advance to next street or terminal
+        if not legal_actions:
+            if street < 3:
+                # Advance to next street with empty history
+                return self.cfr(p0_cards, p1_cards, community_cards, [],
+                                p0_reach, p1_reach, street + 1, updating_player,
+                                depth + 1, iteration, accumulated_pot)
+            else:
+                # Terminal - evaluate final outcome
+                return self.game.get_utility(p0_cards, p1_cards, community_cards,
+                                             history, street, accumulated_pot)
+
+        # Create information set
         round_state = self.create_round_state_for_info_set(
             community_cards, history, street, accumulated_pot)
         info_set_key = self.game_adapter.create_info_set_key(
@@ -90,55 +101,88 @@ class BlueprintTrainer:
         # Get or create information set
         if info_set_key not in self.info_sets:
             self.info_sets[info_set_key] = InformationSet()
+
         info_set = self.info_sets[info_set_key]
 
-        # Get strategy from information set
-        reach_prob = p0_reach if current_player == 0 else p1_reach
-        strategy = info_set.get_strategy(legal_actions, reach_prob)
+        # Update visit tracking
         if info_set.last_visited_iteration != iteration:
             info_set.visit_count += 1
             info_set.last_visited_iteration = iteration
 
-        # Calculate utilities for each action
-        action_utilities = {}
-        node_utility = 0
+        # Get current strategy
+        reach_prob = p0_reach if current_player == 0 else p1_reach
+        strategy = info_set.get_strategy(legal_actions, reach_prob)
 
-        for i, action in enumerate(legal_actions):
-            next_history = history + [action]
+        if current_player == updating_player:
+            # UPDATING PLAYER: Explore all actions
+            action_utilities = {}
+            node_utility = 0
 
+            for i, action in enumerate(legal_actions):
+                next_history = history + [action]
+                new_accumulated_pot = self.calculate_pot_after_action(
+                    action, street, accumulated_pot, history)
+
+                if current_player == 0:
+                    action_utilities[action] = -self.cfr(
+                        p0_cards, p1_cards, community_cards, next_history,
+                        p0_reach *
+                        strategy[i], p1_reach, street, updating_player,
+                        depth + 1, iteration, new_accumulated_pot)
+                else:
+                    action_utilities[action] = -self.cfr(
+                        p0_cards, p1_cards, community_cards, next_history,
+                        p0_reach, p1_reach *
+                        strategy[i], street, updating_player,
+                        depth + 1, iteration, new_accumulated_pot)
+
+                node_utility += strategy[i] * action_utilities[action]
+
+            # Update regrets (CFR+ with regret floor)
+            for i, action in enumerate(legal_actions):
+                regret = action_utilities[action] - node_utility
+
+                if action not in info_set.cumulative_regrets:
+                    info_set.cumulative_regrets[action] = 0
+
+                # CFR+ regret update with floor at 0
+                if current_player == 0:
+                    info_set.cumulative_regrets[action] = max(
+                        0, info_set.cumulative_regrets.get(action, 0) + p1_reach * regret)
+                else:
+                    info_set.cumulative_regrets[action] = max(
+                        0, info_set.cumulative_regrets.get(action, 0) + p0_reach * regret)
+
+            return node_utility
+
+        else:
+            # OPPONENT: Sample single action based on strategy
+            import random
+            sampled_action = random.choices(legal_actions, weights=strategy)[0]
+            sampled_prob = strategy[legal_actions.index(sampled_action)]
+
+            next_history = history + [sampled_action]
             new_accumulated_pot = self.calculate_pot_after_action(
-                action, street, accumulated_pot, history)
+                sampled_action, street, accumulated_pot, history)
 
             if current_player == 0:
-                action_utilities[action] = -self.cfr(
+                return -self.cfr(
                     p0_cards, p1_cards, community_cards, next_history,
-                    p0_reach * strategy[i], p1_reach, street, depth + 1, iteration, new_accumulated_pot)
+                    p0_reach * sampled_prob, p1_reach, street, updating_player,
+                    depth + 1, iteration, new_accumulated_pot)
             else:
-                action_utilities[action] = -self.cfr(
+                return -self.cfr(
                     p0_cards, p1_cards, community_cards, next_history,
-                    p0_reach, p1_reach * strategy[i], street, depth + 1, iteration, new_accumulated_pot)
-
-            node_utility += strategy[i] * action_utilities[action]
-
-        # Update regrets for all actions
-        for i, action in enumerate(legal_actions):
-            regret = action_utilities[action] - node_utility
-
-            if action not in info_set.cumulative_regrets:
-                info_set.cumulative_regrets[action] = 0
-
-            if current_player == 0:
-                info_set.cumulative_regrets[action] = max(
-                    0, info_set.cumulative_regrets.get(action, 0) + p1_reach * regret)
-            else:
-                info_set.cumulative_regrets[action] = max(
-                    0, info_set.cumulative_regrets.get(action, 0) + p0_reach * regret)
-
-        return node_utility
+                    p0_reach, p1_reach * sampled_prob, street, updating_player,
+                    depth + 1, iteration, new_accumulated_pot)
 
     def calculate_pot_after_action(self, action, street, current_accumulated_pot, history):
         """Calculate what the pot size will be after taking this action"""
 
+        # print(
+        #     f"DEBUG: action={action}, street={street}, pot={current_accumulated_pot}, history={history}")
+
+        old_pot = current_accumulated_pot
         if action in ['check', 'fold']:
             return current_accumulated_pot  # No change to pot
 
@@ -146,6 +190,14 @@ class BlueprintTrainer:
             # Add the call amount to the pot
             call_amount = self.game.get_call_amount_from_history(
                 street, history, current_accumulated_pot)
+
+            new_pot = current_accumulated_pot + call_amount
+            # print(
+            #     f"DEBUG: pot change: {old_pot} -> {new_pot} (added {new_pot - old_pot})")
+            # if new_pot > 10000:
+            #     print(f"ERROR: Pot explosion detected!")
+            #     raise ValueError(f"Pot too large: {new_pot}")
+
             return current_accumulated_pot + call_amount
 
         elif action.startswith('bet_'):
@@ -168,30 +220,59 @@ class BlueprintTrainer:
                 additional_amount = self.game.BET_MULTIPLIERS[size] * \
                     current_accumulated_pot
 
+            new_pot = current_accumulated_pot + additional_amount
+            # print(
+            #     f"DEBUG: pot change: {old_pot} -> {new_pot} (added {new_pot - old_pot})")
+            # if new_pot > 10000:
+            #     print(f"ERROR: Pot explosion detected!")
+            #     raise ValueError(f"Pot too large: {new_pot}")
+
             return current_accumulated_pot + additional_amount
 
         elif action.startswith('raise_'):
             current_player = len(history) % 2
+
+            # For raises, target is based on current pot (pot before this raise)
+            pot_before_action = current_accumulated_pot
+
+            # Calculate target total contribution this round
+            if street == 0:  # Preflop
+                action_type = self.game.get_preflop_action_type(history)
+                if action_type != 'pot_relative':
+                    bet_amounts = self.game.get_preflop_bet_amounts(
+                        action_type, pot_before_action)
+                    size = action.split('_')[1]
+                    target_amount = bet_amounts[size]
+                else:
+                    size = action.split('_')[1]
+                    target_amount = self.game.BET_MULTIPLIERS[size] * \
+                        pot_before_action
+            else:  # Postflop
+                size = action.split('_')[1]
+                target_amount = self.game.BET_MULTIPLIERS[size] * pot_before_action
+
+            # Get player's current contribution this round
             contribution = self.game.get_player_contribution_this_round(
                 history, street, current_accumulated_pot, current_player)
 
-            if street == 0:  # Preflop - use BB-based amounts
-                action_type = self.game.get_preflop_action_type(history)
-                if action_type != 'pot_relative':  # BB-multiple phase
-                    bet_amounts = self.game.get_preflop_bet_amounts(
-                        action_type, current_accumulated_pot)
-                    size = action.split('_')[1]
-                    target_amount = bet_amounts[size]
-                else:  # Switched to pot-relative
-                    size = action.split('_')[1]
-                    target_amount = self.game.BET_MULTIPLIERS[size] * \
-                        current_accumulated_pot
-            else:  # Postflop - use pot-relative
-                size = action.split('_')[1]
-                target_amount = self.game.BET_MULTIPLIERS[size] * \
-                    current_accumulated_pot
-
+            # Additional amount needed
             raise_amount = target_amount - contribution
+
+            if raise_amount <= 0:
+                print(
+                    f"ERROR: Invalid raise amount {raise_amount} for {action}")
+                print(
+                    f"  target_amount: {target_amount}, contribution: {contribution}, current_pot: {current_accumulated_pot}")
+                print(f"  history: {history}, street: {street}")
+                raise ValueError("Negative raise amount")
+
+            new_pot = current_accumulated_pot + raise_amount
+            # print(
+            #     f"DEBUG: pot change: {old_pot} -> {new_pot} (added {new_pot - old_pot})")
+            # if new_pot > 10000:
+            #     print(f"ERROR: Pot explosion detected!")
+            #     raise ValueError(f"Pot too large: {new_pot}")
+
             return current_accumulated_pot + raise_amount
 
         else:
@@ -224,9 +305,11 @@ class BlueprintTrainer:
 
             print(f"Starting iteration {i + 1}...")
 
+            updating_player = i % 2
+
             # Run CFR iteration
             util = self.cfr(p0_cards, p1_cards,
-                            community_cards, [], 1.0, 1.0, 0, 0, i, 3)
+                            community_cards, [], 1.0, 1.0, 0, updating_player, 0, i, 3)
             expected_value += util
 
             print(f"Completed iteration {i + 1}, utility: {util}")

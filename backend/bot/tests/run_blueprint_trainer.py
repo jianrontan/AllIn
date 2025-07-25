@@ -504,5 +504,5 @@ def run_enhanced_training(iterations=1000):
 if __name__ == "__main__":
     # Run with different iteration counts as needed
     # run_enhanced_training(100)     # Quick test
-    run_enhanced_training(15)  # Standard training
+    run_enhanced_training(700000)  # Standard training
     # run_enhanced_training(3000)  # Extended training
