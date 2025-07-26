@@ -43,7 +43,7 @@ class BlueprintTrainer:
 
         return p0_cards, p1_cards, community_cards
 
-    def cfr(self, p0_cards, p1_cards, community_cards, history, p0_reach, p1_reach, street, updating_player, depth=0, iteration=0, accumulated_pot=None):
+    def cfr(self, p0_cards, p1_cards, community_cards, history, p0_reach, p1_reach, street, updating_player, depth=0, iteration=0, starting_pot=None):
         """
         Monte Carlo CFR+ with External Sampling
         - Updating player: explores all actions
@@ -54,23 +54,21 @@ class BlueprintTrainer:
         if depth > 50:
             print(
                 f"WARNING: Max depth reached at street {street}, history {history}")
-            if accumulated_pot is None:
-                accumulated_pot = 3
             return self.game.get_utility(p0_cards, p1_cards, community_cards,
-                                         history, min(street, 3), accumulated_pot)
+                                         history, min(street, 3), starting_pot)
 
         # Initialize accumulated pot if not provided
-        if accumulated_pot is None:
-            accumulated_pot = 3  # Starting pot: SB(1) + BB(2)
+        if starting_pot is None:
+            starting_pot = 3  # Starting pot: SB(1) + BB(2)
 
         # Check for terminal states
         if street > 3:
             return self.game.get_utility(p0_cards, p1_cards, community_cards,
-                                         history, 3, accumulated_pot)
+                                         history, 3, starting_pot)
 
         if self.game.is_terminal(history, street):
             return self.game.get_utility(p0_cards, p1_cards, community_cards,
-                                         history, street, accumulated_pot)
+                                         history, street, starting_pot)
 
         # Determine current player
         current_player = len(history) % 2
@@ -78,23 +76,25 @@ class BlueprintTrainer:
 
         # Get legal actions for current situation
         legal_actions = self.game.get_legal_actions(
-            street, history, accumulated_pot, current_player)
+            street, history, starting_pot, current_player)
 
         # If no legal actions, advance to next street or terminal
         if not legal_actions:
+            current_pot = self.game.calculate_current_pot(
+                starting_pot, history, street)
             if street < 3:
                 # Advance to next street with empty history
                 return self.cfr(p0_cards, p1_cards, community_cards, [],
                                 p0_reach, p1_reach, street + 1, updating_player,
-                                depth + 1, iteration, accumulated_pot)
+                                depth + 1, iteration, current_pot)
             else:
-                # Terminal - evaluate final outcome
+                # Terminal - evaluate final outcome (use starting pot as get_utility just calculates)
                 return self.game.get_utility(p0_cards, p1_cards, community_cards,
-                                             history, street, accumulated_pot)
+                                             history, street, starting_pot)
 
         # Create information set
         round_state = self.create_round_state_for_info_set(
-            community_cards, history, street, accumulated_pot)
+            community_cards, history, street, starting_pot)
         info_set_key = self.game_adapter.create_info_set_key(
             player_cards, round_state)
 
@@ -120,21 +120,19 @@ class BlueprintTrainer:
 
             for i, action in enumerate(legal_actions):
                 next_history = history + [action]
-                new_accumulated_pot = self.calculate_pot_after_action(
-                    action, street, accumulated_pot, history)
 
                 if current_player == 0:
                     action_utilities[action] = -self.cfr(
                         p0_cards, p1_cards, community_cards, next_history,
                         p0_reach *
                         strategy[i], p1_reach, street, updating_player,
-                        depth + 1, iteration, new_accumulated_pot)
+                        depth + 1, iteration, starting_pot)
                 else:
                     action_utilities[action] = -self.cfr(
                         p0_cards, p1_cards, community_cards, next_history,
                         p0_reach, p1_reach *
                         strategy[i], street, updating_player,
-                        depth + 1, iteration, new_accumulated_pot)
+                        depth + 1, iteration, starting_pot)
 
                 node_utility += strategy[i] * action_utilities[action]
 
@@ -160,137 +158,34 @@ class BlueprintTrainer:
             import random
             sampled_action = random.choices(legal_actions, weights=strategy)[0]
             sampled_prob = strategy[legal_actions.index(sampled_action)]
-
             next_history = history + [sampled_action]
-            new_accumulated_pot = self.calculate_pot_after_action(
-                sampled_action, street, accumulated_pot, history)
 
             if current_player == 0:
                 return -self.cfr(
                     p0_cards, p1_cards, community_cards, next_history,
                     p0_reach * sampled_prob, p1_reach, street, updating_player,
-                    depth + 1, iteration, new_accumulated_pot)
+                    depth + 1, iteration, starting_pot)
             else:
                 return -self.cfr(
                     p0_cards, p1_cards, community_cards, next_history,
                     p0_reach, p1_reach * sampled_prob, street, updating_player,
-                    depth + 1, iteration, new_accumulated_pot)
+                    depth + 1, iteration, starting_pot)
 
-    def calculate_pot_after_action(self, action, street, current_accumulated_pot, history):
-        """Calculate what the pot size will be after taking this action"""
-
-        # print(
-        #     f"DEBUG: action={action}, street={street}, pot={current_accumulated_pot}, history={history}")
-
-        old_pot = current_accumulated_pot
-        if action in ['check', 'fold']:
-            return current_accumulated_pot  # No change to pot
-
-        elif action == 'call':
-            # Add the call amount to the pot
-            call_amount = self.game.get_call_amount_from_history(
-                street, history, current_accumulated_pot)
-
-            new_pot = current_accumulated_pot + call_amount
-            # print(
-            #     f"DEBUG: pot change: {old_pot} -> {new_pot} (added {new_pot - old_pot})")
-            # if new_pot > 10000:
-            #     print(f"ERROR: Pot explosion detected!")
-            #     raise ValueError(f"Pot too large: {new_pot}")
-
-            return current_accumulated_pot + call_amount
-
-        elif action.startswith('bet_'):
-            current_player = len(history) % 2
-
-            if street == 0:  # Preflop - use BB-based amounts
-                action_type = self.game.get_preflop_action_type(history)
-                bet_amounts = self.game.get_preflop_bet_amounts(
-                    action_type, current_accumulated_pot)
-                size = action.split('_')[1]
-                target_amount = bet_amounts[size]  # Total commitment
-
-                # Subtract existing contribution (same logic as raises)
-                existing_contribution = self.game.get_player_contribution_this_round(
-                    history, street, current_accumulated_pot, current_player)
-                additional_amount = target_amount - existing_contribution
-            # Postflop - use pot-relative (no existing contribution issue)
-            else:
-                size = action.split('_')[1]
-                additional_amount = self.game.BET_MULTIPLIERS[size] * \
-                    current_accumulated_pot
-
-            new_pot = current_accumulated_pot + additional_amount
-            # print(
-            #     f"DEBUG: pot change: {old_pot} -> {new_pot} (added {new_pot - old_pot})")
-            # if new_pot > 10000:
-            #     print(f"ERROR: Pot explosion detected!")
-            #     raise ValueError(f"Pot too large: {new_pot}")
-
-            return current_accumulated_pot + additional_amount
-
-        elif action.startswith('raise_'):
-            current_player = len(history) % 2
-
-            # For raises, target is based on current pot (pot before this raise)
-            pot_before_action = current_accumulated_pot
-
-            # Calculate target total contribution this round
-            if street == 0:  # Preflop
-                action_type = self.game.get_preflop_action_type(history)
-                if action_type != 'pot_relative':
-                    bet_amounts = self.game.get_preflop_bet_amounts(
-                        action_type, pot_before_action)
-                    size = action.split('_')[1]
-                    target_amount = bet_amounts[size]
-                else:
-                    size = action.split('_')[1]
-                    target_amount = self.game.BET_MULTIPLIERS[size] * \
-                        pot_before_action
-            else:  # Postflop
-                size = action.split('_')[1]
-                target_amount = self.game.BET_MULTIPLIERS[size] * pot_before_action
-
-            # Get player's current contribution this round
-            contribution = self.game.get_player_contribution_this_round(
-                history, street, current_accumulated_pot, current_player)
-
-            # Additional amount needed
-            raise_amount = target_amount - contribution
-
-            if raise_amount <= 0:
-                print(
-                    f"ERROR: Invalid raise amount {raise_amount} for {action}")
-                print(
-                    f"  target_amount: {target_amount}, contribution: {contribution}, current_pot: {current_accumulated_pot}")
-                print(f"  history: {history}, street: {street}")
-                raise ValueError("Negative raise amount")
-
-            new_pot = current_accumulated_pot + raise_amount
-            # print(
-            #     f"DEBUG: pot change: {old_pot} -> {new_pot} (added {new_pot - old_pot})")
-            # if new_pot > 10000:
-            #     print(f"ERROR: Pot explosion detected!")
-            #     raise ValueError(f"Pot too large: {new_pot}")
-
-            return current_accumulated_pot + raise_amount
-
-        else:
-            return current_accumulated_pot
-
-    def create_round_state_for_info_set(self, community_cards, history, street, accumulated_pot):
+    def create_round_state_for_info_set(self, community_cards, history, street, starting_pot):
         """Simplified version that passes CFR history directly"""
 
         street_names = ['preflop', 'flop', 'turn', 'river']
         community_for_street = community_cards[:self.game.get_community_cards_count(
             street)]
+        current_pot = self.game.calculate_current_pot(
+            starting_pot, history, street)
 
         return {
             'street': street_names[street],
             'community_card': community_for_street,
             'cfr_history': history,
-            'pot': {'main': {'amount': accumulated_pot}},
-            'accumulated_pot': accumulated_pot
+            'pot': {'main': {'amount': current_pot}},
+            'accumulated_pot': current_pot
         }
 
     def train_blueprint(self, iterations):
