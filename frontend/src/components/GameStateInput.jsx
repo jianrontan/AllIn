@@ -1,9 +1,38 @@
+// C:\Ron\AllIn\frontend\src\components\GameStateInput.jsx
 import React, { useState, useEffect } from 'react';
 
 function GameStateInput({ gameState, setGameState }) {
     const [pendingBetAmount, setPendingBetAmount] = useState(0);
     const [showBetInput, setShowBetInput] = useState(false);
-    const [pendingAction, setPendingAction] = useState(null); // 'bet' or 'raise'
+    const [pendingAction, setPendingAction] = useState(null);
+    const [legalActions, setLegalActions] = useState([]);
+
+    // Fetch legal actions when game state changes
+    useEffect(() => {
+        const fetchLegalActions = async () => {
+            try {
+                const response = await fetch('http://localhost:5000/api/get-legal-actions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        actions: gameState.actions,
+                        gameState: gameState,
+                        communityCards: gameState.communityCards
+                    })
+                });
+
+                const data = await response.json();
+                if (data.legalActions) {
+                    setLegalActions(data.legalActions);
+                }
+            } catch (error) {
+                console.error('Error fetching legal actions:', error);
+                setLegalActions(['check', 'bet', 'call', 'raise', 'fold']); // Fallback
+            }
+        };
+
+        fetchLegalActions();
+    }, [gameState.actions, gameState.communityCards]);
 
     // Calculate current game state from action history
     const calculateGameStateFromActions = (actions, initialPot) => {
@@ -24,6 +53,118 @@ function GameStateInput({ gameState, setGameState }) {
         return { currentPot, lastBetAmount, currentBet };
     };
 
+    const getBettingSizeOptions = (street, actionHistory, potSize) => {
+        if (street === 'preflop') {
+            const betCount = actionHistory.filter(a =>
+                a.action === 'bet' || a.action === 'raise'
+            ).length;
+
+            if (betCount === 0) {
+                return [
+                    { label: '3BB', amount: 6 },
+                    { label: '5BB', amount: 10 },
+                    { label: '7BB', amount: 14 }
+                ];
+            } else if (betCount === 1) {
+                return [
+                    { label: '6BB', amount: 12 },
+                    { label: '10BB', amount: 20 },
+                    { label: '14BB', amount: 28 }
+                ];
+            } else {
+                return [
+                    { label: `0.66x pot (${(0.66 * potSize).toFixed(2)})`, amount: 0.66 * potSize },
+                    { label: `1.33x pot (${(1.33 * potSize).toFixed(2)})`, amount: 1.33 * potSize },
+                    { label: `2.0x pot (${(2.0 * potSize).toFixed(2)})`, amount: 2.0 * potSize }
+                ];
+            }
+        } else {
+            return [
+                { label: `0.33x pot (${(0.33 * potSize).toFixed(2)})`, amount: 0.33 * potSize },
+                { label: `0.66x pot (${(0.66 * potSize).toFixed(2)})`, amount: 0.66 * potSize },
+                { label: `1.0x pot (${(1.0 * potSize).toFixed(2)})`, amount: 1.0 * potSize }
+            ];
+        }
+    };
+
+    const getCallAmount = () => {
+        // Handle preflop with no actions (SB's first decision)
+        if (gameState.street === 'preflop' && gameState.actions.length === 0) {
+            return 1; // SB needs $1 more to match BB's $2
+        }
+
+        // Check if there's actually a bet to call
+        const lastBetAction = gameState.actions
+            .slice()
+            .reverse()
+            .find(action => action.action === 'bet' || action.action === 'raise');
+
+        if (!lastBetAction) {
+            return 0; // No bet to call
+        }
+
+        // Find the player's last contribution
+        const currentPlayer = gameState.actions.length % 2;
+        let playerContribution = 0;
+
+        // For preflop, start with blind amounts
+        if (gameState.street === 'preflop') {
+            playerContribution = currentPlayer === 0 ? 1 : 2; // SB=1, BB=2
+        }
+
+        // Update with any bets/raises this player made
+        for (let i = 0; i < gameState.actions.length; i++) {
+            const action = gameState.actions[i];
+            const actionPlayer = i % 2;
+
+            if (actionPlayer === currentPlayer &&
+                (action.action === 'bet' || action.action === 'raise')) {
+                playerContribution = action.amount;
+            }
+        }
+
+        return Math.max(0, lastBetAction.amount - playerContribution);
+    };
+
+    const isActionLegal = (actionType) => {
+        if (actionType === 'call') {
+            // Call is only legal if there's actually a bet to call AND it's in legal actions
+            const callAmount = getCallAmount();
+            return legalActions.includes('call') && callAmount > 0;
+        }
+
+        return legalActions.includes(actionType);
+    };
+
+    const getSizeNameFromAmount = (amount, street, potSize) => {
+        if (street === 'preflop') {
+            const betCount = gameState.actions.filter(a =>
+                a.action === 'bet' || a.action === 'raise'
+            ).length;
+
+            if (betCount === 0) {
+                if (amount === 6) return 'small';
+                if (amount === 10) return 'medium';
+                if (amount === 14) return 'large';
+            } else if (betCount === 1) {
+                if (amount === 12) return 'small';
+                if (amount === 20) return 'medium';
+                if (amount === 28) return 'large';
+            } else {
+                const ratio = amount / potSize;
+                if (Math.abs(ratio - 0.66) < Math.abs(ratio - 1.33) && Math.abs(ratio - 0.66) < Math.abs(ratio - 2.0)) return 'small';
+                if (Math.abs(ratio - 1.33) < Math.abs(ratio - 2.0)) return 'medium';
+                return 'large';
+            }
+        } else {
+            // Use your actual BET_MULTIPLIERS: 0.33, 0.66, 1.0
+            const ratio = amount / potSize;
+            if (Math.abs(ratio - 0.33) < Math.abs(ratio - 0.66) && Math.abs(ratio - 0.33) < Math.abs(ratio - 1.0)) return 'small';
+            if (Math.abs(ratio - 0.66) < Math.abs(ratio - 1.0)) return 'medium';
+            return 'large';
+        }
+    };
+
     // Update calculated values when actions change
     useEffect(() => {
         const calculated = calculateGameStateFromActions(gameState.actions, gameState.initialPotSize || 3);
@@ -35,29 +176,24 @@ function GameStateInput({ gameState, setGameState }) {
         }));
     }, [gameState.actions, gameState.initialPotSize]);
 
-    // Determine what actions are currently legal
-    const getLegalActions = () => {
-        const actions = gameState.actions;
-
-        if (actions.length === 0) {
-            return ['check', 'bet'];
-        }
-
-        const lastAction = actions[actions.length - 1];
-
-        if (lastAction.action === 'check') {
-            return ['check', 'bet'];
-        } else if (lastAction.action === 'bet' || lastAction.action === 'raise') {
-            return ['fold', 'call', 'raise'];
-        } else if (lastAction.action === 'call' || lastAction.action === 'fold') {
-            return []; // Round complete
-        }
-
-        return ['check', 'bet'];
-    };
-
     const addSimpleAction = (action) => {
-        const newAction = { action, amount: 0 };
+        // Validate action before adding
+        if (!isActionLegal(action)) {
+            console.warn(`Attempted illegal action: ${action}. Legal actions: ${legalActions}`);
+            return;
+        }
+
+        // Special handling for call to ensure proper amount
+        let amount = 0;
+        if (action === 'call') {
+            amount = getCallAmount();
+            if (amount <= 0) {
+                console.warn('Cannot call with amount <= 0');
+                return;
+            }
+        }
+
+        const newAction = { action, amount };
         setGameState(prev => ({
             ...prev,
             actions: [...prev.actions, newAction]
@@ -67,24 +203,6 @@ function GameStateInput({ gameState, setGameState }) {
     const startBetAction = (actionType) => {
         setPendingAction(actionType);
         setShowBetInput(true);
-        setPendingBetAmount(0);
-    };
-
-    const confirmBetAction = () => {
-        if (pendingBetAmount > 0) {
-            const newAction = {
-                action: pendingAction,
-                amount: pendingBetAmount
-            };
-            setGameState(prev => ({
-                ...prev,
-                actions: [...prev.actions, newAction]
-            }));
-        }
-
-        // Reset bet input state
-        setShowBetInput(false);
-        setPendingAction(null);
         setPendingBetAmount(0);
     };
 
@@ -113,7 +231,6 @@ function GameStateInput({ gameState, setGameState }) {
         }
     };
 
-    const legalActions = getLegalActions();
     const calculated = calculateGameStateFromActions(gameState.actions, gameState.initialPotSize || 3);
 
     return (
@@ -146,79 +263,70 @@ function GameStateInput({ gameState, setGameState }) {
 
             {/* Bet Amount Input (when needed) */}
             {showBetInput && (
-                <div style={{
-                    marginBottom: '20px',
-                    padding: '15px',
-                    backgroundColor: '#444',
-                    borderRadius: '5px',
-                    border: '2px solid #FFA500'
-                }}>
-                    <h4>Enter {pendingAction} amount:</h4>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <span>$</span>
-                        <input
-                            type="number"
-                            value={pendingBetAmount}
-                            onChange={(e) => setPendingBetAmount(parseInt(e.target.value) || 0)}
-                            style={{ width: '100px', padding: '8px', fontSize: '16px' }}
-                            autoFocus
-                        />
-                        <button
-                            onClick={confirmBetAction}
-                            disabled={pendingBetAmount <= 0}
-                            style={{
-                                padding: '8px 15px',
-                                backgroundColor: pendingBetAmount > 0 ? '#4CAF50' : '#666',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '3px',
-                                cursor: pendingBetAmount > 0 ? 'pointer' : 'not-allowed'
-                            }}
-                        >
-                            Confirm {pendingAction} ${pendingBetAmount}
-                        </button>
-                        <button
-                            onClick={cancelBetAction}
-                            style={{
-                                padding: '8px 15px',
-                                backgroundColor: '#f44336',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '3px',
-                                cursor: 'pointer'
-                            }}
-                        >
-                            Cancel
-                        </button>
+                <div style={{ margin: '10px 0', padding: '15px', border: '2px solid #ccc', borderRadius: '8px' }}>
+                    <h4>Select {pendingAction} size:</h4>
+                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                        {getBettingSizeOptions(gameState.street, gameState.actions, potBeforeActions)
+                            .map((option, index) => {
+                                // Determine the size category directly
+                                let sizeCategory;
+                                if (gameState.street === 'preflop') {
+                                    const betCount = gameState.actions.filter(a => a.action === 'bet' || a.action === 'raise').length;
+                                    if (betCount === 0) {
+                                        sizeCategory = ['small', 'medium', 'large'][index]; // 3BB, 5BB, 7BB
+                                    } else if (betCount === 1) {
+                                        sizeCategory = ['small', 'medium', 'large'][index]; // 6BB, 10BB, 14BB
+                                    } else {
+                                        sizeCategory = ['small', 'medium', 'large'][index]; // 0.66x, 1.33x, 2.0x
+                                    }
+                                } else {
+                                    sizeCategory = ['small', 'medium', 'large'][index]; // 0.33x, 0.66x, 1.0x
+                                }
+
+                                return (
+                                    <button
+                                        key={index}
+                                        onClick={() => {
+                                            const newAction = {
+                                                action: pendingAction,
+                                                amount: option.amount,
+                                                size: sizeCategory  // ADD THIS - pass the size directly
+                                            };
+                                            setGameState(prev => ({ ...prev, actions: [...prev.actions, newAction] }));
+                                            setShowBetInput(false);
+                                            setPendingAction(null);
+                                            setPendingBetAmount(0);
+                                        }}
+                                        style={{
+                                            padding: '12px 20px',
+                                            backgroundColor: '#4CAF50',
+                                            color: 'white',
+                                            border: '1px solid #45a049',
+                                            borderRadius: '6px',
+                                            cursor: 'pointer',
+                                            fontSize: '14px',
+                                            fontWeight: 'bold'
+                                        }}
+                                    >
+                                        {option.label}
+                                    </button>
+                                );
+                            })}
                     </div>
 
-                    {/* Quick bet suggestions */}
-                    <div style={{ marginTop: '10px' }}>
-                        <span style={{ fontSize: '12px' }}>Quick amounts: </span>
-                        {[
-                            Math.round(calculated.currentPot * 0.33), // 33% pot
-                            Math.round(calculated.currentPot * 0.66), // 66% pot  
-                            calculated.currentPot, // pot bet
-                            Math.round(calculated.currentPot * 1.5) // 150% pot
-                        ].map(amount => (
-                            <button
-                                key={amount}
-                                onClick={() => setPendingBetAmount(amount)}
-                                style={{
-                                    margin: '0 5px',
-                                    padding: '4px 8px',
-                                    backgroundColor: '#2196F3',
-                                    color: 'white',
-                                    border: 'none',
-                                    borderRadius: '3px',
-                                    cursor: 'pointer',
-                                    fontSize: '12px'
-                                }}
-                            >
-                                ${amount}
-                            </button>
-                        ))}
-                    </div>
+                    <button
+                        onClick={cancelBetAction}
+                        style={{
+                            padding: '8px 16px',
+                            backgroundColor: '#f44336',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: 'pointer'
+                        }}
+                    >
+                        Cancel
+                    </button>
                 </div>
             )}
 
@@ -243,39 +351,9 @@ function GameStateInput({ gameState, setGameState }) {
                             </button>
                         )}
 
-                        {legalActions.includes('call') && (
-                            <button
-                                onClick={() => addSimpleAction('call')}
-                                style={{
-                                    padding: '10px 15px',
-                                    backgroundColor: '#2196F3',
-                                    color: 'white',
-                                    border: 'none',
-                                    borderRadius: '5px',
-                                    cursor: 'pointer'
-                                }}
-                            >
-                                Call ${calculated.lastBetAmount}
-                            </button>
-                        )}
+                        {/* REMOVED: Call and Fold buttons - these are terminal actions */}
 
-                        {legalActions.includes('fold') && (
-                            <button
-                                onClick={() => addSimpleAction('fold')}
-                                style={{
-                                    padding: '10px 15px',
-                                    backgroundColor: '#f44336',
-                                    color: 'white',
-                                    border: 'none',
-                                    borderRadius: '5px',
-                                    cursor: 'pointer'
-                                }}
-                            >
-                                Fold
-                            </button>
-                        )}
-
-                        {legalActions.includes('bet') && (
+                        {legalActions.some(action => action.startsWith('bet_')) && (
                             <button
                                 onClick={() => startBetAction('bet')}
                                 style={{
@@ -291,7 +369,7 @@ function GameStateInput({ gameState, setGameState }) {
                             </button>
                         )}
 
-                        {legalActions.includes('raise') && (
+                        {legalActions.some(action => action.startsWith('raise_')) && (
                             <button
                                 onClick={() => startBetAction('raise')}
                                 style={{
@@ -308,17 +386,22 @@ function GameStateInput({ gameState, setGameState }) {
                         )}
                     </div>
 
-                    {legalActions.length === 0 && (
-                        <div style={{
-                            padding: '10px',
-                            backgroundColor: '#555',
-                            borderRadius: '5px',
-                            textAlign: 'center',
-                            color: '#ccc'
-                        }}>
-                            Betting round complete
-                        </div>
-                    )}
+                    {/* Update the message for when no strategic actions are available */}
+                    {!legalActions.some(action =>
+                        action === 'check' ||
+                        action.startsWith('bet_') ||
+                        action.startsWith('raise_')
+                    ) && (
+                            <div style={{
+                                padding: '10px',
+                                backgroundColor: '#555',
+                                borderRadius: '5px',
+                                textAlign: 'center',
+                                color: '#ccc'
+                            }}>
+                                No strategic actions available - only terminal actions (fold/call) remain
+                            </div>
+                        )}
                 </div>
             )}
 

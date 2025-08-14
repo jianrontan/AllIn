@@ -43,15 +43,15 @@ def test_real_game_scenarios():
     adapter = PlayerBlueprintAdapter(player)
     detector = SubgameDetector(adapter)
 
-    # Real game scenarios from your blueprint.json
+    # Real game scenarios from blueprint.json
     real_scenarios = [
         {
-            'info_set': 'weak_',  # From your blueprint - should have good confidence
+            'info_set': 'weak_',  # From blueprint - should have good confidence
             'history': [],
             'expected': 'Should NOT trigger - well trained'
         },
         {
-            'info_set': 'ace_x_k',  # From your blueprint - low visit count
+            'info_set': 'ace_x_k',  # From blueprint - low visit count
             'history': ['check'],
             'expected': 'May trigger - low visit count (only 1)'
         },
@@ -150,7 +150,7 @@ def test_strategy_entropy_cases():
 
     player = Player()
 
-    # Look at actual entropy values from your blueprint
+    # Look at actual entropy values from blueprint
     entropy_cases = [
         'weak_',  # Should have mixed strategy (lower entropy)
         'ace_x_k',  # Check actual entropy from blueprint
