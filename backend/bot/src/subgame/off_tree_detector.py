@@ -8,7 +8,7 @@ class OffTreeDetector:
             'raise_small', 'raise_medium', 'raise_large'
         }
 
-        # Blueprint bet size ranges (from your poker_game.py)
+        # Blueprint bet size ranges (from poker_game.py)
         self.blueprint_bet_sizes = {
             'small': 0.33,   # 33% pot
             'medium': 0.66,  # 66% pot
@@ -123,8 +123,8 @@ class OffTreeDetector:
         return None
 
     def get_actual_bet_amount_from_game_state(self, action, game_state):
-        """Extract actual bet amount from game state (to be implemented based on your game logic)"""
-        # This would integrate with your poker_game.py logic
+        """Extract actual bet amount from game state (to be implemented based on game logic)"""
+        # This would integrate with poker_game.py logic
         # For now, return expected amount as placeholder
         pot_size = game_state.get('pot_size', 0)
 

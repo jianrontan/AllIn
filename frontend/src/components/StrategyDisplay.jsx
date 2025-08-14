@@ -1,3 +1,4 @@
+// C:\Ron\AllIn\frontend\src\components\StrategyDisplay.jsx
 import React, { useState } from 'react';
 
 function StrategyDisplay({ strategy }) {

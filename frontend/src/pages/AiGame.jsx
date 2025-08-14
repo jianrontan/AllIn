@@ -1,3 +1,4 @@
+// C:\Ron\AllIn\frontend\src\pages\AiGame.jsx
 function AiGame() {
 	return (
 		<div className="app-container">

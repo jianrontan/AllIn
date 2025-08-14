@@ -1,3 +1,4 @@
+// C:\Ron\AllIn\frontend\src\pages\Home.jsx
 import React from "react";
 import "../styles.css";
 import Logo from "./ALLIn.png";
