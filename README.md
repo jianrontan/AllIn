@@ -2,12 +2,6 @@
 
 AllIn is a production-grade **artificial intelligence** poker strategy system featuring advanced **machine learning** algorithms, **deep learning** concepts, and sophisticated **data science** methodologies. Built with **Monte Carlo CFR+**, **NumPy**, **Pandas**-compatible data processing, and modern **neural network** principles for game theory optimal (GTO) poker analysis.
 
-<div align="center">
-
-**[📊 AI Performance](#ai-performance-metrics) • [🔬 ML Architecture](#machine-learning-architecture) • [📈 Training Results](#training-analytics) • [🚀 Setup Guide](#getting-started)**
-
-</div>
-
 ---
 
 ## 🎯 Machine Learning & AI Overview
