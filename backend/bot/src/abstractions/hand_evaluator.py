@@ -22,15 +22,44 @@ class HandEvaluator:
             'straight_flush': 8
         }
 
+    def convert_card_format(self, card):
+        """
+        Convert PyPokerEngine format to phevaluator format
+        PyPokerEngine: 'CT' (Club Ten) -> phevaluator: 'Tc' (Ten of clubs)
+        """
+        if len(card) != 2:
+            return card  # Already in correct format or invalid
+
+        # PyPokerEngine format: [Suit][Rank]
+        suit = card[0]
+        rank = card[1]
+
+        # Convert suit to lowercase for phevaluator
+        suit_map = {
+            'S': 's',  # Spades
+            'H': 'h',  # Hearts
+            'D': 'd',  # Diamonds
+            'C': 'c'   # Clubs
+        }
+
+        # Return in phevaluator format: [Rank][suit]
+        return rank + suit_map.get(suit, suit.lower())
+
     def evaluate_hand_strength(self, hole_cards, community_cards):
         """
         Main interface - takes PyPokerEngine cards and returns hand type + strength
-        hole_cards: ['AH', 'KS'] (PyPokerEngine format)
-        community_cards: ['QD', 'JC', 'TC'] (PyPokerEngine format)
+        hole_cards: ['CT', 'H2'] (PyPokerEngine format)
+        community_cards: ['C9', 'DT', 'ST'] (PyPokerEngine format)
         """
-        all_cards = hole_cards + community_cards
+        # Convert all cards to phevaluator format
+        converted_hole = [self.convert_card_format(
+            card) for card in hole_cards]
+        converted_community = [self.convert_card_format(
+            card) for card in community_cards]
 
-        # Convert to phevaluator format and get hand strength
+        all_cards = converted_hole + converted_community
+
+        # Get hand strength from phevaluator
         hand_value = evaluate_cards(*all_cards)
 
         # Convert to hand type and relative strength
@@ -82,7 +111,8 @@ class HandEvaluator:
         """Check for 4+ cards of same suit"""
         suits = {}
         for card in cards:
-            suit = card[1]  # Second character is suit
+            # PyPokerEngine format: first char is suit
+            suit = card[0]
             suits[suit] = suits.get(suit, 0) + 1
 
         return any(count >= 4 for count in suits.values())
@@ -94,7 +124,8 @@ class HandEvaluator:
                     '9': 9, 'T': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14}
 
         for card in cards:
-            rank = card[0]  # First character is rank
+            # PyPokerEngine format: second char is rank
+            rank = card[1]
             if rank in rank_map:
                 ranks.add(rank_map[rank])
 
