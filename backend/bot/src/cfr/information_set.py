@@ -14,7 +14,7 @@ class InformationSet:
         self.visit_count = 0             # Track how often this infoset was visited
         self.last_visited_iteration = 0  # Track recency
 
-    def get_strategy(self, legal_actions, reach_probability):
+    def get_strategy(self, legal_actions, reach_probability, iteration=0, beta=0.0):
         """CFR+ implementation - prevents negative regrets"""
         if not self.legal_actions:
             self.legal_actions = legal_actions.copy()
@@ -37,7 +37,14 @@ class InformationSet:
         else:
             strategy = np.ones(len(legal_actions)) / len(legal_actions)
 
-        # Accumulate strategy (existing logic works fine)
+        # DCFR: decay existing strategy sum before adding new contribution.
+        # beta=0 means no decay (recommended by Brown & Sandholm 2019).
+        t = iteration + 1
+        if beta > 0 and t > 1:
+            decay = ((t - 1) / t) ** beta
+            for action in self.cumulative_strategy:
+                self.cumulative_strategy[action] *= decay
+
         for i, action in enumerate(legal_actions):
             if action not in self.cumulative_strategy:
                 self.cumulative_strategy[action] = 0.0
@@ -46,15 +53,10 @@ class InformationSet:
         return strategy
 
     def get_average_strategy(self, legal_actions):
-        """Direct regret-to-strategy conversion - simple math with CFR+"""
-
-        # Since CFR+ guarantees regrets >= 0, just use them directly
-        regrets = np.array([max(0, self.cumulative_regrets.get(action, 0))
-                            for action in legal_actions])
-
-        total = np.sum(regrets)
-        if total > 1e-12:  # Very small threshold
-            return regrets / total
+        """Reach-probability-weighted time average over all iterations."""
+        total = sum(self.cumulative_strategy.get(a, 0.0) for a in legal_actions)
+        if total > 1e-12:
+            return np.array([self.cumulative_strategy.get(a, 0.0) / total
+                             for a in legal_actions])
         else:
-            # Only fall back to uniform if ALL regrets are exactly zero
             return np.ones(len(legal_actions)) / len(legal_actions)

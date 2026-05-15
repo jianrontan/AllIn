@@ -1,0 +1,43 @@
+@startuml inference_sequence
+!theme plain
+skinparam defaultFontSize 12
+skinparam ParticipantPadding 50
+skinparam BoxPadding 20
+
+participant "PyPokerEngine" as PPE
+participant "Player" as P
+participant "GameAdapter" as GA
+participant "CardAbstraction" as CA
+participant "ActionAbstraction" as AA
+participant "InformationSet" as IS
+
+PPE -> P: declare_action(valid_actions, hole_card, round_state)
+P -> P: extract_game_state(round_state)\n→ {pot, stack, current_bet, big_blind}
+
+P -> GA: create_info_set_key(hole_card, round_state)
+note over GA #Pink: BUG: round_state has no 'cfr_history' key\nbetting history = "" always\nkey = "{card_bucket}_" only
+GA -> CA: get_bucket(hole_cards, community_cards)
+CA --> GA: card bucket string
+GA --> P: info_set_key (history component missing)
+
+alt key found in self.info_sets
+  P -> IS: lookup existing InformationSet
+else key not found
+  P -> IS: create new InformationSet (uniform strategy)
+end
+
+P -> AA: pypoker_to_cfr_actions(valid_actions, game_state)
+AA --> P: ["fold", "call", "bet_small", "bet_medium", "bet_large"]
+
+P -> IS: get_average_strategy(cfr_actions)
+note over IS #Yellow: Uses regrets directly, not cumulative_strategy\n(design issue — inconsistent with training)
+IS --> P: [0.05, 0.45, 0.20, 0.20, 0.10]
+
+P -> P: random.choices(cfr_actions, weights=strategy)\n→ "call"
+
+P -> AA: cfr_to_pypoker_action("call", valid_actions, round_state, game_state)
+AA --> P: ("call", 10)
+
+P --> PPE: ("call", 10)
+
+@enduml

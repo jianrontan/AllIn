@@ -1,6 +1,5 @@
 # backend/bot/src/cfr/blueprint_trainer.py
 import random
-import pickle
 from pathlib import Path
 from .poker_game import PokerGame
 from .information_set import InformationSet
@@ -25,12 +24,16 @@ class BlueprintTrainer:
         self.deck = self.create_deck()
         self.BET_MULTIPLIERS = {'small': 0.33, 'medium': 0.66, 'large': 1.00}
 
+        # DCFR hyperparameters (Brown & Sandholm 2019)
+        self.alpha = 1.5  # Regret decay: discounts early noisy regret accumulation
+        self.beta = 0.0   # Strategy decay: 0 = standard reach-weighted sum (recommended)
+
     def create_deck(self):
         """Create standard 52-card deck"""
         suits = ['H', 'D', 'C', 'S']
         ranks = ['2', '3', '4', '5', '6', '7',
                  '8', '9', 'T', 'J', 'Q', 'K', 'A']
-        return [rank + suit for rank in ranks for suit in suits]
+        return [suit + rank for rank in ranks for suit in suits]
 
     def deal_random_hand(self):
         """Deal random cards for training iteration"""
@@ -111,7 +114,7 @@ class BlueprintTrainer:
 
         # Get current strategy
         reach_prob = p0_reach if current_player == 0 else p1_reach
-        strategy = info_set.get_strategy(legal_actions, reach_prob)
+        strategy = info_set.get_strategy(legal_actions, reach_prob, iteration, self.beta)
 
         if current_player == updating_player:
             # UPDATING PLAYER: Explore all actions
@@ -136,26 +139,22 @@ class BlueprintTrainer:
 
                 node_utility += strategy[i] * action_utilities[action]
 
-            # Update regrets (CFR+ with regret floor)
+            # Update regrets (CFR+ floor + DCFR temporal decay)
+            # Decay factor: early iterations shrink toward 0, later iterations approach 1.
+            t = iteration + 1
+            regret_decay = ((t - 1) / t) ** self.alpha if t > 1 else 0.0
+            opponent_reach = p1_reach if current_player == 0 else p0_reach
+
             for i, action in enumerate(legal_actions):
                 regret = action_utilities[action] - node_utility
-
-                if action not in info_set.cumulative_regrets:
-                    info_set.cumulative_regrets[action] = 0
-
-                # CFR+ regret update with floor at 0
-                if current_player == 0:
-                    info_set.cumulative_regrets[action] = max(
-                        0, info_set.cumulative_regrets.get(action, 0) + p1_reach * regret)
-                else:
-                    info_set.cumulative_regrets[action] = max(
-                        0, info_set.cumulative_regrets.get(action, 0) + p0_reach * regret)
+                prior = info_set.cumulative_regrets.get(action, 0)
+                info_set.cumulative_regrets[action] = max(
+                    0, regret_decay * prior + opponent_reach * regret)
 
             return node_utility
 
         else:
             # OPPONENT: Sample single action based on strategy
-            import random
             sampled_action = random.choices(legal_actions, weights=strategy)[0]
             sampled_prob = strategy[legal_actions.index(sampled_action)]
             next_history = history + [sampled_action]

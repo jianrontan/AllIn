@@ -1,0 +1,116 @@
+@startuml class_diagram
+!theme plain
+skinparam classAttributeIconSize 0
+skinparam defaultFontSize 12
+
+class InformationSet {
+  + cumulative_regrets : dict
+  + cumulative_strategy : dict
+  + legal_actions : list
+  + visit_count : int
+  + last_visited_iteration : int
+  --
+  + get_strategy(legal_actions, reach_prob) : ndarray
+  + get_average_strategy(legal_actions) : ndarray
+}
+
+class HandEvaluator {
+  + HAND_TYPES : dict
+  --
+  + convert_card_format(card) : str
+  + evaluate_hand_strength(hole, community) : tuple
+  + get_hand_type_from_value(value) : str
+  + get_relative_strength(value) : int
+  + has_draw_potential(hole, community) : bool
+  + has_flush_draw(cards) : bool
+  + has_straight_draw(cards) : bool
+}
+
+class CardAbstraction {
+  + preflop_buckets : dict
+  + hand_evaluator : HandEvaluator
+  --
+  + get_bucket(hole_cards, community) : str
+  + preflop_bucket(hole_cards) : str
+  + postflop_bucket(hole_cards, community) : str
+  + cards_to_string(hole_cards) : str
+  - parse_string_cards(hole_cards) : str
+  - parse_card_objects(hole_cards) : str
+  - format_hand_string(r1, r2, s1, s2) : str
+}
+
+class ActionAbstraction {
+  + bet_sizes : dict
+  --
+  + is_legal_bet_size(game_state, multiplier) : bool
+  + abstract_action_history(actions, game_state, street) : str
+  + categorize_bet_size(action, game_state, history, street) : str
+  + pypoker_to_cfr_actions(valid_actions, game_state) : list
+  + cfr_to_pypoker_action(cfr_action, valid_actions, round_state, game_state) : tuple
+  - _calculate_target_amount(size, type, game_state, round_state) : float
+}
+
+class GameAdapter {
+  + card_abstractions : CardAbstraction
+  + action_abstractions : ActionAbstraction
+  --
+  + create_info_set_key(hole_card, round_state) : str
+  + cfr_action_to_char(cfr_action) : str
+}
+
+class Player {
+  + info_sets : dict
+  + game_adapter : GameAdapter
+  + my_uuid : str
+  + total_training_iterations : int
+  --
+  + load_trained_strategy()
+  + declare_action(valid_actions, hole_card, round_state) : tuple
+  - _get_blueprint_action(valid_actions, hole_card, round_state) : tuple
+  + extract_game_state(round_state) : dict
+  + extract_big_blind(round_state) : int
+  + extract_current_bet(round_state) : int
+  + extract_player_stack(round_state, uuid) : int
+  + extract_player_contribution(round_state, uuid) : int
+}
+
+class BlueprintTrainer {
+  + info_sets : dict
+  + game : PokerGame
+  + game_adapter : GameAdapter
+  + deck : list
+  + BET_MULTIPLIERS : dict
+  --
+  + train_blueprint(iterations) : float
+  + cfr(...) : float
+  + deal_random_hand() : tuple
+  + export_blueprint_with_visit_stats(filename)
+  - create_round_state_for_info_set(...) : dict
+}
+
+class PokerGame {
+  + streets : list
+  + max_raises_per_street : int
+  + hand_evaluator : HandEvaluator
+  + BET_MULTIPLIERS : dict
+  --
+  + get_legal_actions(street, history, pot, player) : list
+  + is_terminal(history, street) : bool
+  + is_round_complete(history) : bool
+  + calculate_current_pot(starting_pot, history, street) : float
+  + get_utility(p0, p1, community, history, street, pot) : float
+  + get_preflop_action_type(history) : str
+  + get_preflop_bet_amounts(action_type, pot) : dict
+}
+
+Player --> GameAdapter : uses
+Player "1" o-- "many" InformationSet : loads from JSON
+GameAdapter --> CardAbstraction : owns
+GameAdapter --> ActionAbstraction : owns
+CardAbstraction --> HandEvaluator : owns
+BlueprintTrainer --> PokerGame : owns
+BlueprintTrainer --> GameAdapter : owns
+BlueprintTrainer "1" o-- "many" InformationSet : builds during training
+PokerGame --> HandEvaluator : owns
+
+@enduml

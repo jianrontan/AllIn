@@ -9,12 +9,9 @@ class GameAdapter:
         self.action_abstractions = ActionAbstraction()
 
     def create_info_set_key(self, hole_card, round_state):
-        """Generate info set key directly from CFR history without conversion"""
-        
-        # Extract cfr history
-        cfr_history = round_state.get('cfr_history', [])
-        betting_pattern = ''.join([self.cfr_action_to_char(action) for action in cfr_history])
-        
+        """Generate info set key from round state action history"""
+        betting_pattern = self._extract_betting_pattern(round_state)
+
         if round_state.get('street') == 'preflop':
             card_bucket = self.card_abstractions.get_bucket(hole_card, None)
             return f"{card_bucket}_{betting_pattern}"
@@ -25,6 +22,44 @@ class GameAdapter:
             street = round_state.get('street')
             return f"{starting_hand}_{current_strength}_{street}_{betting_pattern}"
 
+    def _extract_betting_pattern(self, round_state):
+        """Extract betting pattern string from round_state action histories"""
+        # Training path: synthetic round_state has cfr_history directly
+        if 'cfr_history' in round_state:
+            return ''.join([self.cfr_action_to_char(a) for a in round_state['cfr_history']])
+
+        # Inference path: read from PyPokerEngine action_histories
+        current_street = round_state.get('street', 'preflop')
+        street_actions = round_state.get('action_histories', {}).get(current_street, [])
+
+        # Reconstruct pot at start of current street
+        current_pot = round_state.get('pot', {}).get('main', {}).get('amount', 3)
+        paid_this_street = sum(a.get('paid', 0) for a in street_actions)
+        running_pot = current_pot - paid_this_street
+
+        pattern = ''
+        for action in street_actions:
+            action_type = action.get('action', '').lower()
+            if action_type == 'fold':
+                pattern += 'f'
+            elif action_type == 'call':
+                pattern += 'c'
+            elif action_type == 'check':
+                pattern += 'k'
+            elif action_type in ('raise', 'bet'):
+                amount = action.get('amount', 0)
+                game_state = {'pot_size': running_pot, 'big_blind': 2}
+                category = self.action_abstractions.categorize_bet_size(
+                    {'action': action_type, 'amount': amount},
+                    game_state,
+                    [a for a in street_actions[:street_actions.index(action)]],
+                    current_street
+                )
+                pattern += category[0]
+            running_pot += action.get('paid', 0)
+
+        return pattern
+
     def cfr_action_to_char(self, cfr_action):
         """Convert CFR action to single character"""
         mapping = {
@@ -34,57 +69,3 @@ class GameAdapter:
         }
         return mapping.get(cfr_action, 'x')
 
-    def extract_betting_history(self, round_state):
-        """
-        Extract simplified betting history with proper game_state conversion
-        """
-        current_street = round_state.get('street', 'preflop')
-        action_history = round_state.get(
-            'action_histories', {}).get(current_street, [])
-
-        # Convert round_state to game_state format that ActionAbstraction expects
-        game_state = self.convert_round_state_to_game_state(round_state)
-
-        return self.action_abstractions.abstract_action_history(action_history, game_state)
-
-    def convert_round_state_to_game_state(self, round_state):
-        """Convert nested round_state to flattened game_state format"""
-
-        # Extract pot size
-        pot_size = round_state.get('pot', {}).get('main', {}).get('amount', 0)
-        if pot_size == 0:
-            pot_size = 3  # Default starting pot for training
-
-        # Extract player stack (use first seat as default)
-        seats = round_state.get('seats', [{'stack': 100}])
-        player_stack = seats[0].get('stack', 100) if seats else 100
-
-        # Extract current bet from action history
-        current_street = round_state.get('street', 'preflop')
-        action_history = round_state.get(
-            'action_histories', {}).get(current_street, [])
-        current_bet = 0
-        player_contribution = 0
-
-        for action in action_history:
-            if action.get('action') in ['bet', 'raise']:
-                current_bet = action.get('amount', 0)
-            elif action.get('action') == 'call':
-                player_contribution += action.get('amount', 0)
-
-        # Extract big blind
-        big_blind = 2  # Default
-        preflop_actions = round_state.get(
-            'action_histories', {}).get('preflop', [])
-        for action in preflop_actions:
-            if action.get('action', '').upper() == 'BIGBLIND':
-                big_blind = action.get('amount', 2)
-                break
-
-        return {
-            'pot_size': pot_size,
-            'player_stack': player_stack,
-            'current_bet': current_bet,
-            'player_contribution': player_contribution,
-            'big_blind': big_blind
-        }

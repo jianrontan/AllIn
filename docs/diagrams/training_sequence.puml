@@ -1,0 +1,51 @@
+@startuml training_sequence
+!theme plain
+skinparam defaultFontSize 12
+
+participant "BlueprintTrainer" as BT
+participant "PokerGame" as PG
+participant "GameAdapter" as GA
+participant "CardAbstraction" as CA
+participant "HandEvaluator" as HE
+participant "InformationSet" as IS
+
+BT -> BT: deal_random_hand()\n→ p0_cards, p1_cards, community
+
+loop N iterations, alternating updating_player
+  BT -> BT: cfr(p0, p1, community, history=[], reach=1.0, updating_player)
+
+  group recursive CFR exploration
+    BT -> PG: get_legal_actions(street, history, pot, player)
+    PG --> BT: [fold, call, bet_small, ...]
+
+    BT -> GA: create_info_set_key(player_cards, round_state)
+    GA -> GA: read cfr_history from round_state
+    GA -> CA: get_bucket(hole_cards, community_cards)C:\Ron\AllIn\docs\diagrams\images
+    alt postflop
+      CA -> HE: evaluate_hand_strength(hole, community)
+      HE --> CA: (hand_type, 0-8 strength)
+      CA --> GA: "strong"
+    else preflop
+      CA --> GA: "ace_king"
+    end
+    GA --> BT: "ace_king_strong_flop_k"
+
+    BT -> IS: get_strategy(legal_actions, reach_prob)
+    note right of IS: CFR+ regret matching:\nclamp regrets at 0,\nnormalise to probabilities,\naccumulate cumulative_strategy
+    IS --> BT: [0.1, 0.4, 0.5] per action
+
+    alt updating player — explore all actions
+      loop each legal action
+        BT -> BT: cfr(..., history + [action])  [recurse]
+        BT -> IS: update cumulative_regrets\n(CFR+ floor at 0)
+      end
+    else opponent — sample one action
+      BT -> BT: random.choices(actions, weights=strategy)
+      BT -> BT: cfr(..., history + [sampled])  [recurse]
+    end
+  end
+end
+
+BT -> BT: export_blueprint_with_visit_stats("blueprint.json")
+
+@enduml

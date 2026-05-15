@@ -1,0 +1,52 @@
+@startuml infoset_key
+!theme plain
+skinparam defaultFontSize 12
+
+start
+
+:hole_cards = ['AH', 'KS']
+community_cards = ['CT', 'DT', 'S3']
+cfr_history = ['bet_small', 'call'];
+
+partition "Card Abstraction" {
+  if (community_cards empty?) then (yes — preflop)
+    :cards_to_string(hole_cards) → "AKo" or "AKs";
+    :lookup preflop_buckets → "ace_king";
+  else (postflop)
+    :convert cards to phevaluator format;
+    :evaluate_cards(*all_cards) → hand_value;
+    :get_hand_type_from_value(hand_value) → "two_pair";
+    :strength = 2 → "medium";
+  endif
+}
+
+partition "Action History" {
+  :for each action in cfr_history:;
+  note right
+    check  → k
+    call   → c
+    fold   → f
+    *small → s
+    *med   → m
+    *large → l
+  end note
+  :'bet_small' → 's', 'call' → 'c';
+  :betting_pattern = "sc";
+}
+
+partition "Key Assembly" {
+  if (preflop?) then (yes)
+    :"ace_king_sc";
+  else (postflop)
+    :starting_hand  = preflop bucket = "ace_king";
+    :current_strength = "medium";
+    :street = "flop";
+    :"ace_king_medium_flop_sc";
+  endif
+}
+
+:return info_set_key;
+
+stop
+
+@enduml

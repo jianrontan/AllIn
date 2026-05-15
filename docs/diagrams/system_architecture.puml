@@ -1,0 +1,56 @@
+@startuml system_architecture
+!theme plain
+skinparam componentStyle rectangle
+skinparam defaultFontSize 13
+skinparam ArrowColor #555555
+
+package "Frontend (React + Vite :5173)" {
+  [StrategyLookup]
+  [AiGame]
+}
+
+package "Backend API (Flask :5000)" {
+  [POST /api/evaluate-hand]
+  [POST /api/get-legal-actions]
+}
+
+package "Backend Bot (Python)" {
+
+  package "Training" {
+    [BlueprintTrainer]
+    [PokerGame]
+    [InformationSet]
+  }
+
+  package "Abstractions" {
+    [CardAbstraction]
+    [ActionAbstraction]
+    [HandEvaluator]
+  }
+
+  package "Bot" {
+    [Player]
+    [GameAdapter]
+  }
+
+  database "blueprint.json" as BP #LightYellow
+}
+
+cloud "PyPokerEngine" as PPE
+
+[StrategyLookup] --> [POST /api/evaluate-hand] : REST
+[AiGame] --> PPE : game loop
+PPE --> [Player] : declare_action()
+[Player] --> [GameAdapter]
+[Player] --> BP : load on init
+[GameAdapter] --> [CardAbstraction]
+[GameAdapter] --> [ActionAbstraction]
+[CardAbstraction] --> [HandEvaluator]
+[BlueprintTrainer] --> [PokerGame] : simulate hands
+[BlueprintTrainer] --> [InformationSet] : update regrets
+[BlueprintTrainer] --> [GameAdapter] : create keys
+[BlueprintTrainer] --> BP : export
+[POST /api/evaluate-hand] --> [GameAdapter] : create key
+[PokerGame] --> [HandEvaluator] : evaluate showdowns
+
+@enduml

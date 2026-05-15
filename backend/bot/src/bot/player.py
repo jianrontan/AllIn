@@ -13,10 +13,7 @@ class Player(BasePokerPlayer):
         self.game_adapter = GameAdapter()
         self.my_uuid = None
 
-        # Foundation attributes for confidence detection
         self.total_training_iterations = 0
-        self.blueprint_metadata = {}
-        self.training_stats = {}
 
         self.load_trained_strategy()
 
@@ -33,16 +30,6 @@ class Player(BasePokerPlayer):
             training_metadata = blueprint_data.get('training_metadata', {})
             self.total_training_iterations = training_metadata.get(
                 'iterations', 100)
-            self.blueprint_metadata = training_metadata
-
-            self.training_stats = {
-                'expected_value': training_metadata.get('expected_value', 0.0),
-                'training_duration': training_metadata.get('training_duration_seconds', 0.0),
-                'total_info_sets': training_metadata.get('total_info_sets', 0),
-                'visit_statistics': blueprint_data.get('visit_statistics', {}),
-                'strategy_analysis': blueprint_data.get('strategy_analysis', {}),
-                'convergence_metrics': blueprint_data.get('convergence_metrics', {})
-            }
 
             normalized_strategies = blueprint_data.get(
                 'normalized_strategies', {})
@@ -70,7 +57,7 @@ class Player(BasePokerPlayer):
                 f"✅ Loaded blueprint with {len(self.info_sets)} information sets")
             print(f"   Training iterations: {self.total_training_iterations}")
             print(
-                f"   Expected value: {self.training_stats['expected_value']:.6f}")
+                f"   Expected value: {training_metadata.get('expected_value', 0.0):.6f}")
 
         except Exception as e:
             print(f"❌ Error loading blueprint: {e}")
@@ -214,12 +201,10 @@ class Player(BasePokerPlayer):
                     break
 
     def receive_game_start_message(self, game_info):
-        """Setup game parameters"""
-        self.game_config = game_info
+        pass
 
     def receive_street_start_message(self, street, round_state):
-        """Handle street transitions"""
-        self.current_street = street
+        pass
 
     def receive_game_update_message(self, action, round_state):
         """Track actions for history building"""

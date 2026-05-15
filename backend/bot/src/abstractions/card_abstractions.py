@@ -13,7 +13,7 @@ class CardAbstraction:
             'medium_pair': ['JJ', 'TT', '99'],
             'small_pair': ['88', '77', '66', '55', '44', '33', '22'],
             'ace_king': ['AKs', 'AKo'],
-            'strong_ace': ['AQs', 'AQo', 'AJs', 'AJo', 'A10s', 'A10o'],
+            'strong_ace': ['AQs', 'AQo', 'AJs', 'AJo', 'ATs', 'ATo'],
             'ace_x': ['A9s', 'A9o', 'A8s', 'A8o', 'A7s', 'A7o', 'A6s', 'A6o', 'A5s', 'A5o', 'A4s', 'A4o', 'A3s', 'A3o', 'A2s', 'A2o'],
             'broadway': ['KQs', 'KQo', 'KJs', 'KJo', 'KTs', 'KTo', 'QJs', 'QJo', 'QTs', 'QTo', 'JTs', 'JTo'],
             'suited_connector': ['T9s', '98s', '87s', '76s', '65s', '54s'],
@@ -50,9 +50,9 @@ class CardAbstraction:
         # StackWild's simple bucketing approach
         if strength >= 7:    # Four of a kind, straight flush
             return "monster"
-        elif strength >= 5:  # Full house, flush, straight
+        elif strength >= 5:  # Full house, flush
             return "strong"
-        elif strength >= 2:  # Three of a kind, two pair
+        elif strength >= 2:  # Three of a kind, two pair, straight
             return "medium"
         elif strength == 1:  # Pair
             return "weak_made"
@@ -74,16 +74,14 @@ class CardAbstraction:
             return self.parse_card_objects(hole_cards)
 
     def parse_string_cards(self, hole_cards):
-        """Handle PyPokerEngine string format like ['AH', 'KS']"""
+        """Handle [Suit][Rank] format: PyPokerEngine ('HA') and training deck ('HA')"""
         card1_str, card2_str = hole_cards
 
-        # Extract rank and suit from strings like "AH" (Ace of Hearts)
-        rank1 = card1_str[0]  # First character is rank
-        suit1 = card1_str[1]  # Second character is suit
-        rank2 = card2_str[0]
-        suit2 = card2_str[1]
+        suit1 = card1_str[0]
+        rank1 = card1_str[1]
+        suit2 = card2_str[0]
+        rank2 = card2_str[1]
 
-        # Convert to standard format
         return self.format_hand_string(rank1, rank2, suit1, suit2)
 
     def parse_card_objects(self, hole_cards):
