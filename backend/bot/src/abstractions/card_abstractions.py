@@ -1,5 +1,5 @@
 # backend/bot/abstractions/card_abstractions.py
-from .hand_evaluator import HandEvaluator
+from .hand_evaluator import HandEvaluator, BoardTextureEvaluator
 
 
 class CardAbstraction:
@@ -17,50 +17,43 @@ class CardAbstraction:
             'ace_x': ['A9s', 'A9o', 'A8s', 'A8o', 'A7s', 'A7o', 'A6s', 'A6o', 'A5s', 'A5o', 'A4s', 'A4o', 'A3s', 'A3o', 'A2s', 'A2o'],
             'broadway': ['KQs', 'KQo', 'KJs', 'KJo', 'KTs', 'KTo', 'QJs', 'QJo', 'QTs', 'QTo', 'JTs', 'JTo'],
             'suited_connector': ['T9s', '98s', '87s', '76s', '65s', '54s'],
+            'offsuit_connector': ['T9o', '98o', '87o', '76o', '65o', '54o'],
             'weak': []  # Everything else
         }
         self.hand_evaluator = HandEvaluator()
+        self.board_texture = BoardTextureEvaluator()
+        self._bucket_cache = {}
+        # Reverse lookup: hand string → bucket name, built once for O(1) preflop lookup
+        self._preflop_lookup = {
+            hand: bucket
+            for bucket, hands in self.preflop_buckets.items()
+            for hand in hands
+        }
 
     def get_bucket(self, hole_cards, community_cards=None):
         """
         Similar to get_info_set() logic but for 2-card hands
         hole_cards: [Card, Card] from PyPokerEngine
         """
-        if not community_cards:  # Preflop
-            return self.preflop_bucket(hole_cards)
-        else:  # Postflop
-            return self.postflop_bucket(hole_cards, community_cards)
+        key = (tuple(hole_cards), tuple(community_cards) if community_cards else None)
+        cached = self._bucket_cache.get(key)
+        if cached is not None:
+            return cached
+        result = (self.preflop_bucket(hole_cards) if not community_cards
+                  else self.postflop_bucket(hole_cards, community_cards))
+        self._bucket_cache[key] = result
+        return result
 
     def preflop_bucket(self, hole_cards):
         """Convert 2-card hand to bucket"""
         hand_str = self.cards_to_string(hole_cards)
-
-        for bucket_name, hands in self.preflop_buckets.items():
-            if hand_str in hands:
-                return bucket_name
-
-        return 'weak'
+        return self._preflop_lookup.get(hand_str, 'weak')
 
     def postflop_bucket(self, hole_cards, community_cards):
-        # Use hand evaluator to get actual hand strength
-        hand_type, strength = self.hand_evaluator.evaluate_hand_strength(
-            hole_cards, community_cards
+        """Return integer bucket 0–7 encoding board-adjusted hand strength."""
+        return self.board_texture.compute_postflop_bucket(
+            hole_cards, community_cards, self.hand_evaluator
         )
-
-        # StackWild's simple bucketing approach
-        if strength >= 7:    # Four of a kind, straight flush
-            return "monster"
-        elif strength >= 5:  # Full house, flush
-            return "strong"
-        elif strength >= 2:  # Three of a kind, two pair, straight
-            return "medium"
-        elif strength == 1:  # Pair
-            return "weak_made"
-        else:                # High card
-            if self.hand_evaluator.has_draw_potential(hole_cards, community_cards):
-                return "draw"
-            else:
-                return "bluff"
 
     def cards_to_string(self, hole_cards):
         """Convert PyPokerEngine cards to readable format"""

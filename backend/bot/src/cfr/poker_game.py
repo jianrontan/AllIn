@@ -11,32 +11,42 @@ class PokerGame:
     def __init__(self):
         # Handle simplified game rules for training
         self.streets = ['preflop', 'flop', 'turn', 'river']
-        self.max_raises_per_street = 3  # Limit re-raising to prevent infinite loops
+        self.max_raises_per_street = 2  # 1 bet + 2 raises max per street
         self.hand_evaluator = HandEvaluator()  # For hand evaluation
         self.BET_MULTIPLIERS = {'small': 0.33, 'medium': 0.66, 'large': 1.00}
+        # Memoization cache for pot/call/contribution calculations.
+        # These are pure functions of their inputs, so the cache is valid forever.
+        self._calc_cache = {}
+
+    def _acting_player(self, action_index, street):
+        """Which player acts at position action_index in this street's history.
+        Preflop: SB (0) acts first. Postflop: BB (1) acts first (they are OOP)."""
+        offset = 1 if street > 0 else 0
+        return (action_index + offset) % 2
 
     def get_legal_actions(self, street, history, starting_pot, current_player):
-        """Generate legal actions using calculated current pot"""
+        """Generate legal actions. Memoized: same inputs always give the same result."""
+        key = ('legal', street, tuple(history), starting_pot, current_player)
+        if key in self._calc_cache:
+            return self._calc_cache[key]
 
-        # Check round completion first
         if self.is_round_complete(history):
-            return []
+            result = []
+        elif 'fold' in history:
+            result = []
+        else:
+            # Check betting cap (1 bet + 2 raises = 3 total)
+            bet_and_raise_count = sum(1 for action in history
+                                      if action.startswith(('bet_', 'raise_')))
+            if bet_and_raise_count >= 3:
+                result = ['fold', 'call']
+            elif street == 0:
+                result = self.get_preflop_legal_actions(street, history, starting_pot, current_player)
+            else:
+                result = self.get_postflop_legal_actions(street, history, starting_pot, current_player)
 
-        if 'fold' in history:
-            return []
-
-        # Check betting cap (1 bet + 3 raises = 4 total)
-        bet_and_raise_count = sum(1 for action in history
-                                  if action.startswith(('bet_', 'raise_')))
-        if bet_and_raise_count >= 4:
-            return ['fold', 'call']
-
-        # Use dedicated preflop logic
-        if street == 0:
-            return self.get_preflop_legal_actions(street, history, starting_pot, current_player)
-
-        # Postflop logic
-        return self.get_postflop_legal_actions(history, starting_pot, current_player)
+        self._calc_cache[key] = result
+        return result
 
     def get_preflop_legal_actions(self, street, history, starting_pot, current_player):
         """Preflop actions with pot calculation"""
@@ -44,7 +54,7 @@ class PokerGame:
         # Check betting cap first
         bet_raise_count = sum(
             1 for action in history if action.startswith(('bet_', 'raise_')))
-        if bet_raise_count >= 4:
+        if bet_raise_count >= 3:
             return ['fold', 'call']
 
         # Count raises for raise limit checking
@@ -68,28 +78,22 @@ class PokerGame:
 
             elif history[0].startswith('bet_'):  # SB opened
                 actions = ['fold', 'call']
-                if history[0] == 'bet_small':
-                    for size_name in ['small', 'medium', 'large']:
+                min_raise = self.get_min_raise(street, history, starting_pot)
+                three_bet_amounts = self.get_preflop_bet_amounts('3bet', starting_pot)
+                for size_name in ['small', 'medium', 'large']:
+                    if three_bet_amounts[size_name] >= min_raise:
                         actions.append(f'raise_{size_name}')
-                if history[0] == 'bet_medium':
-                    for size_name in ['medium', 'large']:
-                        actions.append(f'raise_{size_name}')
-                if history[0] == 'bet_large':
-                    actions.append('raise_large')
                 return actions
 
         elif len(history) == 2:
             if history[0] == 'call':
-                if history[1].startswith('bet_'):  # SB opened
+                if history[1].startswith('bet_'):  # BB opened after SB limp
                     actions = ['fold', 'call']
-                    if history[1] == 'bet_small':
-                        for size_name in ['small', 'medium', 'large']:
+                    min_raise = self.get_min_raise(street, history, starting_pot)
+                    three_bet_amounts = self.get_preflop_bet_amounts('3bet', starting_pot)
+                    for size_name in ['small', 'medium', 'large']:
+                        if three_bet_amounts[size_name] >= min_raise:
                             actions.append(f'raise_{size_name}')
-                    if history[1] == 'bet_medium':
-                        for size_name in ['medium', 'large']:
-                            actions.append(f'raise_{size_name}')
-                    if history[1] == 'bet_large':
-                        actions.append('raise_large')
                     return actions
 
         # Later preflop actions
@@ -103,28 +107,20 @@ class PokerGame:
 
         elif last_action.startswith(('bet_', 'raise_')):
             actions = ['fold', 'call']
-            if raise_count < 3:
-                # Calculate if raises are valid
+            if raise_count < 2:
                 min_raise = self.get_min_raise(
                     street, history, starting_pot)
-                player_contribution = self.get_player_contribution_this_round(
-                    history, street, starting_pot, current_player)
+                current_pot = self.calculate_current_pot(
+                    starting_pot, history, street)
+                call_amount = self.get_call_amount_from_history(
+                    street, history, starting_pot)
+                pot_after_call = current_pot + call_amount
+                preflop_multipliers = self.get_preflop_bet_amounts(
+                    'pot_relative', pot_after_call)
 
                 for size_name in ['small', 'medium', 'large']:
-                    # Calculate what this raise would be
-                    action_type = self.get_preflop_action_type(history)
-                    if action_type != 'pot_relative':
-                        print(
-                            f"DEBUG: history: {history}, starting_pot: {starting_pot}")
-                        raise TypeError('Should not be happening')
-                    else:
-                        current_pot = self.calculate_current_pot(
-                            starting_pot, history, street)
-                        preflop_multipliers = self.get_preflop_bet_amounts(
-                            'pot_relative', current_pot)
-                        raise_amount = preflop_multipliers[size_name]
-
-                    if raise_amount >= min_raise and raise_amount > player_contribution:
+                    raise_amount = preflop_multipliers[size_name] + call_amount
+                    if raise_amount >= min_raise:
                         actions.append(f'raise_{size_name}')
             return actions
 
@@ -133,21 +129,16 @@ class PokerGame:
 
         return ['fold', 'call']  # Fallback
 
-    def get_postflop_legal_actions(self, history, starting_pot, current_player):
+    def get_postflop_legal_actions(self, street, history, starting_pot, current_player):
         """Postflop actions with pot calculation"""
 
-        current_pot = self.calculate_current_pot(
-            starting_pot, history, 1)  # postflop street
+        current_pot = self.calculate_current_pot(starting_pot, history, street)
 
         if not history:  # First action postflop
             actions = ['check']
-            # print(f"DEBUG: starting_pot={starting_pot}, current_pot={current_pot}")
             for size_name, multiplier in self.BET_MULTIPLIERS.items():
-                bet_amount = multiplier * current_pot
-                # print(f"DEBUG: {size_name}: {multiplier} × {current_pot} = {bet_amount}, >= 2? {bet_amount >= 2}")
-                if bet_amount >= 2:
+                if multiplier * current_pot >= 2:
                     actions.append(f'bet_{size_name}')
-            # print(f"DEBUG: final actions = {actions}")
             return actions
 
         # Check for double check
@@ -159,40 +150,23 @@ class PokerGame:
         if last_action == 'check':
             actions = ['check']
             for size_name, multiplier in self.BET_MULTIPLIERS.items():
-                bet_amount = multiplier * current_pot
-                if bet_amount >= 2:
+                if multiplier * current_pot >= 2:
                     actions.append(f'bet_{size_name}')
             return actions
 
-        elif last_action.startswith('bet_'):
+        elif last_action.startswith('bet_') or last_action.startswith('raise_'):
             actions = ['fold', 'call']
-            # Add raises if under limit
             raise_count = sum(
                 1 for action in history if action.startswith('raise_'))
-            if raise_count < 3:
-                min_raise = self.get_min_raise(1, history, starting_pot)
-                player_contribution = self.get_player_contribution_this_round(
-                    history, 1, starting_pot, current_player)
+            if raise_count < 2:
+                min_raise = self.get_min_raise(street, history, starting_pot)
+                call_amount = self.get_call_amount_from_history(
+                    street, history, starting_pot)
+                pot_after_call = current_pot + call_amount
 
                 for size_name, multiplier in self.BET_MULTIPLIERS.items():
-                    raise_amount = multiplier * current_pot
-                    if raise_amount >= min_raise and raise_amount > player_contribution:
-                        actions.append(f'raise_{size_name}')
-            return actions
-
-        elif last_action.startswith('raise_'):
-            actions = ['fold', 'call']
-            # Similar raise logic
-            raise_count = sum(
-                1 for action in history if action.startswith('raise_'))
-            if raise_count < 3:
-                min_raise = self.get_min_raise(1, history, starting_pot)
-                player_contribution = self.get_player_contribution_this_round(
-                    history, 1, starting_pot, current_player)
-
-                for size_name, multiplier in self.BET_MULTIPLIERS.items():
-                    raise_amount = multiplier * current_pot
-                    if raise_amount >= min_raise and raise_amount > player_contribution:
+                    raise_amount = multiplier * pot_after_call + call_amount
+                    if raise_amount >= min_raise:
                         actions.append(f'raise_{size_name}')
             return actions
 
@@ -238,39 +212,42 @@ class PokerGame:
 
     def calculate_current_pot(self, starting_pot, history, street):
         """
-        Central function to calculate current pot size from street start and history
+        Central function to calculate current pot size from street start and history.
+        Memoized: same inputs always produce the same result.
         """
-        current_pot = starting_pot
+        key = ('pot', starting_pot, tuple(history), street)
+        cached = self._calc_cache.get(key)
+        if cached is not None:
+            return cached
 
+        current_pot = starting_pot
         for i, action in enumerate(history):
             if action in ['check', 'fold']:
                 continue
             elif action == 'call':
-                call_amount = self.get_call_amount_from_history(  # VERIFY
+                current_pot += self.get_call_amount_from_history(
                     street, history[:i], starting_pot)
-                current_pot += call_amount
             elif action.startswith('bet_'):
-                bet_amount = self.calculate_bet_amount(
+                current_pot += self.calculate_bet_amount(
                     action, street, starting_pot, history[:i])
-                current_pot += bet_amount
             elif action.startswith('raise_'):
-                raise_amount = self.calculate_raise_amount(
+                current_pot += self.calculate_raise_amount(
                     action, street, starting_pot, history[:i], i)
-                current_pot += raise_amount
 
+        self._calc_cache[key] = current_pot
         return current_pot
 
     def calculate_bet_amount(self, action, street, starting_pot, history_before):
         """Calculate the actual bet amount for bet actions"""
         size = action.split('_')[1]
-        current_player = len(history_before) % 2
+        current_player = self._acting_player(len(history_before), street)
         if street == 0:  # Preflop
             action_type = self.get_preflop_action_type(history_before)
             bet_amounts = self.get_preflop_bet_amounts(
                 action_type, starting_pot)
             target_amount = bet_amounts[size]
 
-            # Subtract current contributio
+            # Subtract current contribution
             current_contribution = self.get_player_contribution_this_round(
                 history_before, street, starting_pot, current_player)
             return target_amount - current_contribution
@@ -282,7 +259,7 @@ class PokerGame:
     def calculate_raise_amount(self, action, street, starting_pot, history_before, action_index):
         """Calculate the additional amount needed for raise actions"""
         size = action.split('_')[1]
-        current_player = action_index % 2
+        current_player = self._acting_player(action_index, street)
 
         # Calculate target total contribution
         if street == 0:  # Preflop
@@ -294,13 +271,19 @@ class PokerGame:
             else:
                 pot_before_raise = self.calculate_current_pot(
                     starting_pot, history_before, street)
+                call_amount = self.get_call_amount_from_history(
+                    street, history_before, starting_pot)
+                pot_after_call = pot_before_raise + call_amount
                 preflop_multipliers = self.get_preflop_bet_amounts(
-                    'pot_relative', pot_before_raise)
-                target_amount = preflop_multipliers[size]
+                    'pot_relative', pot_after_call)
+                target_amount = preflop_multipliers[size] + call_amount
         else:  # Postflop
             pot_before_raise = self.calculate_current_pot(
                 starting_pot, history_before, street)
-            target_amount = self.BET_MULTIPLIERS[size] * pot_before_raise
+            call_amount = self.get_call_amount_from_history(
+                street, history_before, starting_pot)
+            pot_after_call = pot_before_raise + call_amount
+            target_amount = self.BET_MULTIPLIERS[size] * pot_after_call + call_amount
 
         # Calculate current contribution
         current_contribution = self.get_player_contribution_this_round(
@@ -308,45 +291,45 @@ class PokerGame:
 
         return target_amount - current_contribution
 
-    def get_utility(self, p0_cards, p1_cards, community_cards, history, street, starting_pot):
-        """Calculate utility with pot calculation"""
+    def get_utility(self, p0_cards, p1_cards, community_cards, history, street, starting_pot,
+                    p0_prev_invested=0.0, p1_prev_invested=0.0):
+        """Calculate utility from P0's perspective.
 
-        # Calculate final pot size
-        final_pot = self.calculate_current_pot(
-            starting_pot, history, street)
+        p0_prev_invested / p1_prev_invested: chips each player put in during
+        all streets BEFORE this one.  get_utility adds the current-street
+        contribution to get the true total investment.
+        """
 
-        # Calculate contributions for each player
-        p0_contribution = self.get_player_contribution_this_round(
+        final_pot = self.calculate_current_pot(starting_pot, history, street)
+
+        p0_this = self.get_player_contribution_this_round(
             history, street, starting_pot, 0)
-        p1_contribution = self.get_player_contribution_this_round(
-            history, street, starting_pot, 1)
+        p0_total = p0_prev_invested + p0_this
 
         if 'fold' in history:
-            # Find who folded
             folder_index = next(i for i, action in enumerate(
                 history) if action == 'fold')
-            folder_player = folder_index % 2
+            folder_player = self._acting_player(folder_index, street)
 
             if folder_player == 0:  # P0 folded, P1 wins
-                return -p0_contribution
+                return -p0_total
             else:  # P1 folded, P0 wins
-                return final_pot - p0_contribution
+                return final_pot - p0_total
 
         else:  # Showdown
             community_for_eval = community_cards[:self.get_community_cards_count(
                 street)]
 
-            p0_strength = self.hand_evaluator.evaluate_hand_strength(
-                p0_cards, community_for_eval)[1]
-            p1_strength = self.hand_evaluator.evaluate_hand_strength(
-                p1_cards, community_for_eval)[1]
+            # phevaluator: lower raw score = stronger hand
+            p0_raw = self.hand_evaluator.get_raw_hand_value(p0_cards, community_for_eval)
+            p1_raw = self.hand_evaluator.get_raw_hand_value(p1_cards, community_for_eval)
 
-            if p0_strength > p1_strength:  # P0 wins
-                return final_pot - p0_contribution
-            elif p1_strength > p0_strength:  # P1 wins
-                return -p0_contribution
+            if p0_raw < p1_raw:  # P0 wins
+                return final_pot - p0_total
+            elif p1_raw < p0_raw:  # P1 wins
+                return -p0_total
             else:  # Tie
-                return (final_pot / 2) - p0_contribution
+                return (final_pot / 2) - p0_total
 
     def get_community_cards_count(self, street):
         """Get number of community cards for current street, bounds checking"""
@@ -358,13 +341,23 @@ class PokerGame:
             return [0, 3, 4, 5][street]
 
     def get_min_raise(self, street, history, starting_pot):
+        """Calculate minimum raise. Memoized: pure function of its inputs."""
+        key = ('minraise', street, tuple(history), starting_pot)
+        if key in self._calc_cache:
+            return self._calc_cache[key]
+        result = self._compute_min_raise(street, history, starting_pot)
+        self._calc_cache[key] = result
+        return result
+
+    def _compute_min_raise(self, street, history, starting_pot):
         """Calculate minimum raise using forward pot calculation"""
 
         if not history:
             return 2.0  # Big blind minimum
 
-        # Find the last two bet/raise amounts
-        bet_amounts = []
+        # Preflop: seed with BB post (2 chips) so the first raise increment is
+        # computed as open - BB rather than open + open.
+        bet_amounts = [2.0] if street == 0 else []
 
         for i, action in enumerate(history):
             if action.startswith(('bet_', 'raise_')):
@@ -378,15 +371,21 @@ class PokerGame:
                     else:
                         pot_before = self.calculate_current_pot(
                             starting_pot, history[:i], street)
+                        call_amount = self.get_call_amount_from_history(
+                            street, history[:i], starting_pot)
+                        pot_after_call = pot_before + call_amount
                         size = action.split('_')[1]
                         preflop_multipliers = self.get_preflop_bet_amounts(
-                            'pot_relative', pot_before)
-                        bet_amounts.append(preflop_multipliers[size])
+                            'pot_relative', pot_after_call)
+                        bet_amounts.append(preflop_multipliers[size] + call_amount)
                 else:  # Postflop
                     pot_before = self.calculate_current_pot(
                         starting_pot, history[:i], street)
+                    call_amount = self.get_call_amount_from_history(
+                        street, history[:i], starting_pot)
+                    pot_after_call = pot_before + call_amount
                     size = action.split('_')[1]
-                    bet_amounts.append(self.BET_MULTIPLIERS[size] * pot_before)
+                    bet_amounts.append(self.BET_MULTIPLIERS[size] * pot_after_call + call_amount)
 
         # Minimum raise is the difference between last two bet amounts
         if len(bet_amounts) >= 2:
@@ -397,52 +396,25 @@ class PokerGame:
 
         return 2.0  # Default minimum
 
-    def _multiplier_for_action(self, action, street=None, history=None):
-        """Return multiplier for reverse-engineering pot evolution with preflop awareness"""
-
-        # Handle preflop BB-based multipliers
-        if street == 0 and history is not None:
-            action_type = self.get_preflop_action_type(history)
-
-            if action_type != 'pot_relative':  # BB-multiple phase
-                # Get the action index to determine which bet this was
-                action_index = len(
-                    [a for a in history if a.startswith(('bet_', 'raise_'))])
-
-                # Calculate multiplier based on BB amounts
-                bet_amounts = self.get_preflop_bet_amounts(
-                    action_type, 1.0)  # Use base pot of 1
-                size = action.split('_')[1] if '_' in action else 'medium'
-
-                if size in bet_amounts:
-                    # For BB-based amounts, multiplier is (pot + bet_amount) / pot
-                    return 1.0 + bet_amounts[size]
-
-        # Fall back to pot-relative multipliers (postflop or late preflop)
-        for size, bet_mult in self.BET_MULTIPLIERS.items():
-            if action.endswith(size):
-                return 1.0 + bet_mult
-
-        return 1.0
-
     def get_player_contribution_this_round(self, history, street, starting_pot, current_player):
-        """Calculate player's contribution this round using forward calculation"""
+        """Calculate player's contribution this round using forward calculation. Memoized."""
+        key = ('contrib', tuple(history), street, starting_pot, current_player)
+        cached = self._calc_cache.get(key)
+        if cached is not None:
+            return cached
 
-        # Base contribution for preflop blinds
         if street == 0:
             contribution = 1.0 if current_player == 0 else 2.0
         else:
             contribution = 0.0
 
-        # Build forward through history to find player's last contribution
         for i, action in enumerate(history):
-            action_player = i % 2
+            action_player = self._acting_player(i, street)
 
             if action_player == current_player:
                 if action == 'call':
-                    call_amount = self.get_call_amount_from_history(
+                    contribution += self.get_call_amount_from_history(
                         street, history[:i], starting_pot)
-                    contribution += call_amount
 
                 elif action.startswith(('bet_', 'raise_')):
                     if street == 0:  # Preflop
@@ -451,34 +423,46 @@ class PokerGame:
                             bet_amounts = self.get_preflop_bet_amounts(
                                 action_type, starting_pot)
                             size = action.split('_')[1]
-                            # Replace blind contribution
                             contribution = bet_amounts[size]
                         else:
                             pot_before = self.calculate_current_pot(
                                 starting_pot, history[:i], street)
+                            call_amount = self.get_call_amount_from_history(
+                                street, history[:i], starting_pot)
+                            pot_after_call = pot_before + call_amount
                             size = action.split('_')[1]
                             preflop_multipliers = self.get_preflop_bet_amounts(
-                                'pot_relative', pot_before)
-                            contribution = preflop_multipliers[size]
+                                'pot_relative', pot_after_call)
+                            contribution = preflop_multipliers[size] + call_amount
                     else:  # Postflop
                         pot_before = self.calculate_current_pot(
                             starting_pot, history[:i], street)
+                        call_amount = self.get_call_amount_from_history(
+                            street, history[:i], starting_pot)
+                        pot_after_call = pot_before + call_amount
                         size = action.split('_')[1]
-                        contribution = self.BET_MULTIPLIERS[size] * pot_before
+                        contribution += self.BET_MULTIPLIERS[size] * pot_after_call + call_amount
 
+        self._calc_cache[key] = contribution
         return contribution
 
     def get_call_amount_from_history(self, street, history, starting_pot):
         """
         Return the extra chips the next-to-act player must put in to call.
-        `history` is the sequence BEFORE the call.
+        `history` is the sequence BEFORE the call.  Memoized.
         """
+        key = ('call', street, tuple(history), starting_pot)
+        cached = self._calc_cache.get(key)
+        if cached is not None:
+            return cached
+
         if not history:
-            return 1.0 if street == 0 else 0.0
+            result = 1.0 if street == 0 else 0.0
+            self._calc_cache[key] = result
+            return result
 
-        current_player = len(history) % 2
+        current_player = self._acting_player(len(history), street)
 
-        # Find size of last bet/raise
         last_bet_amt = 0
         for i in range(len(history) - 1, -1, -1):
             act = history[i]
@@ -492,23 +476,29 @@ class PokerGame:
                     else:
                         pot_before = self.calculate_current_pot(
                             starting_pot, history[:i], street)
+                        raiser_call = self.get_call_amount_from_history(
+                            street, history[:i], starting_pot)
+                        pot_after_call = pot_before + raiser_call
                         size = act.split('_')[1]
                         preflop_multipliers = self.get_preflop_bet_amounts(
-                            'pot_relative', pot_before)
-                        last_bet_amt = preflop_multipliers[size]
+                            'pot_relative', pot_after_call)
+                        last_bet_amt = preflop_multipliers[size] + raiser_call
                 else:
                     pot_before = self.calculate_current_pot(
                         starting_pot, history[:i], street)
+                    raiser_call = self.get_call_amount_from_history(
+                        street, history[:i], starting_pot)
+                    pot_after_call = pot_before + raiser_call
                     size = act.split('_')[1]
-                    last_bet_amt = self.BET_MULTIPLIERS[size] * pot_before
+                    last_bet_amt = self.BET_MULTIPLIERS[size] * pot_after_call + raiser_call
                 break
 
-        # What has this player invested so far this round?
         player_contrib = self.get_player_contribution_this_round(
             history, street, starting_pot, current_player)
 
-        # Extra chips needed to call
-        return max(0.0, last_bet_amt - player_contrib)
+        result = max(0.0, last_bet_amt - player_contrib)
+        self._calc_cache[key] = result
+        return result
 
     def get_preflop_action_type(self, history):
         """Determine what type of preflop action this is"""
@@ -536,9 +526,9 @@ class PokerGame:
             }
         elif action_type == '3bet':
             return {
-                'small': 6 * big_blind,   # 12 chips
-                'medium': 10 * big_blind,  # 20 chips
-                'large': 14 * big_blind   # 28 chips
+                'small': 9 * big_blind,   # 18 chips (~3× small open)
+                'medium': 12 * big_blind,  # 24 chips (~2.4× medium open)
+                'large': 16 * big_blind   # 32 chips (large 3-bet / squeeze)
             }
         else:  # pot_relative
             return {

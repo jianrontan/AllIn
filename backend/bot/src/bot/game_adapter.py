@@ -8,19 +8,22 @@ class GameAdapter:
         self.card_abstractions = CardAbstraction()
         self.action_abstractions = ActionAbstraction()
 
-    def create_info_set_key(self, hole_card, round_state):
-        """Generate info set key from round state action history"""
+    def create_info_set_key(self, hole_card, round_state, position='ip'):
+        """
+        Generate info set key from round state action history.
+        position: 'ip' (SB/BTN, acts last postflop) or 'oop' (BB, acts first postflop).
+        """
         betting_pattern = self._extract_betting_pattern(round_state)
 
         if round_state.get('street') == 'preflop':
             card_bucket = self.card_abstractions.get_bucket(hole_card, None)
-            return f"{card_bucket}_{betting_pattern}"
+            return f"{card_bucket}_{position}_{betting_pattern}"
         else:
             starting_hand = self.card_abstractions.get_bucket(hole_card, None)
             current_strength = self.card_abstractions.get_bucket(
                 hole_card, round_state.get('community_card'))
             street = round_state.get('street')
-            return f"{starting_hand}_{current_strength}_{street}_{betting_pattern}"
+            return f"{starting_hand}_{current_strength}_{position}_{street}_{betting_pattern}"
 
     def _extract_betting_pattern(self, round_state):
         """Extract betting pattern string from round_state action histories"""

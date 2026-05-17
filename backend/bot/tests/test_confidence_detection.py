@@ -237,7 +237,7 @@ def test_pypoker_integration():
 
     # Test info set creation
     info_set_key = player.game_adapter.create_info_set_key(
-        hole_cards, mock_round_state)
+        hole_cards, mock_round_state, 'ip')
     game_history = player._extract_simplified_game_history(mock_round_state)
     game_state = player.extract_game_state(mock_round_state)
 

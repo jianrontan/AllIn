@@ -1,12 +1,29 @@
 # backend/bot/src/cfr/blueprint_trainer.py
 import random
-from pathlib import Path
 from .poker_game import PokerGame
 from .information_set import InformationSet
 from ..bot.game_adapter import GameAdapter
-import time
-import os
-import json
+
+# Precomputed action → betting-pattern character mapping (avoids per-node method call)
+_ACTION_CHARS = {
+    'check': 'k', 'call': 'c', 'fold': 'f',
+    'bet_small': 's', 'bet_medium': 'm', 'bet_large': 'l',
+    'raise_small': 's', 'raise_medium': 'm', 'raise_large': 'l',
+}
+_STREET_NAMES = ['preflop', 'flop', 'turn', 'river']
+
+
+def _format_duration(seconds):
+    """Convert seconds to a human-readable h:mm:ss string."""
+    seconds = int(seconds)
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    if h:
+        return f"{h}h {m:02d}m {s:02d}s"
+    elif m:
+        return f"{m}m {s:02d}s"
+    return f"{s}s"
 
 
 class BlueprintTrainer:
@@ -46,11 +63,15 @@ class BlueprintTrainer:
 
         return p0_cards, p1_cards, community_cards
 
-    def cfr(self, p0_cards, p1_cards, community_cards, history, p0_reach, p1_reach, street, updating_player, depth=0, iteration=0, starting_pot=None):
+    def cfr(self, p0_cards, p1_cards, community_cards, history, p0_reach, p1_reach, street, updating_player, depth=0, iteration=0, starting_pot=None, p0_invested=0.0, p1_invested=0.0, bet_pattern=''):
         """
         Monte Carlo CFR+ with External Sampling
         - Updating player: explores all actions
         - Opponent: samples single action based on strategy
+
+        p0_invested / p1_invested track each player's cumulative chip investment
+        across all streets completed before this one, so get_utility can compute
+        the correct net gain/loss from P0's perspective.
         """
 
         # Depth limiting to prevent infinite recursion
@@ -58,7 +79,8 @@ class BlueprintTrainer:
             print(
                 f"WARNING: Max depth reached at street {street}, history {history}")
             return self.game.get_utility(p0_cards, p1_cards, community_cards,
-                                         history, min(street, 3), starting_pot)
+                                         history, min(street, 3), starting_pot,
+                                         p0_invested, p1_invested)
 
         # Initialize accumulated pot if not provided
         if starting_pot is None:
@@ -67,15 +89,16 @@ class BlueprintTrainer:
         # Check for terminal states
         if street > 3:
             return self.game.get_utility(p0_cards, p1_cards, community_cards,
-                                         history, 3, starting_pot)
+                                         history, 3, starting_pot,
+                                         p0_invested, p1_invested)
 
         if self.game.is_terminal(history, street):
             return self.game.get_utility(p0_cards, p1_cards, community_cards,
-                                         history, street, starting_pot)
+                                         history, street, starting_pot,
+                                         p0_invested, p1_invested)
 
-        # Determine current player
-        current_player = len(history) % 2
-        player_cards = p0_cards if current_player == 0 else p1_cards
+        # Determine current player (preflop: SB/0 first; postflop: BB/1 first)
+        current_player = self.game._acting_player(len(history), street)
 
         # Get legal actions for current situation
         legal_actions = self.game.get_legal_actions(
@@ -86,20 +109,31 @@ class BlueprintTrainer:
             current_pot = self.game.calculate_current_pot(
                 starting_pot, history, street)
             if street < 3:
-                # Advance to next street with empty history
+                # Accumulate this street's investments before advancing
+                p0_this = self.game.get_player_contribution_this_round(
+                    history, street, starting_pot, 0)
+                p1_this = self.game.get_player_contribution_this_round(
+                    history, street, starting_pot, 1)
                 return self.cfr(p0_cards, p1_cards, community_cards, [],
                                 p0_reach, p1_reach, street + 1, updating_player,
-                                depth + 1, iteration, current_pot)
+                                depth + 1, iteration, current_pot,
+                                p0_invested + p0_this, p1_invested + p1_this,
+                                bet_pattern='')
             else:
-                # Terminal - evaluate final outcome (use starting pot as get_utility just calculates)
                 return self.game.get_utility(p0_cards, p1_cards, community_cards,
-                                             history, street, starting_pot)
+                                             history, street, starting_pot,
+                                             p0_invested, p1_invested)
 
-        # Create information set
-        round_state = self.create_round_state_for_info_set(
-            community_cards, history, street, starting_pot)
-        info_set_key = self.game_adapter.create_info_set_key(
-            player_cards, round_state)
+        # Build info set key directly — avoids dict allocation and O(depth) history scan
+        position = 'ip' if current_player == 0 else 'oop'
+        if street == 0:
+            card_bucket = self._p0_preflop if current_player == 0 else self._p1_preflop
+            info_set_key = f"{card_bucket}_{position}_{bet_pattern}"
+        else:
+            starting = self._p0_preflop if current_player == 0 else self._p1_preflop
+            strength = (self._p0_postflop[street] if current_player == 0
+                        else self._p1_postflop[street])
+            info_set_key = f"{starting}_{strength}_{position}_{_STREET_NAMES[street]}_{bet_pattern}"
 
         # Get or create information set
         if info_set_key not in self.info_sets:
@@ -117,31 +151,33 @@ class BlueprintTrainer:
         strategy = info_set.get_strategy(legal_actions, reach_prob, iteration, self.beta)
 
         if current_player == updating_player:
-            # UPDATING PLAYER: Explore all actions
+            # UPDATING PLAYER: Explore all actions.
+            # Traverser reach is multiplied by strategy[i] so child info sets accumulate
+            # average strategy weighted by π_i × σ(I, a) — the true reach probability.
             action_utilities = {}
             node_utility = 0
 
             for i, action in enumerate(legal_actions):
                 next_history = history + [action]
-
+                next_pattern = bet_pattern + _ACTION_CHARS[action]
                 if current_player == 0:
                     action_utilities[action] = -self.cfr(
                         p0_cards, p1_cards, community_cards, next_history,
-                        p0_reach *
-                        strategy[i], p1_reach, street, updating_player,
-                        depth + 1, iteration, starting_pot)
+                        p0_reach * strategy[i], p1_reach, street, updating_player,
+                        depth + 1, iteration, starting_pot,
+                        p0_invested, p1_invested, next_pattern)
                 else:
                     action_utilities[action] = -self.cfr(
                         p0_cards, p1_cards, community_cards, next_history,
-                        p0_reach, p1_reach *
-                        strategy[i], street, updating_player,
-                        depth + 1, iteration, starting_pot)
-
+                        p0_reach, p1_reach * strategy[i], street, updating_player,
+                        depth + 1, iteration, starting_pot,
+                        p0_invested, p1_invested, next_pattern)
                 node_utility += strategy[i] * action_utilities[action]
 
             # Update regrets (CFR+ floor + DCFR temporal decay)
-            # Decay factor: early iterations shrink toward 0, later iterations approach 1.
-            t = iteration + 1
+            # Decay relative to this info set's own visit count, not the global iteration.
+            # An info set discovered late in training shouldn't get near-zero decay.
+            t = info_set.visit_count
             regret_decay = ((t - 1) / t) ** self.alpha if t > 1 else 0.0
             opponent_reach = p1_reach if current_player == 0 else p0_reach
 
@@ -158,134 +194,102 @@ class BlueprintTrainer:
             sampled_action = random.choices(legal_actions, weights=strategy)[0]
             sampled_prob = strategy[legal_actions.index(sampled_action)]
             next_history = history + [sampled_action]
+            next_pattern = bet_pattern + _ACTION_CHARS[sampled_action]
 
             if current_player == 0:
                 return -self.cfr(
                     p0_cards, p1_cards, community_cards, next_history,
                     p0_reach * sampled_prob, p1_reach, street, updating_player,
-                    depth + 1, iteration, starting_pot)
+                    depth + 1, iteration, starting_pot,
+                    p0_invested, p1_invested, next_pattern)
             else:
                 return -self.cfr(
                     p0_cards, p1_cards, community_cards, next_history,
                     p0_reach, p1_reach * sampled_prob, street, updating_player,
-                    depth + 1, iteration, starting_pot)
+                    depth + 1, iteration, starting_pot,
+                    p0_invested, p1_invested, next_pattern)
 
-    def create_round_state_for_info_set(self, community_cards, history, street, starting_pot):
-        """Simplified version that passes CFR history directly"""
+    def train_blueprint(self, iterations, db=None, start_iteration=0, checkpoint_every=10000):
+        """Main training loop. Pass db to enable periodic checkpointing and resume support."""
+        import time
 
-        street_names = ['preflop', 'flop', 'turn', 'river']
-        community_for_street = community_cards[:self.game.get_community_cards_count(
-            street)]
-        current_pot = self.game.calculate_current_pot(
-            starting_pot, history, street)
+        LOG_EVERY = 1
 
-        return {
-            'street': street_names[street],
-            'community_card': community_for_street,
-            'cfr_history': history,
-            'pot': {'main': {'amount': current_pot}},
-            'accumulated_pot': current_pot
-        }
-
-    def train_blueprint(self, iterations):
-        """Main training loop with better progress tracking"""
-        print(
-            f"Starting blueprint CFR training for {iterations} iterations...")
+        total_target = start_iteration + iterations
+        print(f"Starting blueprint CFR training")
+        print(f"  Target iterations : {total_target:,}")
+        print(f"  Starting from     : {start_iteration:,}")
+        print(f"  Remaining         : {iterations:,}")
+        print(f"  Checkpoint every  : {checkpoint_every:,}")
+        print()
 
         expected_value = 0
+        t_start = time.time()
+
         for i in range(iterations):
-            # Deal random cards
+            actual_iteration = start_iteration + i
+            t_iter = time.time()
             p0_cards, p1_cards, community_cards = self.deal_random_hand()
 
-            print(f"Starting iteration {i + 1}...")
+            # Precompute card buckets once per deal — cards never change within an iteration
+            ca = self.game_adapter.card_abstractions
+            self._p0_preflop = ca.get_bucket(p0_cards, None)
+            self._p1_preflop = ca.get_bucket(p1_cards, None)
+            self._p0_postflop = {
+                1: ca.get_bucket(p0_cards, community_cards[:3]),
+                2: ca.get_bucket(p0_cards, community_cards[:4]),
+                3: ca.get_bucket(p0_cards, community_cards[:5]),
+            }
+            self._p1_postflop = {
+                1: ca.get_bucket(p1_cards, community_cards[:3]),
+                2: ca.get_bucket(p1_cards, community_cards[:4]),
+                3: ca.get_bucket(p1_cards, community_cards[:5]),
+            }
 
-            updating_player = i % 2
-
-            # Run CFR iteration
+            updating_player = actual_iteration % 2
             util = self.cfr(p0_cards, p1_cards,
-                            community_cards, [], 1.0, 1.0, 0, updating_player, 0, i, 3)
+                            community_cards, [], 1.0, 1.0, 0, updating_player, 0, actual_iteration, 3)
+            print(f"  util raw: {util:.2f}") # TEMP
             expected_value += util
 
-            print(f"Completed iteration {i + 1}, utility: {util}")
+            if (i + 1) % LOG_EVERY == 0:
+                iter_ms = (time.time() - t_iter) * 1000
+                now = time.time()
+                elapsed_total = now - t_start
+                iters_done = i + 1
+                iters_per_sec = iters_done / elapsed_total if elapsed_total > 0 else 0
+                remaining_iters = iterations - iters_done
+                eta_sec = remaining_iters / iters_per_sec if iters_per_sec > 0 else 0
+                eta_str = _format_duration(eta_sec)
+                elapsed_str = _format_duration(elapsed_total)
 
-            # More frequent progress reporting
-            if (i + 1) % 10 == 0:
-                print(f"Completed {i + 1}/{iterations} iterations")
-                print(f"Expected Value: {expected_value / (i + 1)}")
-                print(f"Info sets created: {len(self.info_sets)}")
+                print(f"  iter {actual_iteration + 1:>9,} / {total_target:,} | "
+                      f"EV: {expected_value / iters_done:+.5f} | "
+                      f"info sets: {len(self.info_sets):>7,} | "
+                      f"{iters_per_sec:>6.1f} it/s | "
+                      f"iter_ms: {iter_ms:.1f} | "
+                      f"elapsed: {elapsed_str} | "
+                      f"ETA: {eta_str}")
 
-        print("Training completed!")
+            if db is not None and (i + 1) % checkpoint_every == 0:
+                self.checkpoint_to_db(db, actual_iteration)
+
+        total_elapsed = _format_duration(time.time() - t_start)
+        print(f"\nTraining completed in {total_elapsed}.")
         return expected_value / iterations
 
-    def export_blueprint_with_visit_stats(self, filename):
-        """Export blueprint strategies with visit frequency statistics"""
+    def checkpoint_to_db(self, db, iteration):
+        """Write all current info sets to SQLite and record progress."""
+        db.save_batch(self.info_sets)
+        db.set_metadata('total_iterations', iteration + 1)
+        db.set_metadata('alpha', self.alpha)
+        db.set_metadata('beta', self.beta)
+        print(f"Checkpoint: {len(self.info_sets)} info sets saved at iteration {iteration + 1}")
 
-        blueprint_data = {
-            'metadata': {
-                'total_info_sets': len(self.info_sets),
-                'export_timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
-                'visit_stats_included': True
-            },
-            'strategies': {},
-            'visit_statistics': {
-                'most_visited': [],
-                'least_visited': [],
-                'total_visits': 0,
-                'average_visits_per_infoset': 0
-            }
-        }
+    def resume_from_db(self, db):
+        """Load info sets from SQLite and return the iteration to start from."""
+        self.info_sets = db.load_all_to_memory()
+        start_iteration = db.get_metadata('total_iterations', 0)
+        print(f"Resumed: {len(self.info_sets)} info sets, continuing from iteration {start_iteration}")
+        return start_iteration
 
-        visit_counts = []
-        total_visits = 0
-
-        for info_set_key, info_set in self.info_sets.items():
-            try:
-                legal_actions = info_set.legal_actions
-                if not legal_actions:
-                    continue
-
-                avg_strategy = info_set.get_average_strategy(legal_actions)
-                regrets = {action: info_set.cumulative_regrets.get(action, 0)
-                           for action in legal_actions}
-
-                # Calculate visit frequency properly
-                visit_frequency = (info_set.visit_count / max(1, info_set.last_visited_iteration + 1)
-                                   if info_set.last_visited_iteration >= 0 else 0)
-
-                # Include visit statistics
-                blueprint_data['strategies'][info_set_key] = {
-                    'average_strategy': {action: float(prob) for action, prob in
-                                         zip(legal_actions, avg_strategy)},
-                    'regrets': regrets,
-                    'visit_count': info_set.visit_count,
-                    'last_visited_iteration': info_set.last_visited_iteration,
-                    'visit_frequency': visit_frequency
-                }
-
-                visit_counts.append((info_set_key, info_set.visit_count))
-                total_visits += info_set.visit_count
-
-            except Exception as e:
-                print(f"Error processing info set {info_set_key}: {e}")
-                continue
-
-        # Calculate visit statistics
-        if visit_counts:
-            visit_counts.sort(key=lambda x: x[1], reverse=True)
-
-            blueprint_data['visit_statistics'] = {
-                'most_visited': visit_counts[:10],
-                'least_visited': visit_counts[-10:],
-                'total_visits': total_visits,
-                'average_visits_per_infoset': total_visits / len(visit_counts) if visit_counts else 0,
-                'max_visits': visit_counts[0][1] if visit_counts else 0,
-                'min_visits': visit_counts[-1][1] if visit_counts else 0
-            }
-
-        # Save to file
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
-        with open(filename, 'w') as f:
-            json.dump(blueprint_data, f, indent=2)
-
-        print(f"Blueprint with visit statistics saved to: {filename}")
-        return blueprint_data

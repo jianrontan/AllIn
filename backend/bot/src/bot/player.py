@@ -1,67 +1,28 @@
 # backend/bot/src/bot/player.py
 from pypokerengine.players import BasePokerPlayer
 from src.bot.game_adapter import GameAdapter
-from src.cfr.information_set import InformationSet
+from src.storage.blueprint_db import BlueprintDB
 import random
-import json
 from pathlib import Path
 
 
 class Player(BasePokerPlayer):
     def __init__(self):
-        self.info_sets = {}
+        self.db = None
         self.game_adapter = GameAdapter()
         self.my_uuid = None
+        self._load_db()
 
-        self.total_training_iterations = 0
-
-        self.load_trained_strategy()
-
-    def load_trained_strategy(self):
-        """Load trained blueprint strategy from unified JSON file with comprehensive statistics"""
+    def _load_db(self):
         try:
             current_dir = Path(__file__).parent
-            blueprint_path = current_dir / ".." / ".." / "analysis" / "blueprint.json"
-            file_path = blueprint_path.resolve()
-
-            with open(file_path, 'r') as f:
-                blueprint_data = json.load(f)
-
-            training_metadata = blueprint_data.get('training_metadata', {})
-            self.total_training_iterations = training_metadata.get(
-                'iterations', 100)
-
-            normalized_strategies = blueprint_data.get(
-                'normalized_strategies', {})
-
-            for info_set_key, strategy_data in normalized_strategies.items():
-                info_set = InformationSet()
-                info_set.legal_actions = strategy_data.get('legal_actions', [])
-                info_set.cumulative_regrets = strategy_data.get('regrets', {})
-
-                avg_strategy = strategy_data.get('average_strategy', {})
-                info_set.cumulative_strategy = {}
-
-                for action, prob in avg_strategy.items():
-                    info_set.cumulative_strategy[action] = prob * \
-                        self.total_training_iterations
-
-                visit_metadata = strategy_data.get('visit_metadata', {})
-                info_set.visit_count = visit_metadata.get('visit_count', 1)
-                info_set.last_visited_iteration = visit_metadata.get(
-                    'last_visited_iteration', 0)
-
-                self.info_sets[info_set_key] = info_set
-
-            print(
-                f"✅ Loaded blueprint with {len(self.info_sets)} information sets")
-            print(f"   Training iterations: {self.total_training_iterations}")
-            print(
-                f"   Expected value: {training_metadata.get('expected_value', 0.0):.6f}")
-
+            db_path = (current_dir / ".." / ".." / "analysis" / "blueprint.db").resolve()
+            self.db = BlueprintDB(db_path)
+            total_iterations = self.db.get_metadata('total_iterations', 0)
+            print(f"Loaded blueprint DB: {db_path}")
+            print(f"Training iterations: {total_iterations}")
         except Exception as e:
-            print(f"❌ Error loading blueprint: {e}")
-            self.total_training_iterations = 100
+            print(f"Error loading blueprint DB: {e}")
 
     def declare_action(self, valid_actions, hole_card, round_state):
         """Simple blueprint action selection with debug output"""
@@ -73,52 +34,40 @@ class Player(BasePokerPlayer):
 
         return action, amount
 
+    def _get_my_position(self, round_state):
+        """Return 'ip' if bot is SB/BTN (acts last postflop), 'oop' if BB."""
+        preflop_actions = round_state.get('action_histories', {}).get('preflop', [])
+        for action in preflop_actions:
+            if action.get('action', '').upper() == 'SMALLBLIND':
+                return 'ip' if action.get('uuid') == self.my_uuid else 'oop'
+        return 'ip'
+
     def _get_blueprint_action(self, valid_actions, hole_card, round_state):
         """Get action using trained blueprint strategy"""
-        # Create info set key
-        info_set_key = self.game_adapter.create_info_set_key(
-            hole_card, round_state)
-
-        # Extract game state
+        position = self._get_my_position(round_state)
+        info_set_key = self.game_adapter.create_info_set_key(hole_card, round_state, position)
         game_state = self.extract_game_state(round_state)
-
-        # Check if we have this info set
-        if info_set_key in self.info_sets:
-            info_set = self.info_sets[info_set_key]
-            print(f"[CFR_Bot] Found info set: {info_set_key}")
-        else:
-            # Unknown situation - create new info set (will use uniform strategy)
-            info_set = InformationSet()
-            self.info_sets[info_set_key] = info_set
-            print(
-                f"[CFR_Bot] Unknown info set: {info_set_key}, using uniform strategy")
-
-        # Convert PyPokerEngine actions to CFR format
         cfr_actions = self.game_adapter.action_abstractions.pypoker_to_cfr_actions(
             valid_actions, game_state
         )
 
-        print(f"[CFR_Bot] Available CFR actions: {cfr_actions}")
+        strategy_dict = self.db.get_average_strategy(info_set_key) if self.db else None
 
-        # Get strategy from blueprint
-        strategy = info_set.get_average_strategy(cfr_actions)
+        if strategy_dict:
+            strategy = [strategy_dict.get(a, 0.0) for a in cfr_actions]
+            print(f"[CFR_Bot] Found: {info_set_key}")
+        else:
+            strategy = [1.0 / len(cfr_actions)] * len(cfr_actions)
+            print(f"[CFR_Bot] Unknown: {info_set_key}, using uniform strategy")
 
         print(f"[CFR_Bot] Strategy: {dict(zip(cfr_actions, strategy))}")
 
-        # Select action based on strategy (random weighted choice)
-        # Convert numpy array to list for random.choices
-        strategy_list = strategy.tolist() if hasattr(
-            strategy, 'tolist') else list(strategy)
-        selected_cfr_action = random.choices(
-            cfr_actions, weights=strategy_list)[0]
+        selected_cfr_action = random.choices(cfr_actions, weights=strategy)[0]
+        print(f"[CFR_Bot] Selected: {selected_cfr_action}")
 
-        print(f"[CFR_Bot] Selected CFR action: {selected_cfr_action}")
-
-        # Convert back to PyPokerEngine format
         action, amount = self.game_adapter.action_abstractions.cfr_to_pypoker_action(
             selected_cfr_action, valid_actions, round_state, game_state
         )
-
         return action, amount
 
     def extract_game_state(self, round_state):
