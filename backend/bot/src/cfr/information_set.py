@@ -4,59 +4,59 @@ import numpy as np
 
 class InformationSet:
     """
-    Core logic stays the same as Leduc, just handles more action types
+    Stores cumulative regrets and the cumulative (average) strategy for one
+    information set. Used by external-sampling MCCFR.
+
+    Two distinct operations, deliberately kept separate:
+      - get_strategy():        pure regret-matching, no side effects on the
+                               cumulative strategy. Called at every node.
+      - accumulate_strategy(): adds the current strategy into the running
+                               average. Called ONLY at opponent nodes, where
+                               sampling supplies the correct reach weighting.
     """
 
     def __init__(self):
         self.cumulative_regrets = {}
         self.cumulative_strategy = {}
         self.legal_actions = []
-        self.visit_count = 0             # Track how often this infoset was visited
-        self.last_visited_iteration = 0  # Track recency
+        self.visit_count = 0             # regret-update count (DCFR discount clock)
+        self.last_visited_iteration = -1  # -1 so iteration 0 increments visit_count
 
-    def get_strategy(self, legal_actions, reach_probability, iteration=0, beta=0.0):
-        """CFR+ implementation - prevents negative regrets"""
+    def get_strategy(self, legal_actions):
+        """
+        Current strategy via CFR+ regret matching. Pure: does NOT mutate the
+        cumulative strategy. Negative regrets are floored at 0 (CFR+).
+        """
         if not self.legal_actions:
             self.legal_actions = legal_actions.copy()
-        else:
-            # Maintain consistent ordering by using a canonical action order
-            all_actions = set(self.legal_actions) | set(legal_actions)
-            canonical_order = ['fold', 'call', 'check', 'bet_small', 'bet_medium',
-                               'bet_large', 'raise_small', 'raise_medium', 'raise_large']
-            self.legal_actions = [
-                action for action in canonical_order if action in all_actions]
+        # The info set key must uniquely determine the legal action set, so we
+        # never merge action sets across visits — that would corrupt averaging.
 
-        # CFR+ key difference: max with 0 before storing regrets
-        regrets = np.array([max(0, self.cumulative_regrets.get(action, 0))
-                            for action in legal_actions])
-
-        total = np.sum(regrets)
-
+        regrets = np.array([max(0.0, self.cumulative_regrets.get(a, 0.0))
+                            for a in legal_actions])
+        total = regrets.sum()
         if total > 0:
-            strategy = regrets / total
-        else:
-            strategy = np.ones(len(legal_actions)) / len(legal_actions)
+            return regrets / total
+        return np.ones(len(legal_actions)) / len(legal_actions)
 
-        # DCFR: decay existing strategy sum before adding new contribution.
-        # beta=0 means no decay (recommended by Brown & Sandholm 2019).
-        t = iteration + 1
-        if beta > 0 and t > 1:
-            decay = ((t - 1) / t) ** beta
-            for action in self.cumulative_strategy:
-                self.cumulative_strategy[action] *= decay
+    def accumulate_strategy(self, legal_actions, strategy):
+        """
+        Add the current strategy into the cumulative (average) strategy.
 
-        for i, action in enumerate(legal_actions):
-            if action not in self.cumulative_strategy:
-                self.cumulative_strategy[action] = 0.0
-            self.cumulative_strategy[action] += reach_probability * strategy[i]
-
-        return strategy
+        In external-sampling MCCFR this is called only at opponent nodes. The
+        opponent's actions are sampled, so reaching this node already happens
+        with probability proportional to the player's own reach — therefore the
+        contribution is added unweighted.
+        """
+        if not self.legal_actions:
+            self.legal_actions = legal_actions.copy()
+        for i, a in enumerate(legal_actions):
+            self.cumulative_strategy[a] = self.cumulative_strategy.get(a, 0.0) + strategy[i]
 
     def get_average_strategy(self, legal_actions):
-        """Reach-probability-weighted time average over all iterations."""
+        """Normalised average strategy over all accumulated iterations."""
         total = sum(self.cumulative_strategy.get(a, 0.0) for a in legal_actions)
         if total > 1e-12:
             return np.array([self.cumulative_strategy.get(a, 0.0) / total
                              for a in legal_actions])
-        else:
-            return np.ones(len(legal_actions)) / len(legal_actions)
+        return np.ones(len(legal_actions)) / len(legal_actions)

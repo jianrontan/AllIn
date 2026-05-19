@@ -41,21 +41,23 @@ class GameAdapter:
         running_pot = current_pot - paid_this_street
 
         pattern = ''
-        for action in street_actions:
+        for idx, action in enumerate(street_actions):
             action_type = action.get('action', '').lower()
+            if action_type in ('smallblind', 'bigblind'):
+                continue  # blinds are not betting-pattern actions
             if action_type == 'fold':
                 pattern += 'f'
-            elif action_type == 'call':
-                pattern += 'c'
-            elif action_type == 'check':
-                pattern += 'k'
+            elif action_type in ('call', 'check'):
+                # PyPokerEngine has no explicit CHECK — a check is a CALL that
+                # pays 0 chips. Map paid==0 to 'k' (check), otherwise 'c' (call).
+                pattern += 'k' if action.get('paid', 0) == 0 else 'c'
             elif action_type in ('raise', 'bet'):
                 amount = action.get('amount', 0)
                 game_state = {'pot_size': running_pot, 'big_blind': 2}
                 category = self.action_abstractions.categorize_bet_size(
                     {'action': action_type, 'amount': amount},
                     game_state,
-                    [a for a in street_actions[:street_actions.index(action)]],
+                    street_actions[:idx],
                     current_street
                 )
                 pattern += category[0]
@@ -68,7 +70,8 @@ class GameAdapter:
         mapping = {
             'check': 'k', 'call': 'c', 'fold': 'f',
             'bet_small': 's', 'bet_medium': 'm', 'bet_large': 'l',
-            'raise_small': 's', 'raise_medium': 'm', 'raise_large': 'l'
+            'raise_small': 's', 'raise_medium': 'm', 'raise_large': 'l',
+            'allin': 'a',
         }
         return mapping.get(cfr_action, 'x')
 

@@ -18,7 +18,7 @@ class OffTreeDetector:
         # Define off-tree conditions
         self.off_tree_conditions = {
             'bet_size_tolerance': 0.15,  # 15% tolerance around expected sizes
-            'max_raises': 3,
+            'max_raises': 2,
             'unknown_actions': True
         }
 
@@ -56,14 +56,14 @@ class OffTreeDetector:
         return unknown_actions
 
     def _check_raise_limit_violations(self, game_history):
-        """Check for 4th raise or excessive betting"""
+        """Check for raises beyond the 3-total cap (1 bet + 2 raises)"""
         violations = []
 
         # Count raises per street (assuming single street for now)
         bet_raise_count = sum(1 for action in game_history
                               if action.startswith(('bet_', 'raise_')))
 
-        if bet_raise_count > 4:  # 1 bet + 3 raises = 4 max
+        if bet_raise_count > 3:  # 1 bet + 2 raises = 3 max
             violations.append(
                 f"Excessive betting: {bet_raise_count} bet/raise actions")
 

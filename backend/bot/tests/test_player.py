@@ -1,5 +1,9 @@
-from src.bot.player import Player
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 import random
+from src.bot.player import Player
 from pypokerengine.players import BasePokerPlayer
 from pypokerengine.api.game import setup_config, start_poker
 
@@ -50,12 +54,12 @@ def test_game():
         config.register_player(name="Random_Bot", algorithm=RandomPlayer())
 
         # Run game
-        print("🚀 Starting poker game...")
+        print("Starting poker game...")
         game_result = start_poker(config, verbose=1)
-        print(f"✅ Game completed: {game_result}")
+        print(f"Game completed: {game_result}")
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"Error: {e}")
         import traceback
         traceback.print_exc()
 

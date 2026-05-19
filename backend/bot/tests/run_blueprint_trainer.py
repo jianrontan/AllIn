@@ -71,7 +71,9 @@ def run_training(iterations, resume=None, checkpoint_every=1000):
             start_iteration=start_iteration,
             checkpoint_every=checkpoint_every,
         )
-        trainer.checkpoint_to_db(db, start_iteration + iterations - 1)
+        # Final checkpoint — only needed when the last iteration wasn't already a checkpoint boundary
+        if iterations % checkpoint_every != 0:
+            trainer.checkpoint_to_db(db, start_iteration + iterations - 1)
 
         total = start_iteration + iterations
         print(f"\nTraining complete.")
@@ -93,4 +95,4 @@ def run_enhanced_training(iterations=1000):
 
 
 if __name__ == "__main__":
-    run_training(4000000, checkpoint_every=10000)
+    run_training(1000000, checkpoint_every=10000)

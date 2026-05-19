@@ -48,7 +48,7 @@ class Player(BasePokerPlayer):
         info_set_key = self.game_adapter.create_info_set_key(hole_card, round_state, position)
         game_state = self.extract_game_state(round_state)
         cfr_actions = self.game_adapter.action_abstractions.pypoker_to_cfr_actions(
-            valid_actions, game_state
+            valid_actions, game_state, round_state
         )
 
         strategy_dict = self.db.get_average_strategy(info_set_key) if self.db else None
@@ -134,11 +134,10 @@ class Player(BasePokerPlayer):
             if action.get('uuid') == player_uuid:
                 action_type = action.get('action', '').upper()
                 if action_type in ['BET', 'RAISE', 'CALL', 'BIGBLIND', 'SMALLBLIND']:
-                    if action_type == 'CALL':
-                        total_contribution += action.get('amount', 0)
-                    else:
-                        # For bets/raises, this IS the total contribution
-                        total_contribution = action.get('amount', 0)
+                    # PyPokerEngine 'amount' is the cumulative street commitment
+                    # (the to-amount) for every action type — including CALL,
+                    # whose amount is the level called to, not an increment.
+                    total_contribution = action.get('amount', 0)
 
         return total_contribution
 
