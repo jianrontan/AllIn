@@ -29,8 +29,12 @@ class InformationSet:
         """
         if not self.legal_actions:
             self.legal_actions = legal_actions.copy()
-        # The info set key must uniquely determine the legal action set, so we
-        # never merge action sets across visits — that would corrupt averaging.
+        # `legal_actions` records the FIRST action set seen, for reference only.
+        # get_strategy always operates on the list passed for THIS visit, and the
+        # cumulative dicts are keyed by action name — so a key whose action set
+        # varies across visits (a postflop key spanning different pots) still
+        # merges correctly. Read the average strategy over cumulative_strategy's
+        # own keys, never over this stored list.
 
         regrets = np.array([max(0.0, self.cumulative_regrets.get(a, 0.0))
                             for a in legal_actions])

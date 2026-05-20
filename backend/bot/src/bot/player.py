@@ -2,8 +2,8 @@
 from pypokerengine.players import BasePokerPlayer
 from src.bot.game_adapter import GameAdapter
 from src.storage.blueprint_db import BlueprintDB
+from src.config import resolve_blueprint_path
 import random
-from pathlib import Path
 
 
 class Player(BasePokerPlayer):
@@ -15,9 +15,8 @@ class Player(BasePokerPlayer):
 
     def _load_db(self):
         try:
-            current_dir = Path(__file__).parent
-            db_path = (current_dir / ".." / ".." / "analysis" / "blueprint.db").resolve()
-            self.db = BlueprintDB(db_path)
+            db_path = resolve_blueprint_path()
+            self.db = BlueprintDB(db_path, read_only=True)
             total_iterations = self.db.get_metadata('total_iterations', 0)
             print(f"Loaded blueprint DB: {db_path}")
             print(f"Training iterations: {total_iterations}")

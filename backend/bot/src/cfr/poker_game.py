@@ -483,7 +483,11 @@ class PokerGame:
                             street, history[:i], starting_pot, p0_prev, p1_prev)
                         pot_after_call = pot_before + call_amount
                         size = action.split('_')[1]
-                        contribution += self.BET_MULTIPLIERS[size] * pot_after_call + call_amount
+                        # This is the raise-to TOTAL for the street, not an
+                        # increment — assign it (matching the preflop branches).
+                        # Using += double-counts a player's earlier bet/raise
+                        # when they bet then re-raise the same street.
+                        contribution = self.BET_MULTIPLIERS[size] * pot_after_call + call_amount
 
         self._calc_cache[key] = contribution
         return contribution

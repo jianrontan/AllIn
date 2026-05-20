@@ -10,12 +10,12 @@ Usage (from backend/bot/):
     # Resume from a specific DB file
     python -c "from tests.run_blueprint_trainer import run_training; run_training(50000, resume='blueprint_20260517_143022.db')"
 
-    # Promote a run to the active model used by the bot
-    # (copy or rename manually)
-    #   cp analysis/blueprint_20260517_143022.db analysis/blueprint.db
-
-    # Quick test (throwaway — uses a temp name)
+    # Quick test
     python -c "from tests.run_blueprint_trainer import run_training; run_training(10)"
+
+The API and bot pick the active blueprint automatically via
+src.config.resolve_blueprint_path() (highest-iteration DB that is not being
+written) — no manual promotion step. Set ALLIN_BLUEPRINT_DB to pin a file.
 """
 import sys
 import os
@@ -81,18 +81,13 @@ def run_training(iterations, resume=None, checkpoint_every=1000):
         print(f"  Total iterations:  {total}")
         print(f"  Info sets:         {len(trainer.info_sets)}")
         print(f"  DB:                {db_path}")
-        print(f"\nTo make this the active model:")
-        print(f"  copy analysis\\{db_path.name} analysis\\blueprint.db")
+        print(f"\nThe API/bot will pick this up automatically once it has the "
+              f"most iterations of any blueprint in analysis/.")
     finally:
         db.close()
 
     return expected_value
 
 
-# Alias kept for backward compat with CLAUDE.md quick-test command
-def run_enhanced_training(iterations=1000):
-    return run_training(iterations)
-
-
 if __name__ == "__main__":
-    run_training(1000000, checkpoint_every=10000)
+    run_training(3000000, checkpoint_every=50000)

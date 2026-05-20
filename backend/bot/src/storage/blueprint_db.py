@@ -5,13 +5,27 @@ from ..cfr.information_set import InformationSet
 
 
 class BlueprintDB:
-    def __init__(self, db_path):
+    def __init__(self, db_path, read_only=False):
+        """
+        read_only=True opens the file with SQLite's URI `mode=ro` flag: the
+        connection can never write, so it is safe to point at a blueprint while
+        a separate training process holds it open. Inference (API, bot) should
+        always use read_only=True; training uses the default read/write mode.
+        """
         self.db_path = str(db_path)
-        self.conn = sqlite3.connect(self.db_path)
-        # WAL mode: allows reads while a write is in progress
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA synchronous=NORMAL")
-        self._create_tables()
+        self.read_only = read_only
+
+        if read_only:
+            # check_same_thread=False: the Flask API serves requests from a
+            # thread pool. Read-only queries across threads are safe here.
+            self.conn = sqlite3.connect(
+                f"file:{self.db_path}?mode=ro", uri=True, check_same_thread=False)
+        else:
+            self.conn = sqlite3.connect(self.db_path)
+            # WAL mode: allows reads while a write is in progress
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA synchronous=NORMAL")
+            self._create_tables()
 
     def _create_tables(self):
         self.conn.executescript("""
@@ -58,6 +72,11 @@ class BlueprintDB:
         """
         Inference lookup: returns {action: probability} for one info set key,
         or None if the key was never trained on.
+
+        Normalised over EVERY accumulated action. The stored `legal_actions` is
+        only the first-seen action set and can omit actions a key picked up on
+        later visits (e.g. 'allin' on a short-stack visit) — normalising over it
+        would silently drop those actions from the exported strategy.
         """
         row = self.conn.execute(
             "SELECT legal_actions, cumulative_strategy FROM info_sets WHERE key = ?",
@@ -66,13 +85,43 @@ class BlueprintDB:
         if row is None:
             return None
 
+        cumulative_strategy = json.loads(row[1])
+        total = sum(cumulative_strategy.values())
+        if total > 1e-12:
+            return {a: v / total for a, v in cumulative_strategy.items()}
+
+        # No strategy mass accumulated — fall back to uniform over legal actions.
+        legal_actions = json.loads(row[0])
+        return {a: 1.0 / len(legal_actions) for a in legal_actions}
+
+    def get_record(self, key):
+        """
+        Inference + UI lookup: full info-set record for one key, or None.
+        Returns the normalised average strategy plus visit metadata.
+        """
+        row = self.conn.execute(
+            "SELECT legal_actions, cumulative_strategy, visit_count, "
+            "last_visited_iteration FROM info_sets WHERE key = ?",
+            (key,),
+        ).fetchone()
+        if row is None:
+            return None
+
         legal_actions = json.loads(row[0])
         cumulative_strategy = json.loads(row[1])
-        total = sum(cumulative_strategy.get(a, 0.0) for a in legal_actions)
-
+        # Normalise over every accumulated action (see get_average_strategy).
+        total = sum(cumulative_strategy.values())
         if total > 1e-12:
-            return {a: cumulative_strategy.get(a, 0.0) / total for a in legal_actions}
-        return {a: 1.0 / len(legal_actions) for a in legal_actions}
+            strategy = {a: v / total for a, v in cumulative_strategy.items()}
+        else:
+            strategy = {a: 1.0 / len(legal_actions) for a in legal_actions}
+
+        return {
+            "strategy": strategy,
+            "legalActions": list(strategy.keys()),
+            "visitCount": row[2],
+            "lastVisitedIteration": row[3],
+        }
 
     def load_all_to_memory(self):
         """
