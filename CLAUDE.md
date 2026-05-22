@@ -166,7 +166,7 @@ Health: `GET /api/test` — reports status and the active blueprint.
 
 ## Git
 
-Never run any git commands in this repository.
+Never add, commit, or push code in this repository, or any commands that is unsafe, read only commands are fine.
 
 ## Key Constraints
 
