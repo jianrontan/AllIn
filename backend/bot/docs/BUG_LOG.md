@@ -10,6 +10,128 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-004 — Calling an all-in cost 0 chips when the caller was already ahead this street
+
+| | |
+|---|---|
+| **Date** | 2026-05-21 |
+| **Area** | Game logic (`src/cfr/poker_game.py`) — `get_call_amount_from_history` |
+| **Severity** | Critical — gameplay outcome + training correctness |
+| **Status** | Fixed (existing blueprints stale w.r.t. all-in-called lines) |
+
+**Summary.** When the last aggressive action was `allin`, the call-cost
+calculation compared the all-in's **increment** against the caller's
+**total street commitment** — apples to oranges. If the caller's
+existing commitment exceeded the all-in's increment, the call cost was
+clamped to 0 and the caller "called" for free.
+
+**Symptom.** A user observed an all-in pot return `+86.9 BB` instead of
+`+100 BB`. The bot's `Call` of an all-in showed no chip amount and the
+bot's stack stayed positive (13.1 BB) after supposedly calling.
+
+### Root cause
+
+`get_call_amount_from_history` walks the history backwards to find the
+last aggressive action and sets `last_bet_amt` from it. For sized
+`bet_`/`raise_` actions it correctly sets it to the player's **total
+street commitment** after the action (e.g.
+`multiplier * pot_after_call + call_amount`, which is the raise-to
+total). For `allin`, it instead set:
+
+```python
+last_bet_amt = self._allin_amount(history[:i], street, starting_pot,
+                                  bet_player, p0_prev, p1_prev)
+```
+
+`_allin_amount` is the **chips the all-in put in this action** — an
+increment, not a total. Then the final line does:
+
+```python
+result = max(0.0, last_bet_amt - player_contrib)
+```
+
+`player_contrib` is the caller's total street commitment. Subtracting
+an increment from a total is meaningless: if the caller had already
+committed more chips this street than the all-in's increment, the
+result was negative and got clamped to 0.
+
+### Concrete walkthrough (the user's hand, in chips)
+
+- Through preflop/flop/turn both players committed 25 chips each.
+- River, starting_pot = 50.
+- P1 (user) bets medium → 33 chips committed this street.
+- P0 (bot) raises large → 149 chips committed this street.
+- P1 shoves all-in: increment = 142 chips (their entire remaining stack).
+  P1's total street commitment after the shove = 33 + 142 = **175 chips**.
+- P0 calls. Correct cost = 175 − 149 = **26 chips** (~13.1 BB).
+- Buggy code: `last_bet_amt = _allin_amount = 142`,
+  `player_contrib = 149`, `max(0, 142 − 149) = 0`. The bot called for **free**.
+- Final pot was 186.9 BB (missing the 13.1) and the user won
+  `186.9 − 100 = +86.9` BB instead of the expected `+100`.
+
+### The fix
+
+Make the all-in branch produce the same kind of value as the bet/raise
+branch — the all-in player's total street commitment after the action.
+An all-in player has no chips left, so their total committed for the
+whole hand is `STARTING_STACK − prev_invested`; subtract `starting_pot`-
+side contributions and the math falls out, but the simplest correct
+formula is:
+
+```python
+bet_player_prev = p0_prev if bet_player == 0 else p1_prev
+last_bet_amt = STARTING_STACK - bet_player_prev
+```
+
+This matches the semantics of the sized-bet branch and the subsequent
+`max(0, last_bet_amt - player_contrib)` produces the right call cost.
+
+### Why the existing tests missed it
+
+- **Chip conservation was preserved.** `cost = 0` meant the bot's stack
+  didn't change AND the pot didn't change — so
+  `p0_stack + p1_stack + pot == 2 × STARTING_STACK` still held. The
+  randomized chip-conservation fuzz could not see the defect.
+- **The exact triggering sequence is narrow.** It needs the caller's
+  this-street commitment to *exceed* the all-in's increment, which
+  requires the caller to be the prior aggressor (e.g. bet then got
+  shoved on for less, or raised big then got jammed on for less). Not
+  every all-in-then-call hits it.
+- **No targeted test covered an all-in following a bigger raise.**
+
+### Detection / prevention
+
+- Caught from a live game: the user noticed a `+86.9 BB` all-in pot
+  that should have been `±100 BB`, and the action log showed
+  `bot · river · Call` with no chips.
+- Regression test added: `test_call_after_allin_costs_total_minus_caller_contrib`
+  — reproduces the exact scenario and asserts `call_cost ≈ 26 chips`.
+- Stronger fuzz invariant added in `test_random_session_playout_invariants`:
+  *every `call` action with chips remaining must cost > 0*. This catches
+  the entire bug class — including future regressions where some path
+  produces a zero-cost call. Chip conservation alone could not.
+- **Lesson:** internally consistent bugs (cost=0 in both the deduction
+  and the pot) survive aggregate invariants like chip conservation.
+  Each *primitive* — call, bet, raise, all-in — needs its own invariant
+  tied to *what the action means in poker*, not just to chip totals.
+
+### Impact
+
+- **Gameplay.** All-in pots resolved through this path under-rewarded
+  the winner (and under-cost the caller). The user's reported
+  `Net +299.8 BB` over 170 hands was, on net, *less than it should have
+  been* in some hands.
+- **Training.** `get_call_amount_from_history` is used by
+  `_action_cost('call')`, `calculate_current_pot`,
+  `calculate_raise_amount`, and `get_player_contribution_this_round`.
+  In CFR, every all-in-and-called line had a wrong call cost and a
+  wrong pot, propagating into incorrect utilities and regrets for that
+  whole class of lines. Blueprints trained before this fix
+  (including the 6M-iteration `blueprint_20260520_003107.db`) are
+  stale w.r.t. all-in lines and should be retrained.
+
+---
+
 ## BUG-001 — Average-strategy readout silently dropped actions
 
 | | |

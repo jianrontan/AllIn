@@ -515,8 +515,17 @@ class PokerGame:
             act = history[i]
             if act == 'allin':
                 bet_player = self._acting_player(i, street)
-                last_bet_amt = self._allin_amount(
-                    history[:i], street, starting_pot, bet_player, p0_prev, p1_prev)
+                # `last_bet_amt` must be the all-in player's TOTAL street
+                # commitment AFTER going all-in (matching the bet/raise branch
+                # below, which also produces a raise-to total). An all-in
+                # player has no chips left, so their total committed is
+                # STARTING_STACK minus their cross-street prior investment.
+                # Earlier code used `_allin_amount` (just the chips the all-in
+                # added) which is an increment, not a total — produces a 0
+                # call cost whenever the caller had already put in more this
+                # street than the all-in's increment.
+                bet_player_prev = p0_prev if bet_player == 0 else p1_prev
+                last_bet_amt = STARTING_STACK - bet_player_prev
                 break
             elif act.startswith(('bet_', 'raise_')):
                 if street == 0:

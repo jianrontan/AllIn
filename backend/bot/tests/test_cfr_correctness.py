@@ -768,6 +768,34 @@ def test_preflop_raise_war_contribution_invariant():
     print("PASS test_preflop_raise_war_contribution_invariant")
 
 
+def test_call_after_allin_costs_total_minus_caller_contrib():
+    """
+    Calling an all-in must cost (all-in player's TOTAL street commitment) minus
+    (caller's current street commitment) — NOT (all-in's chip increment) minus
+    (caller's commitment). The buggy version produced 0 whenever the caller had
+    already put in more this street than the all-in's increment.
+
+    Reproduces the 'Play vs AI' bug: river bet → opponent big raise → you shove
+    for less than the raise's increment but for more total. The opponent owed
+    the small difference; the bug let them call for free.
+    """
+    game = PokerGame()
+    # River, after both have invested 25 chips each through preflop/flop/turn,
+    # starting_pot = 50. P1 (user) bets medium, P0 (bot) raises large, P1
+    # shoves the rest. P0 should owe (P1's total) − (P0's contrib so far).
+    history = ['bet_medium', 'raise_large', 'allin']
+    starting_pot = 50.0
+    call_cost = game.get_call_amount_from_history(3, history, starting_pot, 25.0, 25.0)
+    # P1's total river commitment after the all-in is STARTING_STACK − 25 = 175.
+    # P0's contribution so far this street is 149 (the large raise).
+    # The call must cost 175 − 149 = 26 chips, not 0.
+    assert call_cost > 1.0, (
+        f"calling an all-in that raises the bet must cost > 0; got {call_cost}")
+    assert abs(call_cost - 26.0) < 0.5, (
+        f"expected call cost ~26 chips, got {call_cost}")
+    print(f"PASS test_call_after_allin_costs_total_minus_caller_contrib: {call_cost:.2f}")
+
+
 def test_random_session_playout_invariants():
     """
     Property-based fuzz: play many random hands through a full GameSession and
@@ -791,7 +819,12 @@ def test_random_session_playout_invariants():
             legal = session.legal_actions()
             if not legal:
                 break
-            session.apply_action(_r.choice(legal))
+            action = _r.choice(legal)
+            # Snapshot pre-action for the call-cost invariant.
+            acting = session.current_player()
+            pre_p0, pre_p1 = session.data['p0_stack'], session.data['p1_stack']
+            pre_history = list(session.data['history'])
+            session.apply_action(action)
             d = session.data
             assert d['p0_stack'] > -1e-6, f"negative p0 stack: {d['p0_stack']}"
             assert d['p1_stack'] > -1e-6, f"negative p1 stack: {d['p1_stack']}"
@@ -801,8 +834,57 @@ def test_random_session_playout_invariants():
             assert abs(d['p0_stack'] + d['p1_stack'] + pot - total) < 1e-6, (
                 f"chip conservation broken: stacks {d['p0_stack']:.2f}+"
                 f"{d['p1_stack']:.2f} + pot {pot:.2f} != {total}")
+            # Calling when the caller has chips and there is an outstanding
+            # aggressive action must put chips in. (Preflop SB limp also costs
+            # 1 chip to match the BB.) The buggy allin-call branch silently
+            # produced cost=0 and chip conservation alone could not detect it.
+            if action == 'call':
+                pre_stack = pre_p0 if acting == 0 else pre_p1
+                post_stack = d['p0_stack'] if acting == 0 else d['p1_stack']
+                cost = pre_stack - post_stack
+                if pre_stack > 1e-6:
+                    assert cost > 1e-6, (
+                        f"call cost was 0 despite chips remaining; "
+                        f"history={pre_history + [action]}, stack pre={pre_stack:.2f}")
+                # Semantic invariant: after a call, either the caller's TOTAL
+                # commitment matches the opponent's, or the caller is now
+                # all-in for less. Derived from stack values only, so it is
+                # independent of any contribution/pot function — catches
+                # internally consistent miscalculations that look fine to chip
+                # conservation. Would have caught BUG-004 directly.
+                p0_total = STARTING_STACK - d['p0_stack']
+                p1_total = STARTING_STACK - d['p1_stack']
+                if abs(p0_total - p1_total) > 1e-6:
+                    caller_stack = d['p0_stack'] if acting == 0 else d['p1_stack']
+                    assert caller_stack < 1e-6, (
+                        f"call didn't match opponent's commitment and caller "
+                        f"isn't all-in: p0_total={p0_total:.3f}, "
+                        f"p1_total={p1_total:.3f}, caller_stack={caller_stack:.3f}, "
+                        f"history={pre_history + [action]}")
+            # Semantic invariant: every postflop street begins with both
+            # players' cross-street investments equal — the previous street
+            # only completes via fold (terminal) or a call/check that
+            # equalises. Catches asymmetric-invested drift across streets
+            # (a class BUG-003 belonged to).
+            if d['street'] > 0:
+                assert abs(d['p0_invested'] - d['p1_invested']) < 1e-6, (
+                    f"asymmetric cross-street invested at street {d['street']}: "
+                    f"p0_invested={d['p0_invested']:.3f}, "
+                    f"p1_invested={d['p1_invested']:.3f}")
             steps += 1
             assert steps <= 300, "hand did not terminate"
+        # End-of-hand semantic invariant: if the hand ended via an all-in
+        # that was called, both players must have stack 0 (with equal
+        # starting stacks an all-in always commits the full stack and the
+        # caller, when able to cover, also goes to 0). Catches the bug
+        # class of "call recorded but no chips actually moved."
+        hist = session.data['history']
+        if len(hist) >= 2 and hist[-2] == 'allin' and hist[-1] == 'call':
+            assert (session.data['p0_stack'] < 1e-6
+                    and session.data['p1_stack'] < 1e-6), (
+                f"allin+call terminal but stacks nonzero: "
+                f"p0={session.data['p0_stack']:.3f}, "
+                f"p1={session.data['p1_stack']:.3f}")
     print(f"PASS test_random_session_playout_invariants: {hands_played} hands, "
           f"invariants held after every action")
 
@@ -1144,6 +1226,7 @@ ALL_TESTS = [
     # Chip conservation / property-based fuzz
     test_postflop_multiraise_contribution_invariant,
     test_preflop_raise_war_contribution_invariant,
+    test_call_after_allin_costs_total_minus_caller_contrib,
     test_random_session_playout_invariants,
     # InformationSet
     test_information_set_uniform_strategy_no_regrets,
