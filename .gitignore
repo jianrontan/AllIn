@@ -25,3 +25,7 @@ dist-ssr
 
 # Blueprint
 backend/bot/analysis
+
+# Cache
+__pycache__/
+*.pyc
