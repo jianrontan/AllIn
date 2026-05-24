@@ -197,6 +197,14 @@ function AiGame() {
                     <div className="flex justify-center gap-2 mb-2">
                         {view.yourCards.map((c, i) => <PlayingCard key={i} card={c} />)}
                     </div>
+                    {view.yourHand && (
+                        <div className="flex justify-center mb-2">
+                            <span className="px-3 py-1 rounded-full bg-black/30 text-xs
+                                             tracking-wide text-emerald-100/90">
+                                You have: <span className="font-semibold">{view.yourHand}</span>
+                            </span>
+                        </div>
+                    )}
                     <Seat name="You" stackChips={view.yourStack} active={yourTurn} />
                 </div>
 

@@ -53,10 +53,24 @@ Training writes a timestamped `analysis/blueprint_*.db`. There is **no manual pr
 ### Tests
 ```bash
 cd backend/bot
-python tests/test_game_session.py     # Game core: GameSession, SessionStore, bot strategy
-python tests/test_cfr_correctness.py  # CFR algorithm correctness checks
-python tests/test_player.py           # CFR_Bot vs RandomPlayer via PyPokerEngine
-python tests/test_blueprint_trainer.py
+python tests/test_game_session.py          # Game core: GameSession, SessionStore, bot strategy
+python tests/test_cfr_correctness.py       # CFR algorithm correctness + chip-conservation fuzz
+python tests/test_poker_game_properties.py # Hypothesis property tests for engine invariants
+python tests/test_player.py                # CFR_Bot vs RandomPlayer via PyPokerEngine
+python tests/test_confidence_detection.py  # Subgame confidence-detection integration
+```
+
+`test_poker_game_properties.py` uses [Hypothesis](https://hypothesis.readthedocs.io/)
+(in `requirements.txt`). It can run via the built-in `__main__` console runner
+(above) or under pytest: `python -m pytest tests/test_poker_game_properties.py -v`.
+
+### Evaluation (exploitability)
+```bash
+# Run from backend/bot/. Scores how exploitable a blueprint is (lower = better),
+# in milli-big-blinds/hand, via a vectorized best-response walk of the public tree.
+python tests/run_evaluation.py                  # active blueprint, 400 board samples
+python tests/run_evaluation.py --samples 1000
+python tests/run_evaluation.py --db analysis/blueprint_20260518_160906.db
 ```
 
 ## Architecture
@@ -114,6 +128,13 @@ Bet sizes mapped to: `small`=0.33x pot, `medium`=0.66x pot, `large`=1.0x pot. Pr
 - `blueprint_trainer.py` — `BlueprintTrainer.cfr()` implements Monte Carlo CFR+ with external sampling and DCFR regret discounting (`alpha`). Updating player explores all actions; opponent samples one. Checkpoints into a `BlueprintDB`.
 - `poker_game.py` — `PokerGame` handles game logic (independent of PyPokerEngine). Player 0 = SB/button, player 1 = BB. Max 3 bet/raise actions per street (1 bet + 2 raises). Handles stack constraints and all-ins.
 - `information_set.py` — `InformationSet` stores cumulative regrets and strategy. CFR+ floors regrets at 0.
+- `keys.py` — **single source of truth** for info-set key construction (`make_info_set_key`) and the action→pattern-character map (`action_char`). The trainer and every consumer that looks a situation up in the blueprint (the evaluation harness, a future subgame solver) build keys through this module so the two can never drift. Change the key format here and everywhere stays in sync.
+
+### Evaluation (`backend/bot/src/evaluation/`)
+
+Measurement harness for strategy quality — separate from the game/training code.
+
+- `best_response.py` — `BestResponseEvaluator` computes a blueprint's **exploitability** (BR₀(σ₁) + BR₁(σ₀)) in mbb/hand via Monte Carlo board sampling. It walks the *public* betting tree once per board carrying a villain-reach vector over all hands and a per-hero-hand value vector, so one board sample integrates all hero hands × compatible villain hands at once (low variance, full-game best response with exact hero cards). This is the convergence scoreboard: run `tests/run_evaluation.py` before/after a change and watch the number drop. Builds lookup keys via `cfr/keys.py`.
 
 ### Storage (`backend/bot/src/storage/`)
 

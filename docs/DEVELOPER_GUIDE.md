@@ -1,7 +1,10 @@
 # AllIn — Developer Guide
 
-> **Audience**: Anyone returning to this codebase after time away, or a new contributor.  
-> This guide explains what every module does, how data flows through the system, and the known bugs / design issues that need to be fixed before the bot works correctly in live play.
+> **Audience**: Anyone returning to this codebase after time away, or a new contributor.
+> This guide explains what every module does and how data flows through the system.
+> For day-to-day commands (install, train, run, test) see [`USER_GUIDE.md`](../USER_GUIDE.md);
+> for the canonical short reference see [`CLAUDE.md`](../CLAUDE.md); for the running
+> bug history see [`backend/bot/docs/BUG_LOG.md`](../backend/bot/docs/BUG_LOG.md).
 
 ---
 
@@ -12,25 +15,37 @@
 3. [Core Concepts](#3-core-concepts)
 4. [Module Reference](#4-module-reference)
 5. [Data Flow: Training](#5-data-flow-training)
-6. [Data Flow: Inference (Live Play)](#6-data-flow-inference-live-play)
+6. [Data Flow: Inference (Two Paths)](#6-data-flow-inference-two-paths)
 7. [The Info Set Key — How It Works](#7-the-info-set-key--how-it-works)
-8. [Blueprint JSON — Schema Reference](#8-blueprint-json--schema-reference)
-9. [Known Bugs and Design Issues](#9-known-bugs-and-design-issues)
-10. [PlantUML Diagrams](#10-plantuml-diagrams)
+8. [Blueprint Storage — SQLite Schema](#8-blueprint-storage--sqlite-schema)
+9. [Evaluation: Measuring Quality](#9-evaluation-measuring-quality)
+10. [Testing Strategy](#10-testing-strategy)
+11. [Known Limitations](#11-known-limitations)
+12. [PlantUML Diagrams](#12-plantuml-diagrams)
 
 ---
 
 ## 1. What Is AllIn?
 
-AllIn is a heads-up (2-player) No-Limit Texas Hold'em poker AI built around **CFR+ (Counterfactual Regret Minimization Plus)**. It has three layers:
+AllIn is a heads-up (2-player) No-Limit Texas Hold'em poker AI built around
+**Monte Carlo CFR+ (Counterfactual Regret Minimization Plus)**. It has three layers:
 
 | Layer | Stack | Role |
 |---|---|---|
-| Training | Python (CFR+) | Runs thousands of simulated poker games, accumulates regrets, and converges on a near-optimal strategy table |
-| Bot | Python (PyPokerEngine) | Loads the trained strategy table and plays live games by looking up the current situation |
-| UI / API | React + Flask | Interactive strategy explorer and live game frontend |
+| Training | Python (MCCFR+) | Self-plays millions of abstracted hands, accumulates regrets, converges on a near-optimal strategy table |
+| Game core / Bot | Pure Python | Drives a live hand and looks up the bot's move in the strategy table |
+| UI / API | React + Flask | Interactive strategy explorer and a play-vs-bot frontend |
 
-The strategy the training phase produces is called the **blueprint**. It is a lookup table: given a compact description of the current game situation (the *information set key*), it returns a probability distribution over actions (fold 10%, call 45%, bet 45%). The bot samples from that distribution to play.
+The strategy training produces is the **blueprint**: a lookup table mapping a
+compact description of a situation (the *information set key*) to a probability
+distribution over actions (e.g. fold 10% / call 45% / bet 45%). The bot samples
+from that distribution to play.
+
+> **Big architectural fact:** the blueprint is stored in **SQLite**
+> (`backend/bot/analysis/blueprint_<timestamp>.db`), not a JSON file. SQLite gives
+> incremental checkpoint/resume during long training runs and lets the API read a
+> blueprint (WAL + read-only) while a separate training run is still writing. The
+> frontend no longer bundles the blueprint at all — it queries the API.
 
 ---
 
@@ -39,460 +54,440 @@ The strategy the training phase produces is called the **blueprint**. It is a lo
 ```
 AllIn/
 ├── backend/
+│   ├── requirements.txt                    # Python deps (incl. hypothesis for tests)
 │   ├── bot/
+│   │   ├── analysis/                        # Trained blueprints: blueprint_<ts>.db (+ -wal/-shm)
+│   │   ├── scripts/
+│   │   │   └── compute_preflop_equity.py    # Precompute preflop bucket equities
+│   │   ├── docs/
+│   │   │   └── BUG_LOG.md                    # Running log of fixed correctness bugs
 │   │   ├── src/
+│   │   │   ├── config.py                     # resolve_blueprint_path() — picks the active DB
 │   │   │   ├── abstractions/
-│   │   │   │   ├── card_abstractions.py   # Bucket hands into categories
-│   │   │   │   ├── action_abstractions.py # Bucket bet sizes, convert formats
-│   │   │   │   └── hand_evaluator.py      # Wrap phevaluator C library
+│   │   │   │   ├── card_abstractions.py      # 15 preflop + 8 postflop buckets
+│   │   │   │   ├── action_abstractions.py    # Bet sizing + PyPokerEngine⇄CFR conversion
+│   │   │   │   └── hand_evaluator.py         # Wraps phevaluator
+│   │   │   ├── cfr/
+│   │   │   │   ├── blueprint_trainer.py      # MCCFR+ training loop
+│   │   │   │   ├── poker_game.py             # Stack-aware abstracted rules engine
+│   │   │   │   ├── information_set.py        # Per-situation regret/strategy storage
+│   │   │   │   └── keys.py                   # Single source of truth for info-set keys
+│   │   │   ├── storage/
+│   │   │   │   └── blueprint_db.py           # SQLite wrapper (BlueprintDB)
+│   │   │   ├── game/                         # Transport-agnostic live-hand engine (no Flask)
+│   │   │   │   ├── game_session.py           # GameSession — drives one hand
+│   │   │   │   ├── bot_strategy.py           # BotStrategy iface + BlueprintStrategy
+│   │   │   │   ├── session_store.py          # SessionStore iface + InMemorySessionStore
+│   │   │   │   └── cards.py                  # Deck + engine⇄display card conversion
 │   │   │   ├── bot/
-│   │   │   │   ├── player.py              # PyPokerEngine player — live bot
-│   │   │   │   └── game_adapter.py        # Bridge: PyPokerEngine ↔ CFR formats
-│   │   │   └── cfr/
-│   │   │       ├── blueprint_trainer.py   # CFR+ training loop
-│   │   │       ├── information_set.py     # Per-situation regret/strategy storage
-│   │   │       └── poker_game.py          # Lightweight poker rules for training
-│   │   ├── analysis/
-│   │   │   └── blueprint.json            # Pre-trained strategy (output of trainer)
+│   │   │   │   ├── player.py                 # PyPokerEngine player (used by test_player)
+│   │   │   │   └── game_adapter.py           # PyPokerEngine round_state → info-set key
+│   │   │   ├── subgame/                      # Subgame-solving scaffolding (roadmap)
+│   │   │   │   ├── confidence_detector.py
+│   │   │   │   ├── off_tree_detector.py
+│   │   │   │   ├── subgame_detector.py
+│   │   │   │   └── player_blueprint_adapter.py
+│   │   │   └── evaluation/
+│   │   │       └── best_response.py          # Exploitability via best-response walk
 │   │   └── tests/
-│   │       └── test_player.py
+│   │       ├── run_blueprint_trainer.py      # Training entrypoint (new run / resume)
+│   │       ├── run_evaluation.py             # Exploitability CLI
+│   │       ├── test_cfr_correctness.py       # CFR correctness + chip-conservation fuzz
+│   │       ├── test_poker_game_properties.py # Hypothesis property tests
+│   │       ├── test_game_session.py          # Game core
+│   │       ├── test_player.py                # Bot vs RandomPlayer (PyPokerEngine)
+│   │       └── test_confidence_detection.py  # Subgame detection integration
 │   └── api/
-│       └── strategy_api.py               # Flask REST API
+│       └── strategy_api.py                   # Flask REST API (start from backend/api/)
 └── frontend/
     └── src/
-        ├── pages/
-        │   ├── StrategyLookup.jsx
-        │   └── AiGame.jsx
-        └── components/
+        ├── api.js                            # Single API client (VITE_API_BASE)
+        ├── pages/{Home,StrategyLookup,AiGame}.jsx
+        └── components/{HandExplorer,KeyExplorer,StrategyResult,PlayingCard}.jsx
 ```
 
 ---
 
 ## 3. Core Concepts
 
-### CFR+ (Counterfactual Regret Minimization Plus)
+### Monte Carlo CFR+ with external sampling
 
-CFR is a family of algorithms that learns game-theoretically optimal strategies by repeatedly playing a game against itself and tracking *regret* — the difference between what a player got and what they could have gotten if they had played a different action.
+CFR learns a near-optimal strategy by repeatedly self-playing and tracking
+*regret* — how much better a player could have done by deviating to a different
+action. The **average strategy** over all iterations converges to a Nash
+equilibrium. This codebase uses three refinements:
 
-After enough iterations, the **average strategy** (the time-average of all strategies computed during training) converges to a Nash equilibrium. CFR+ is a variant that clamps regrets at zero, which speeds convergence.
+- **CFR+** — cumulative regrets are floored at 0, which speeds convergence.
+- **External sampling MCCFR** — each iteration designates one *updating player*.
+  At the updating player's nodes we explore *every* legal action; at the
+  opponent's nodes we *sample a single* action from the current strategy. This
+  turns a full O(|A|^depth) tree walk into roughly O(|A| × depth) per iteration.
+- **DCFR (Discounted CFR)** — regrets are discounted over time (`alpha`), applied
+  once per info set per iteration on first visit.
 
-**Key properties:**
-- Works on the full game tree — it doesn't need hand-crafted heuristics
-- Requires the game to be abstracted (simplified) to be tractable — this is what the abstraction modules do
-- Outputs a strategy *per information set*, not per hand — the same key can represent many concrete game states
+**Sign convention:** `cfr()` returns value from **player 0's perspective**
+throughout. At a decision node the sign is flipped to compute the acting
+player's regret, then flipped back on return. (Getting this convention wrong was
+the original correctness bug; it is now consistent — see BUG_LOG.md.)
 
-### Information Sets
+### Information sets
 
-In poker, a player can't see their opponent's cards. An *information set* is everything the current player **can** observe:
-- Their own hole cards (abstracted to a bucket)
-- The community cards (abstracted to a strength bucket)
-- The history of actions this hand
+An *information set* is everything the acting player can observe: their own
+(bucketed) hole cards, the (bucketed) board strength, the street, their
+position, and the betting actions so far. Many concrete game states collapse to
+one info set; CFR stores one strategy entry per info-set key.
 
-Two concrete game states are in the same information set if they look identical to the current player. The CFR algorithm stores one strategy entry per information set key.
+### Card abstraction (`abstractions/card_abstractions.py`)
 
-### Card Abstraction
+Finer, equity- and texture-driven buckets (the old hand-named buckets are gone):
 
-Full poker has 1,755 distinct preflop hand types and millions of postflop situations. We reduce this by bucketing:
+- **15 preflop buckets** — `pf_0` (weakest) … `pf_14` (strongest), assigned from
+  precomputed Monte Carlo equity (`scripts/compute_preflop_equity.py`).
+  `pf_14` ≈ TT+.
+- **8 postflop buckets** — integers `0`–`7` from a board-texture evaluator
+  combining phevaluator hand strength with board danger:
+  `0` pure bluff · `1` weak draw · `2` strong draw · `3` combo draw ·
+  `4` weakest made · `5` medium made · `6` strong made · `7` near-nuts.
 
-**Preflop buckets** (8):
-`premium_pair` (AA/KK/QQ) · `medium_pair` (JJ–99) · `small_pair` (88–22) · `ace_king` · `strong_ace` (AQ/AJ/AT) · `ace_x` (A9–A2) · `broadway` (KQ–JT) · `suited_connector` (T9s–54s) · `weak` (everything else)
+### Action abstraction (`abstractions/action_abstractions.py`)
 
-**Postflop buckets** (6):
-`monster` (quads+) · `strong` (flush/full house/straight) · `medium` (trips/two pair) · `weak_made` (pair) · `draw` (flush or straight draw) · `bluff` (high card, no draw)
+Postflop bet sizes collapse to three fractions of the pot:
+`small`=0.33× · `medium`=0.66× · `large`=1.0×. Preflop differs:
 
-### Action Abstraction
+- **Opens**: 3 / 5 / 7 BB → small / medium / large
+- **3-bets**: 9 / 12 / 16 BB → small / medium / large
+- **4-bets+**: pot-relative (0.66× / 1.33× / 2.0×)
 
-Real bet sizes are infinite. We collapse them into three:
-- `small` = 33% of pot
-- `medium` = 66% of pot
-- `large` = 100% of pot (pot-sized)
+Plus `check`, `call`, `fold`, and `allin`. The engine allows at most **3 sized
+aggression actions per street** (1 bet + 2 raises). When a sized bet/raise would
+cost a player their whole remaining stack, it collapses to `allin`.
 
-Preflop uses fixed BB-based sizes: opens (3/5/7 BB), 3-bets (6/10/14 BB), and pot-relative (66%/133%/200%) for 4-bet+.
+### The blueprint
 
-Action history is encoded as a compact string of single characters: `k`=check, `c`=call, `f`=fold, `s`=bet/raise small, `m`=bet/raise medium, `l`=bet/raise large.
-
-### The Blueprint
-
-The output of training is `blueprint.json`. It maps each information set key (a string like `"ace_king_strong_flop_k"`) to:
-- `average_strategy` — the probability distribution over actions
-- `regrets` — raw CFR regret values per action
-- `visit_count` / `last_visited_iteration` — training coverage metadata
+The output of training is a SQLite DB. Each row is one info set: its cumulative
+regrets and cumulative strategy. The *average strategy* (normalized cumulative
+strategy) is what inference reads.
 
 ---
 
 ## 4. Module Reference
 
-### `abstractions/hand_evaluator.py` — `HandEvaluator`
+### `cfr/keys.py` — info-set key construction *(single source of truth)*
 
-**Purpose:** Evaluate the absolute strength of a poker hand.
-
-Wraps the `phevaluator` C library, which uses pre-computed lookup tables for O(1) evaluation. The card format used by PyPokerEngine (`'CT'` = Club Ten, suit-first) must be converted to phevaluator format (`'Tc'` = Ten of clubs, rank-first) before calling.
-
-**Key methods:**
-- `evaluate_hand_strength(hole_cards, community_cards)` — returns `(hand_type_string, 0–8_integer_strength)`
-- `has_draw_potential(hole_cards, community_cards)` — returns `True` if 4+ flush or straight outs
-- `convert_card_format(card)` — converts `'CT'` → `'Tc'`
-
-**Card format note:** PyPokerEngine format is `[Suit][Rank]`: `'C'`=Clubs, `'H'`=Hearts, `'D'`=Diamonds, `'S'`=Spades. Rank is the second character: `'T'`=Ten, `'J'`/`'Q'`/`'K'`/`'A'` for face cards, `'2'`–`'9'` for number cards.
-
----
-
-### `abstractions/card_abstractions.py` — `CardAbstraction`
-
-**Purpose:** Map a concrete hand to a bucket string used in info set keys.
-
-Uses `HandEvaluator` for postflop strength. Preflop bucketing is a table lookup against hand strings like `'AKs'` (Ace-King suited) or `'AKo'` (offsuit).
-
-**Key methods:**
-- `get_bucket(hole_cards, community_cards)` — routes to preflop or postflop
-- `preflop_bucket(hole_cards)` — looks up hand string in `preflop_buckets` dict
-- `postflop_bucket(hole_cards, community_cards)` — calls HandEvaluator, maps strength 0–8 to bucket name
-- `cards_to_string(hole_cards)` — handles both PyPokerEngine string cards and Card objects
-
-**⚠️ Bug:** `parse_string_cards` reads `card[0]` as rank and `card[1]` as suit. PyPokerEngine format is the opposite — `card[0]` is suit, `card[1]` is rank. The preflop bucket lookup produces wrong hand strings as a result. See [§9](#9-known-bugs-and-design-issues).
-
----
-
-### `abstractions/action_abstractions.py` — `ActionAbstraction`
-
-**Purpose:** Convert between PyPokerEngine's action format and the CFR abstracted action format, and calculate bet amounts.
-
-This is the translation layer that bridges the two incompatible representations of poker actions. PyPokerEngine uses `{'action': 'raise', 'amount': {'min': 4, 'max': 200}}`. CFR uses `'raise_small'`, `'raise_medium'`, `'raise_large'`.
-
-**Key methods:**
-- `pypoker_to_cfr_actions(valid_actions, game_state)` — converts PyPokerEngine's legal action list into CFR action strings
-- `cfr_to_pypoker_action(cfr_action, valid_actions, round_state, game_state)` — converts a CFR decision back into `(action_name, amount)` that PyPokerEngine accepts
-- `_calculate_target_amount(size_name, action_type, game_state, round_state)` — core bet sizing math; uses preflop BB-based sizes for opens/3-bets, pot-relative for 4-bet+, and standard pot fractions postflop
-- `categorize_bet_size(action, game_state, action_history, street)` — classifies a real bet amount as small/medium/large; used when converting real games back to CFR format
-- `is_legal_bet_size(game_state, multiplier)` — validates that a proposed bet fits within min/max constraints
-
----
-
-### `bot/game_adapter.py` — `GameAdapter`
-
-**Purpose:** The bridge between PyPokerEngine's rich game state and the compact CFR key format. It owns instances of both abstraction classes and coordinates them.
-
-Think of it as a translator. PyPokerEngine gives you a large nested `round_state` dict. The CFR algorithm needs a single string key. `GameAdapter` takes the round state, extracts the relevant parts, runs them through the abstractions, and assembles the key.
-
-**Key methods:**
-- `create_info_set_key(hole_card, round_state)` — the central method. Extracts `cfr_history` from `round_state`, gets the card bucket, and combines them into a key like `"ace_king_smk"` (preflop) or `"ace_king_strong_flop_smk"` (postflop)
-- `cfr_action_to_char(cfr_action)` — maps action names to single characters: `check→k`, `call→c`, `fold→f`, `*_small→s`, `*_medium→m`, `*_large→l`
-
-**⚠️ Bug:** During training, `create_info_set_key` reads `round_state.get('cfr_history', [])` to get the action history. During live play via PyPokerEngine, real `round_state` dicts never contain a `cfr_history` key — so the betting history is always lost and every key collapses to just `"{card_bucket}_"`. See [§9](#9-known-bugs-and-design-issues).
-
----
-
-### `cfr/information_set.py` — `InformationSet`
-
-**Purpose:** Stores the CFR state (regrets and strategy) for a single information set.
-
-One `InformationSet` object exists per unique key. During training it accumulates regrets. During inference the player loads these from JSON and uses them to look up strategy.
-
-**Key methods:**
-- `get_strategy(legal_actions, reach_probability)` — CFR+ regret matching: clamps regrets at 0, normalises to probabilities, accumulates `cumulative_strategy` weighted by reach. Used during training.
-- `get_average_strategy(legal_actions)` — used during inference to get the action probabilities. **⚠️ Bug:** currently re-derives from regrets directly instead of using the accumulated `cumulative_strategy`. See [§9](#9-known-bugs-and-design-issues).
-
-**CFR+ key property:** Regrets are clamped at 0 (`max(0, regret)`) before they are stored. This is the defining difference from vanilla CFR and it speeds convergence significantly.
-
----
+`make_info_set_key(street, position, preflop_bucket, postflop_strength,
+bet_pattern)` builds the canonical key, and `action_char(action)` maps an action
+to its pattern character. **The trainer and every consumer (the evaluation
+harness, a future subgame solver) build keys through this module so they can
+never drift.** Change the key format here and everywhere stays in sync.
 
 ### `cfr/poker_game.py` — `PokerGame`
 
-**Purpose:** A lightweight, self-contained poker rules engine used **only during training**. It is completely separate from PyPokerEngine.
+A self-contained, stack-aware abstracted rules engine, independent of
+PyPokerEngine. Player 0 = SB/button (acts first preflop), player 1 = BB (acts
+first postflop). Responsibilities:
 
-PyPokerEngine is a full game engine with callbacks, GUIs, and networking. The CFR trainer needs to simulate millions of hands fast — it cannot use PyPokerEngine for this. `PokerGame` implements just enough rules for CFR:
-- Legal action generation per street and history
-- Terminal state detection (fold or river betting complete)
-- Pot calculation from a history of abstracted actions
-- Utility calculation at showdown (calls `HandEvaluator`)
+- `get_legal_actions(...)` — legal actions for a street/history, **respecting
+  remaining stack** (`_apply_stack_constraints` replaces unaffordable sized
+  bets with `allin` using exact chip cost).
+- `is_terminal` / `is_round_complete` — terminal and round-complete detection,
+  including `allin`-then-`call`/`fold`.
+- `calculate_current_pot`, `get_player_contribution_this_round`,
+  `get_call_amount_from_history`, `_action_cost`, `_allin_amount` — the pot /
+  contribution / cost arithmetic. All memoized via `_calc_cache`.
+- `get_utility(...)` — chip gain/loss **from P0's perspective** at terminal
+  (fold or showdown; all-ins run the board out).
 
-**Key methods:**
-- `get_legal_actions(street, history, starting_pot, current_player)` — the core method; routes to preflop or postflop logic
-- `is_terminal(history, street)` — returns True if the hand is over
-- `calculate_current_pot(starting_pot, history, street)` — recomputes pot from scratch by replaying history
-- `get_utility(p0_cards, p1_cards, community_cards, history, street, starting_pot)` — returns P0's chip gain/loss at the end of a hand
+> Several subtle correctness bugs lived in this file's contribution/call math
+> (double-counting a re-raise, all-in call costing 0). They are fixed and
+> regression-tested; see BUG_LOG.md and `test_poker_game_properties.py`.
 
-**Preflop sizing quirk:** Preflop opens and 3-bets use fixed BB-based amounts (3/5/7 BB, 6/10/14 BB) rather than pot fractions. After a 4-bet, sizing switches to pot-relative. The method `get_preflop_action_type(history)` determines which regime applies: `'open'`, `'3bet'`, or `'pot_relative'`.
+### `cfr/information_set.py` — `InformationSet`
 
----
+Stores `cumulative_regrets` and `cumulative_strategy` (both dicts keyed by
+action name) plus DCFR bookkeeping. Three deliberately separate operations:
+
+- `get_strategy(legal_actions)` — **pure** CFR+ regret matching over *this
+  visit's* legal actions. No side effects.
+- `accumulate_strategy(legal_actions, strategy)` — adds into the running average.
+  Called **only at opponent nodes**, where external sampling supplies the right
+  reach weighting (so contributions are added unweighted).
+- `get_average_strategy(legal_actions)` — normalizes over `cumulative_strategy`
+  for the requested actions. **Reads cumulative_strategy, never a stale stored
+  action list** — this was the BUG-001 fix.
+
+Because the dicts are keyed by action, a key whose legal-action set varies
+across visits (a postflop key spanning different stack depths) still merges
+correctly: an action only accrues regret/strategy on the visits where it was
+legal. (See [§11](#11-known-limitations) for the abstraction caveat this implies.)
 
 ### `cfr/blueprint_trainer.py` — `BlueprintTrainer`
 
-**Purpose:** Orchestrates the CFR+ training loop.
+Orchestrates the training loop. Each iteration deals a random hand and runs
+`cfr()` with the updating player alternating (`i % 2`). Builds info-set keys via
+`keys.make_info_set_key`. Persists through `BlueprintDB.save_batch` /
+`checkpoint_to_db`, and supports `resume_from_db` to continue a run.
 
-Each iteration deals a random hand and calls `cfr()` for each player in turn (`updating_player = i % 2`). The recursive `cfr()` function explores the game tree using *external sampling*:
-- For the **updating player**: explore every legal action, calculate its counterfactual value, and update regrets
-- For the **opponent**: sample a single action proportional to the current strategy (don't explore everything)
+### `storage/blueprint_db.py` — `BlueprintDB`
 
-This makes training tractable — instead of O(|A|^d) full tree traversal, external sampling reduces work to O(|A| × depth) per iteration.
+SQLite wrapper. `read_only=True` opens with SQLite `mode=ro` so inference can
+read a file a training process holds open. Tables: `info_sets`,
+`training_metadata`. `save_batch` checkpoints incrementally;
+`load_all_to_memory` rehydrates for resume; `get_average_strategy` /
+`get_record` are the inference read path.
 
-**Key methods:**
-- `train_blueprint(iterations)` — main loop; alternates updating player each iteration
-- `cfr(...)` — the recursive CFR+ function; returns utility for the updating player
-- `deal_random_hand()` — samples hole cards and community cards from a shuffled deck
-- `export_blueprint_with_visit_stats(filename)` — serialises all info sets to JSON
+### `config.py` — `resolve_blueprint_path()`
 
-**⚠️ Schema mismatch:** This exports keys `metadata` and `strategies`. The `Player.load_trained_strategy()` reads keys `training_metadata` and `normalized_strategies`. A freshly trained and exported blueprint cannot be loaded by the player. See [§9](#9-known-bugs-and-design-issues).
+Picks the active blueprint automatically: the `analysis/blueprint_*.db` with the
+highest `total_iterations` (that isn't actively being written), or whatever
+`ALLIN_BLUEPRINT_DB` points at. **No manual promotion step.**
 
----
+### `game/` — transport-agnostic live-hand engine
 
-### `bot/player.py` — `Player`
+No Flask imports, so it is reusable if the transport changes (e.g. WebSockets).
 
-**Purpose:** The PyPokerEngine-compatible bot that plays live games using the trained blueprint.
+- `game_session.py` — `GameSession` drives one full hand through `PokerGame`:
+  deals a real deck, applies actions, advances streets, runs showdown. Fully
+  JSON-serializable (all state in `self.data`). `advance_bot_turns()` runs the
+  bot until it is the human's turn.
+- `bot_strategy.py` — `BotStrategy` interface + `BlueprintStrategy` (blueprint
+  lookup). The interface receives full public state, not just the bucketed key,
+  so a subgame-solving strategy is a drop-in replacement.
+- `session_store.py` — `SessionStore` interface + `InMemorySessionStore` (a
+  Redis/DynamoDB store would drop in for multi-process / AWS).
+- `cards.py` — deck plus conversion between **engine format** (`SuitRank`, e.g.
+  `HA`) used internally and **display format** (`RankSuit`, e.g. `Ah`) at the
+  API/frontend boundary.
 
-On `__init__` it loads `blueprint.json` into a dict of `InformationSet` objects keyed by info set string. When PyPokerEngine calls `declare_action()`, the player:
-1. Extracts the game state (pot, stack, current bet, big blind)
-2. Builds the info set key via `GameAdapter`
-3. Looks up the `InformationSet` (or creates a new uniform one if the key is unseen)
-4. Converts PyPokerEngine's valid actions to CFR format
-5. Gets strategy probabilities from the info set
-6. Samples an action, converts back to PyPokerEngine format, returns it
+### `bot/` — PyPokerEngine path *(test harness only)*
 
-**UUID self-identification:** The player discovers its own UUID by matching its registered name `'CFR_Bot'` against the seat list in `receive_round_start_message`. This name is hardcoded and brittle — if registered under a different name the UUID stays `None`, causing `extract_player_stack` and `extract_player_contribution` to always return defaults.
+- `player.py` — `Player(BasePokerPlayer)` for PyPokerEngine games; loads the
+  blueprint via `resolve_blueprint_path()` and samples from the average strategy.
+- `game_adapter.py` — converts PyPokerEngine hole cards + round state into
+  info-set keys. **Used by `test_player.py`**, not by the Play-vs-AI product
+  path (that uses `GameSession`/`PokerGame` directly).
+
+### `evaluation/best_response.py` — `BestResponseEvaluator`
+
+Computes the blueprint's **exploitability** (how much a perfect counter-strategy
+beats it). See [§9](#9-evaluation-measuring-quality).
+
+### `abstractions/hand_evaluator.py` — `HandEvaluator`
+
+Wraps `phevaluator` for O(1) hand strength. Used by the card abstraction and by
+showdown utility.
 
 ---
 
 ## 5. Data Flow: Training
 
 ```
-BlueprintTrainer.train_blueprint(N)
+run_blueprint_trainer.run_training(N)         # tests/run_blueprint_trainer.py
+  BlueprintTrainer.train_blueprint(N, db=...)
     for i in range(N):
-        deal_random_hand()           → p0_cards, p1_cards, community_cards
-        cfr(..., updating_player=i%2)
-            PokerGame.get_legal_actions(street, history, pot, player)
-            GameAdapter.create_info_set_key(player_cards, round_state)
-                CardAbstraction.get_bucket(hole_cards, community_cards)
-                    HandEvaluator.evaluate_hand_strength(...)   [postflop only]
-                join(cfr_action_to_char(a) for a in cfr_history)
-                → "ace_king_strong_flop_k"
-            InformationSet.get_strategy(legal_actions, reach_prob)
-                regret-match → probabilities
-                accumulate cumulative_strategy
-            [updating player] explore all actions → recurse
-            [opponent]        sample one action  → recurse
-            update cumulative_regrets with CFR+ floor at 0
-    export_blueprint_with_visit_stats("blueprint.json")
+      deal_random_hand()                      → p0_cards, p1_cards, community
+      cfr(..., updating_player = i % 2)        # P0-perspective value
+        PokerGame.get_legal_actions(street, history, pot, player, stacks…)
+        keys.make_info_set_key(street, position, preflop_bucket, strength, pattern)
+          CardAbstraction.get_bucket(cards, board)   # 15 preflop / 8 postflop
+        InformationSet.get_strategy(legal_actions)   # CFR+ regret matching (pure)
+        [updating player] explore all actions → recurse, update regrets (DCFR, floor 0)
+        [opponent]        sample one action  → recurse, accumulate_strategy
+    BlueprintDB.save_batch(...) every `checkpoint_every` iterations
 ```
+
+The active blueprint is then chosen automatically by `resolve_blueprint_path()`.
 
 ---
 
-## 6. Data Flow: Inference (Live Play)
+## 6. Data Flow: Inference (Two Paths)
+
+There are **two** inference paths. The product (Play vs AI) does **not** use
+PyPokerEngine.
+
+### Path A — Play vs AI (product)
 
 ```
-PyPokerEngine calls Player.declare_action(valid_actions, hole_card, round_state)
-    Player.extract_game_state(round_state)
-        → {pot_size, player_stack, current_bet, player_contribution, big_blind}
-    GameAdapter.create_info_set_key(hole_card, round_state)
-        round_state.get('cfr_history', [])   ← ⚠️ always [] in real play
-        CardAbstraction.get_bucket(hole_cards, community_cards)
-        → key is just "{card_bucket}_" (betting history missing)
-    lookup key in self.info_sets
-    ActionAbstraction.pypoker_to_cfr_actions(valid_actions, game_state)
-    InformationSet.get_average_strategy(cfr_actions)
-    random.choices(cfr_actions, weights=strategy)
-    ActionAbstraction.cfr_to_pypoker_action(selected, valid_actions, round_state, game_state)
-        _calculate_target_amount(size_name, action_type, game_state, round_state)
-    return (action, amount)
+Frontend AiGame.jsx
+  → Flask /api/game/{new,action,next-hand}
+    → GameSession (game/game_session.py) drives the hand through PokerGame
+      → BlueprintStrategy.decide(info_set_key, legal_actions, public_state)
+        → BlueprintDB.get_average_strategy(key)   # read-only SQLite
+      → sample an action, apply, advance, settle
+```
+
+### Path B — PyPokerEngine (test harness)
+
+```
+PyPokerEngine → Player.declare_action(valid_actions, hole_card, round_state)
+  → GameAdapter.create_info_set_key(hole_card, round_state)
+  → BlueprintDB.get_average_strategy(key)
+  → ActionAbstraction.cfr_to_pypoker_action(...) → (action, amount)
+```
+
+### Strategy explorer (read path)
+
+```
+Frontend HandExplorer / KeyExplorer
+  → Flask /api/strategy or /api/strategy/from-hand
+    → BlueprintDB.get_record(key)   # found:false for untrained keys is valid
 ```
 
 ---
 
 ## 7. The Info Set Key — How It Works
 
-The key is the fundamental unit of the CFR lookup table. It uniquely identifies a game situation from the perspective of the current player.
+The key uniquely identifies a situation from the acting player's perspective. It
+**includes position** so in-position and out-of-position play are learned
+separately. Build keys only via `keys.make_info_set_key`.
 
-### Preflop format
+### Preflop
 ```
-{card_bucket}_{betting_history}
+{preflop_bucket}_{position}_{pattern}
 
-Example: "ace_king_smk"
-  card_bucket     = "ace_king"       (AKs or AKo, mapped by preflop_bucket())
-  betting_history = "smk"            = raise_small, raise_medium, check
-                                       (s=small, m=medium, l=large, k=check, c=call, f=fold)
-```
-
-### Postflop format
-```
-{starting_hand}_{current_strength}_{street}_{betting_history}
-
-Example: "ace_king_strong_flop_k"
-  starting_hand    = "ace_king"      (preflop bucket, unchanged through the hand)
-  current_strength = "strong"        (postflop bucket based on hole+community)
-  street           = "flop"
-  betting_history  = "k"             (check)
+Example: "pf_13_ip_"
+  preflop_bucket = pf_13     (strong bucket)
+  position       = ip        (button/SB) | oop (BB)
+  pattern        = ""        (no actions yet this street)
 ```
 
-### Why two card components postflop?
+### Postflop
+```
+{preflop_bucket}_{strength}_{position}_{street}_{pattern}
 
-Including both the starting hand and current strength lets the strategy differentiate between:
-- A player who flopped a strong hand from a premium starting hand (likely to be a monster)
-- A player who flopped a strong hand from a weak starting hand (different range, different strategy)
+Example: "pf_9_5_ip_turn_m"
+  preflop_bucket = pf_9      (the starting-hand bucket, fixed for the hand)
+  strength       = 5         (this street's postflop strength bucket, 0–7)
+  position       = ip
+  street         = turn
+  pattern        = m         (opponent bet medium)
+```
 
-This is a form of range-awareness baked into the abstraction.
+- `position`: `ip` (button/SB, acts last postflop) or `oop` (BB).
+- `pattern`: betting actions **on the current street only** — it **resets each
+  street**. Characters: `k`=check, `c`=call, `f`=fold, `s`=small bet/raise,
+  `m`=medium, `l`=large, `a`=all-in.
+
+Keeping both the starting-hand bucket and the current strength bucket postflop
+bakes a form of range-awareness into the abstraction (a strong board for a
+premium starting range plays differently than the same board for a weak range).
 
 ---
 
-## 8. Blueprint JSON — Schema Reference
+## 8. Blueprint Storage — SQLite Schema
 
-The currently deployed `blueprint.json` (hand-crafted to match what `Player` reads) uses this schema:
+The blueprint lives in `backend/bot/analysis/blueprint_<timestamp>.db` (WAL
+mode, so you may also see `-wal` / `-shm` sidecar files during/after a run).
 
-```json
-{
-  "training_metadata": {
-    "iterations": 300000,
-    "expected_value": 239.24,
-    "training_duration_seconds": 18252,
-    "total_info_sets": 5878
-  },
-  "normalized_strategies": {
-    "ace_king_smk": {
-      "legal_actions": ["fold", "call", "bet_small", "bet_medium", "bet_large"],
-      "average_strategy": { "call": 0.45, "bet_small": 0.55 },
-      "regrets": { "call": -12.3, "bet_small": 45.6 },
-      "visit_metadata": {
-        "visit_count": 3677,
-        "last_visited_iteration": 298999
-      }
-    }
-  },
-  "visit_statistics": { ... },
-  "strategy_analysis": { ... },
-  "convergence_metrics": { ... }
-}
-```
+- **`info_sets`** — one row per info-set key, storing the cumulative regrets and
+  cumulative strategy (the average strategy is derived by normalizing the latter
+  at read time — see `InformationSet.get_average_strategy` and BUG-001).
+- **`training_metadata`** — run-level metadata, notably `total_iterations`,
+  which `resolve_blueprint_path()` uses to select the active blueprint.
 
-**⚠️ The trainer currently exports a different schema** (`metadata` + `strategies` instead of `training_metadata` + `normalized_strategies`). The two must be reconciled before retraining is useful. See [§9](#9-known-bugs-and-design-issues).
+Inference always opens with `read_only=True`; only training opens read/write.
+There is no `blueprint.json`/`blueprint.db` to maintain by hand.
 
 ---
 
-## 9. Known Bugs and Design Issues
+## 9. Evaluation: Measuring Quality
 
-### Bug 1 — Info set keys are always wrong in live play (Critical)
+`evaluation/best_response.py` measures **exploitability** =
+BR₀(σ₁) + BR₁(σ₀): seat each side in turn as a "hero" who best-responds while
+the other plays the blueprint. A true Nash equilibrium scores 0; a high number
+means training hasn't converged or the abstraction is leaky.
 
-**File:** [game_adapter.py](../backend/bot/src/bot/game_adapter.py)
+It walks the **public** betting tree once per board, carrying a villain-reach
+vector over all hands and a per-hero-hand value vector, so one board sample
+integrates all hero hands × compatible villain hands at once (low variance,
+full-game best response with the hero's exact cards). Card removal is handled at
+terminals via O(H) per-card running sums.
 
-**What happens:** `create_info_set_key` builds the betting history from `round_state.get('cfr_history', [])`. During training, `BlueprintTrainer.create_round_state_for_info_set()` explicitly inserts a `cfr_history` key into the synthetic round state. Real PyPokerEngine `round_state` dicts never have this key. The result is that during every live game, `cfr_history` is `[]`, the betting history string is `""`, and every info set key is just `"{card_bucket}_"` — the entire action history is silently discarded.
+Run it before and after a change and watch the number drop:
 
-**Effect:** The bot looks up the wrong strategy for nearly every situation. A preflop open-raise, a preflop call, and a preflop 3-bet all produce the same key (`"ace_king_"`) and get the same strategy. The bot is effectively blind to what has happened in the hand.
+```bash
+cd backend/bot
+python tests/run_evaluation.py --samples 1000      # active blueprint
+```
 
-**Fix needed:** During inference, build the betting history from `round_state['action_histories']` by iterating the actual actions and running them through `cfr_action_to_char`. The trainer's synthetic `cfr_history` was a shortcut to avoid doing this conversion — that shortcut needs to be replaced with real history extraction for live play.
+Results are in milli-big-blinds per hand (mbb/hand); lower is better.
 
 ---
 
-### Bug 2 — Card format is read backwards in `parse_string_cards` (Critical)
+## 10. Testing Strategy
 
-**File:** [card_abstractions.py](../backend/bot/src/abstractions/card_abstractions.py)
+| Test | What it covers |
+|---|---|
+| `test_cfr_correctness.py` | CFR invariants (regrets ≥ 0, average strategy sums to 1, EV finite/near-zero in self-play) + a hand-rolled random-playout fuzz with chip-conservation and call-cost invariants |
+| `test_poker_game_properties.py` | **Hypothesis** property-based tests over a `session_walk` strategy: chip conservation, call/contribution arithmetic, all-in semantics, legal-action shape, street symmetry, terminal/utility bounds. Shrinks failures to minimal counter-examples |
+| `test_game_session.py` | Game core: `GameSession`, `SessionStore`, bot strategy |
+| `test_player.py` | PyPokerEngine path: bot vs `RandomPlayer` |
+| `test_confidence_detection.py` | Subgame confidence-detection integration |
 
-**PyPokerEngine card format:** `[Suit][Rank]` — first character is suit, second is rank. For example, `'CT'` = Club Ten, `'AH'` = Ace of Hearts.
+**Lesson baked into the suite (see BUG_LOG.md):** internally-consistent bugs
+(e.g. a call costing 0 chips, which preserves chip conservation on both sides)
+slip past aggregate invariants. So each primitive — call, bet, raise, all-in —
+has its own *semantic* invariant tied to what the action means in poker, not just
+to chip totals. Property-based fuzzing found bugs that two static audits missed.
 
-This is confirmed by `hand_evaluator.py`:
-```python
-suit = card[0]   # 'C' from 'CT'
-rank = card[1]   # 'T' from 'CT'
-```
-
-**What `parse_string_cards` does instead:**
-```python
-rank1 = card1_str[0]   # reads 'C' (suit!) as rank
-suit1 = card1_str[1]   # reads 'T' (rank!) as suit
-```
-
-The comments even say "First character is rank" — which is wrong. When `format_hand_string` then uses `rank1='C'` to look up `rank_order`, it finds nothing (`rank_order.get('C', 0)` returns 0). The resulting hand string is garbage — a card like `'AH'` would produce `rank='A'`, `suit='H'`, which accidentally works for Aces. But `'CT'` produces `rank='C'`, `suit='T'`, and the hand string becomes `'CT'` or `'TC'` depending on the other card, which won't match any bucket.
-
-**Fix needed:** Swap the assignment: `suit1 = card1_str[0]`, `rank1 = card1_str[1]`.
+Run via the built-in console runner (`python tests/<file>.py`) or pytest. The
+property tests require `hypothesis` (in `requirements.txt`).
 
 ---
 
-### Bug 3 — Trainer export schema doesn't match Player import schema (Critical)
+## 11. Known Limitations
 
-**Files:** [blueprint_trainer.py](../backend/bot/src/cfr/blueprint_trainer.py) and [player.py](../backend/bot/src/bot/player.py)
+The "known bugs" that previously filled this section are **fixed** — see
+[`backend/bot/docs/BUG_LOG.md`](../backend/bot/docs/BUG_LOG.md) for the full
+history (sign convention, DCFR multi-visit decay, average-strategy readout,
+contribution double-count, all-in call cost). What remains are *abstraction
+limitations*, not bugs:
 
-`BlueprintTrainer.export_blueprint_with_visit_stats()` writes:
-```json
-{
-  "metadata": { ... },
-  "strategies": { "key": { "average_strategy": ..., "regrets": ..., "visit_count": ..., "last_visited_iteration": ... } }
-}
-```
+### M1 — postflop key omits pot / stack depth (SPR)
 
-`Player.load_trained_strategy()` reads:
-```json
-{
-  "training_metadata": { ... },
-  "normalized_strategies": { "key": { "average_strategy": ..., "regrets": ..., "visit_metadata": { "visit_count": ..., "last_visited_iteration": ... } } }
-}
-```
+The postflop info-set key encodes street, buckets, position, and the
+current-street pattern, but **not** the pot size or effective stack depth
+(stack-to-pot ratio). Concrete nodes with very different SPRs therefore collapse
+to the same key. Consequences:
 
-Mismatches:
-- Top-level key: `"metadata"` vs `"training_metadata"`
-- Strategy dict key: `"strategies"` vs `"normalized_strategies"`
-- Visit data: flat (`"visit_count"`, `"last_visited_iteration"`) vs nested under `"visit_metadata"`
+- CFR converges to the equilibrium of the *abstract* game — a reach-weighted
+  blend across the merged states — not the true optimum of any single state.
+- Rarely-legal actions get **diluted**: e.g. an `allin` that is correct only in
+  short-stack spots accrues strategy on those visits but is averaged against the
+  many deep-stack visits where it wasn't legal, so its readout probability
+  understates how often you'd actually shove in the short spot.
 
-If you retrain and call `export_blueprint_with_visit_stats`, the player loads an empty `info_sets` dict (all `get()` calls return `{}`) and falls back to uniform random play for every situation.
+This is **deferred to the subgame-solving phase**: either add a stack-depth/SPR
+bucket to the postflop key, or solve the spot at runtime where the real stacks
+are known. The `subgame/` package and the `BotStrategy` interface exist so this
+is additive, not a rewrite.
 
-**Fix needed:** Make the export schema match what the player reads, or introduce a single shared schema constant.
+### Inference still depends on PyPokerEngine for the test harness
 
----
-
-### Design Issue 4 — `get_average_strategy` ignores `cumulative_strategy` (Algorithmic)
-
-**File:** [information_set.py](../backend/bot/src/cfr/information_set.py)
-
-During training, `get_strategy()` accumulates a reach-probability-weighted sum in `cumulative_strategy`. This is the standard CFR average strategy — its time-average converges to Nash equilibrium. But `get_average_strategy()` (used during inference) ignores `cumulative_strategy` entirely and instead re-derives probabilities from the raw regrets directly:
-
-```python
-regrets = np.array([max(0, self.cumulative_regrets.get(action, 0)) for action in legal_actions])
-return regrets / total
-```
-
-This returns the **current iteration's** regret-matching strategy, not the time-averaged strategy. For CFR+, using the final iterate (last-iteration strategy) can work in theory, but the current code also accumulates `cumulative_strategy` during training, which is wasted computation, and the player reconstructs it on load (`prob * total_training_iterations`) and then never reads it.
-
-The behaviour is internally inconsistent: either use `cumulative_strategy` for the average or remove it entirely and commit to last-iterate. Right now neither is done cleanly.
+`test_player.py` runs the bot through a forked PyPokerEngine (heads-up turn-order
+fix). The product path (`GameSession`) is already PyPokerEngine-free; eventually
+the test harness could drop it too and drive `PokerGame` directly.
 
 ---
 
-## 10. PlantUML Diagrams
+## 12. PlantUML Diagrams
 
-> Source files are in [diagrams/](diagrams/). Open any `.puml` file in VS Code and press `Alt+D` to edit and re-export.
+> ⚠️ **These diagrams predate the SQLite migration, the abstraction overhaul
+> (15/8 buckets), the position-aware keys, and the `game/` engine.** They still
+> convey the broad shape (training vs inference, key assembly) but the class
+> names, bucket names, JSON storage, and "bug annotations" are stale. Treat
+> §2–§9 above as authoritative and regenerate the `.puml` sources before relying
+> on the images. Source files are in [diagrams/](diagrams/).
 
 | Diagram | Source | What it shows |
 |---|---|---|
 | System Architecture | [diagrams/system_architecture.puml](diagrams/system_architecture.puml) | How Frontend, API, Training, and Bot connect |
-| Class Diagram | [diagrams/class_diagram.puml](diagrams/class_diagram.puml) | All classes, fields, methods, and relationships |
+| Class Diagram | [diagrams/class_diagram.puml](diagrams/class_diagram.puml) | Classes, fields, methods, relationships |
 | Training Sequence | [diagrams/training_sequence.puml](diagrams/training_sequence.puml) | CFR+ iteration step by step |
-| Inference Sequence | [diagrams/inference_sequence.puml](diagrams/inference_sequence.puml) | declare_action() call with bug annotations |
+| Inference Sequence | [diagrams/inference_sequence.puml](diagrams/inference_sequence.puml) | A live decision, end to end |
 | Info Set Key | [diagrams/infoset_key.puml](diagrams/infoset_key.puml) | How a key is assembled from cards + history |
 
 ---
 
-### 10.1 System Architecture
-
-![System Architecture](diagrams/images/system_architecture.png)
-
----
-
-### 10.2 Class Diagram
-
-![Class Diagram](diagrams/images/class_diagram.png)
-
----
-
-### 10.3 Training Flow
-
-![Training Sequence](diagrams/images/training_sequence.png)
-
----
-
-### 10.4 Inference Flow
-
-![Inference Sequence](diagrams/images/inference_sequence.png)
-
----
-
-### 10.5 Info Set Key Generation
-
-![Info Set Key](diagrams/images/infoset_key.png)
-
----
-
-*Last updated: 2026-05-05*
+*Last updated: 2026-05-22 — rewritten for the SQLite blueprint, equity/texture
+buckets, position-aware keys, the Flask-free `game/` engine, `cfr/keys.py`, and
+the exploitability evaluator.*

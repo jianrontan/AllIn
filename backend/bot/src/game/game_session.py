@@ -18,6 +18,7 @@ Design notes
 """
 from ..cfr.poker_game import PokerGame, STARTING_STACK
 from ..abstractions.card_abstractions import CardAbstraction
+from ..abstractions.hand_evaluator import HandEvaluator, RANK_MAP
 from .cards import shuffled_deck, to_display_list
 
 _STREET_NAMES = ['preflop', 'flop', 'turn', 'river']
@@ -29,6 +30,23 @@ _ACTION_CHARS = {
     'allin': 'a',
 }
 BIG_BLIND = 2
+
+_RANK_NAMES = {
+    '2': 'Two', '3': 'Three', '4': 'Four', '5': 'Five', '6': 'Six', '7': 'Seven',
+    '8': 'Eight', '9': 'Nine', 'T': 'Ten', 'J': 'Jack', 'Q': 'Queen',
+    'K': 'King', 'A': 'Ace',
+}
+_RANK_PLURAL = {
+    '2': 'Twos', '3': 'Threes', '4': 'Fours', '5': 'Fives', '6': 'Sixes',
+    '7': 'Sevens', '8': 'Eights', '9': 'Nines', 'T': 'Tens', 'J': 'Jacks',
+    'Q': 'Queens', 'K': 'Kings', 'A': 'Aces',
+}
+_HAND_TYPE_LABEL = {
+    'high_card': 'High card', 'pair': 'Pair', 'two_pair': 'Two pair',
+    'three_of_kind': 'Three of a kind', 'straight': 'Straight', 'flush': 'Flush',
+    'full_house': 'Full house', 'four_of_kind': 'Four of a kind',
+    'straight_flush': 'Straight flush',
+}
 
 
 class GameError(Exception):
@@ -44,6 +62,7 @@ class GameSession:
         self.data = data
         self.game = PokerGame()
         self.cards = CardAbstraction()
+        self.evaluator = HandEvaluator()
 
     # ------------------------------------------------------------------
     # Construction / serialisation
@@ -251,6 +270,22 @@ class GameSession:
             'p1_stack': d['p1_stack'],
         }
 
+    def describe_hand(self, cards, board):
+        """
+        Plain-English label for the made hand `cards` hold given `board`
+        (both in engine SuitRank format). Preflop (no board) describes the
+        two hole cards directly; phevaluator needs at least 5 cards.
+        """
+        if not board:
+            r0, r1 = cards[0][1], cards[1][1]
+            if r0 == r1:
+                return f"Pair of {_RANK_PLURAL[r0]}"
+            hi, lo = sorted((r0, r1), key=lambda r: RANK_MAP[r], reverse=True)
+            suited = ' suited' if cards[0][0] == cards[1][0] else ''
+            return f"{_RANK_NAMES[hi]}-{_RANK_NAMES[lo]}{suited} high"
+        hand_type, _ = self.evaluator.evaluate_hand_strength(cards, board)
+        return _HAND_TYPE_LABEL[hand_type]
+
     # ------------------------------------------------------------------
     # Redacted view for the frontend
     # ------------------------------------------------------------------
@@ -316,6 +351,7 @@ class GameSession:
             'street': _STREET_NAMES[street],
             'yourSeat': 'button' if human == 0 else 'bigblind',
             'yourCards': to_display_list(human_cards),
+            'yourHand': self.describe_hand(human_cards, d['community'][:board_n]),
             'botCards': to_display_list(bot_cards) if hand_over else None,
             'community': to_display_list(d['community'][:board_n]),
             'pot': round(pot, 2),

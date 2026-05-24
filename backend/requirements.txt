@@ -3,3 +3,6 @@ Flask-Cors==5.0.0
 numpy==1.26.4
 phevaluator==0.5.3.1
 PyPokerEngine==1.0.1
+
+# Testing
+hypothesis==6.152.9

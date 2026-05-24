@@ -30,18 +30,29 @@ class BlueprintDB:
     def _create_tables(self):
         self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS info_sets (
-                key                    TEXT PRIMARY KEY,
-                legal_actions          TEXT NOT NULL,
-                cumulative_regrets     TEXT NOT NULL,
-                cumulative_strategy    TEXT NOT NULL,
-                visit_count            INTEGER NOT NULL DEFAULT 0,
-                last_visited_iteration INTEGER NOT NULL DEFAULT 0
+                key                     TEXT PRIMARY KEY,
+                legal_actions           TEXT NOT NULL,
+                cumulative_regrets      TEXT NOT NULL,
+                cumulative_strategy     TEXT NOT NULL,
+                visit_count             INTEGER NOT NULL DEFAULT 0,
+                last_visited_iteration  INTEGER NOT NULL DEFAULT 0,
+                strategy_visit_count    INTEGER NOT NULL DEFAULT 0,
+                last_strategy_iteration INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS training_metadata (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
         """)
+        # Migrate DBs created before the DCFR gamma clock existed: add the two
+        # columns if missing. Resuming such a run continues the gamma discount
+        # from the correct iteration count instead of silently restarting it.
+        for col in ("strategy_visit_count", "last_strategy_iteration"):
+            try:
+                self.conn.execute(
+                    f"ALTER TABLE info_sets ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass  # column already exists
         self.conn.commit()
 
     def save_batch(self, info_sets_dict):
@@ -54,6 +65,8 @@ class BlueprintDB:
                 json.dumps(info_set.cumulative_strategy),
                 info_set.visit_count,
                 info_set.last_visited_iteration,
+                info_set.strategy_visit_count,
+                info_set.last_strategy_iteration,
             )
             for key, info_set in info_sets_dict.items()
         ]
@@ -61,8 +74,9 @@ class BlueprintDB:
             """
             INSERT OR REPLACE INTO info_sets
                 (key, legal_actions, cumulative_regrets, cumulative_strategy,
-                 visit_count, last_visited_iteration)
-            VALUES (?, ?, ?, ?, ?, ?)
+                 visit_count, last_visited_iteration,
+                 strategy_visit_count, last_strategy_iteration)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -130,17 +144,21 @@ class BlueprintDB:
         """
         rows = self.conn.execute(
             "SELECT key, legal_actions, cumulative_regrets, cumulative_strategy, "
-            "visit_count, last_visited_iteration FROM info_sets"
+            "visit_count, last_visited_iteration, "
+            "strategy_visit_count, last_strategy_iteration FROM info_sets"
         ).fetchall()
 
         info_sets = {}
-        for key, legal_actions, cumulative_regrets, cumulative_strategy, visit_count, last_visited in rows:
+        for (key, legal_actions, cumulative_regrets, cumulative_strategy,
+             visit_count, last_visited, strat_visit, last_strat) in rows:
             info_set = InformationSet()
             info_set.legal_actions = json.loads(legal_actions)
             info_set.cumulative_regrets = json.loads(cumulative_regrets)
             info_set.cumulative_strategy = json.loads(cumulative_strategy)
             info_set.visit_count = visit_count
             info_set.last_visited_iteration = last_visited
+            info_set.strategy_visit_count = strat_visit
+            info_set.last_strategy_iteration = last_strat
             info_sets[key] = info_set
 
         return info_sets

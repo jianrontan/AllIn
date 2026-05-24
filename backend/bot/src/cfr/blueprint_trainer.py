@@ -2,20 +2,8 @@
 import random
 from .poker_game import PokerGame, STARTING_STACK
 from .information_set import InformationSet
+from .keys import action_char as _action_char, make_info_set_key
 from ..bot.game_adapter import GameAdapter
-
-_ACTION_CHARS = {
-    'check': 'k', 'call': 'c', 'fold': 'f',
-    'bet_small': 's', 'bet_medium': 'm', 'bet_large': 'l',
-    'raise_small': 's', 'raise_medium': 'm', 'raise_large': 'l',
-    'allin': 'a',
-}
-_STREET_NAMES = ['preflop', 'flop', 'turn', 'river']
-
-
-def _action_char(action):
-    """Map a CFR action name to its single betting-pattern character."""
-    return _ACTION_CHARS.get(action, 'x')
 
 
 def _format_duration(seconds):
@@ -42,8 +30,11 @@ class BlueprintTrainer:
         self.deck = self.create_deck()
         self.BET_MULTIPLIERS = {'small': 0.33, 'medium': 0.66, 'large': 1.00}
 
-        # DCFR regret-discount exponent (Brown & Sandholm 2019)
+        # DCFR discount exponents (Brown & Sandholm 2019). alpha discounts the
+        # cumulative regrets; gamma discounts the cumulative AVERAGE strategy so
+        # that later (better-converged) iterations dominate the blueprint.
         self.alpha = 1.5
+        self.gamma = 2.0
 
     def create_deck(self):
         suits = ['H', 'D', 'C', 'S']
@@ -135,14 +126,11 @@ class BlueprintTrainer:
 
         # Build info set key
         position = 'ip' if current_player == 0 else 'oop'
-        if street == 0:
-            card_bucket = self._p0_preflop if current_player == 0 else self._p1_preflop
-            info_set_key = f"{card_bucket}_{position}_{bet_pattern}"
-        else:
-            starting = self._p0_preflop if current_player == 0 else self._p1_preflop
-            strength = (self._p0_postflop[street] if current_player == 0
-                        else self._p1_postflop[street])
-            info_set_key = f"{starting}_{strength}_{position}_{_STREET_NAMES[street]}_{bet_pattern}"
+        preflop_bucket = self._p0_preflop if current_player == 0 else self._p1_preflop
+        strength = (self._p0_postflop[street] if current_player == 0
+                    else self._p1_postflop[street]) if street > 0 else None
+        info_set_key = make_info_set_key(
+            street, position, preflop_bucket, strength, bet_pattern)
 
         if info_set_key not in self.info_sets:
             self.info_sets[info_set_key] = InformationSet()
@@ -206,6 +194,19 @@ class BlueprintTrainer:
 
         else:
             # --- Opponent node: accumulate avg strategy, sample one action. ---
+            # DCFR gamma: discount the prior average-strategy sum ONCE per
+            # iteration (its own clock, separate from the regret clock) before
+            # adding this visit's contribution, so later iterations dominate.
+            # Same once-per-iteration guard as the regret discount above: an info
+            # set can recur within a traversal via different lines.
+            if info_set.last_strategy_iteration != iteration:
+                info_set.strategy_visit_count += 1
+                info_set.last_strategy_iteration = iteration
+                s = info_set.strategy_visit_count
+                if s > 1 and self.gamma:
+                    decay = ((s - 1) / s) ** self.gamma
+                    for a in info_set.cumulative_strategy:
+                        info_set.cumulative_strategy[a] *= decay
             info_set.accumulate_strategy(legal_actions, strategy)
             sampled_action = random.choices(legal_actions, weights=strategy)[0]
             next_history = history + [sampled_action]
@@ -292,6 +293,7 @@ class BlueprintTrainer:
         db.save_batch(self.info_sets)
         db.set_metadata('total_iterations', iteration + 1)
         db.set_metadata('alpha', self.alpha)
+        db.set_metadata('gamma', self.gamma)
         print(f"Checkpoint: {len(self.info_sets)} info sets saved at iteration {iteration + 1}")
 
     def resume_from_db(self, db):

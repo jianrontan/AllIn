@@ -19,8 +19,10 @@ class InformationSet:
         self.cumulative_regrets = {}
         self.cumulative_strategy = {}
         self.legal_actions = []
-        self.visit_count = 0             # regret-update count (DCFR discount clock)
+        self.visit_count = 0             # regret-update count (DCFR alpha/beta clock)
         self.last_visited_iteration = -1  # -1 so iteration 0 increments visit_count
+        self.strategy_visit_count = 0     # avg-strategy update count (DCFR gamma clock)
+        self.last_strategy_iteration = -1  # -1 so iteration 0 increments the gamma clock
 
     def get_strategy(self, legal_actions):
         """

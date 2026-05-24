@@ -30,7 +30,8 @@ from src.storage.blueprint_db import BlueprintDB
 ANALYSIS_DIR = Path(__file__).parent.parent / "analysis"
 
 
-def run_training(iterations, resume=None, checkpoint_every=1000):
+def run_training(iterations, resume=None, checkpoint_every=1000,
+                 seed=None, gamma=None):
     """
     Run CFR training.
 
@@ -40,7 +41,19 @@ def run_training(iterations, resume=None, checkpoint_every=1000):
                            (e.g. 'blueprint_20260517_143022.db').
                            None = start a fresh run with a new timestamped DB.
         checkpoint_every:  Save to DB every N iterations.
+        seed:              If set, seed Python's RNG so the traversal/sampling
+                           trajectory is reproducible. The DCFR gamma value does
+                           NOT affect the trajectory (it only reweights the
+                           average-strategy sum), so two runs with the same seed
+                           and different gamma differ ONLY in the blueprint.
+        gamma:             Override the trainer's DCFR strategy-sum discount
+                           (e.g. 0.0 for the no-discount control, 2.0 for DCFR).
+                           None keeps the trainer default.
     """
+    if seed is not None:
+        import random
+        random.seed(seed)
+
     ANALYSIS_DIR.mkdir(exist_ok=True)
 
     if resume:
@@ -58,6 +71,10 @@ def run_training(iterations, resume=None, checkpoint_every=1000):
 
     db = BlueprintDB(db_path)
     trainer = BlueprintTrainer()
+    if gamma is not None:
+        trainer.gamma = gamma
+    print(f"DCFR: alpha={trainer.alpha} gamma={trainer.gamma} "
+          f"seed={seed if seed is not None else 'unset'}")
 
     start_iteration = 0
     if resume:
