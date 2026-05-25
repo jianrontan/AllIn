@@ -1,5 +1,5 @@
 # backend/bot/abstractions/hand_evaluator.py
-from phevaluator.evaluator import evaluate_cards
+from .postflop_features import rank7
 
 RANK_MAP = {
     '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8,
@@ -49,8 +49,9 @@ class HandEvaluator:
 
     def get_raw_hand_value(self, hole_cards, community_cards):
         """Raw phevaluator score (1–7462, lower = stronger)."""
-        converted = [self.convert_card_format(c) for c in hole_cards + community_cards]
-        return evaluate_cards(*converted)
+        # rank7 uses precomputed card->id ids (bypasses phevaluator's per-call
+        # string parsing); cards are already SuitRank ('HA'), same as rank7 expects.
+        return rank7(hole_cards + community_cards)
 
     def evaluate_hand_strength(self, hole_cards, community_cards):
         """Return (hand_type_str, strength_int 0–8)."""

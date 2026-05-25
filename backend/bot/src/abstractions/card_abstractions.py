@@ -1,5 +1,6 @@
 # backend/bot/abstractions/card_abstractions.py
-from .hand_evaluator import HandEvaluator, BoardTextureEvaluator
+from .hand_evaluator import HandEvaluator
+from .postflop_v2 import PostflopV2
 
 # Precomputed via scripts/compute_preflop_equity.py
 # 10,000 Monte Carlo simulations vs random opponent, seed=42, 15 equal-quantile buckets
@@ -354,12 +355,22 @@ _PREFLOP_BUCKET_MAP = {
 class CardAbstraction:
     """
     15 equity-based preflop buckets (pf_0 weakest → pf_14 strongest).
-    Postflop: integer buckets 0–7 from BoardTextureEvaluator.
+    Postflop: distribution-aware (potential-aware) buckets via PostflopV2 --
+    12 flop / 12 turn / 10 river, from precomputed equity-distribution centroids
+    + baked lookup tables (see scripts/compute_postflop_buckets.py and
+    scripts/bake_postflop_table.py). This replaced the old 8-bucket
+    BoardTextureEvaluator heuristic; blueprints must be (re)trained under it.
     """
+
+    # Bound the cache so a long training run (10M+ hands, mostly-distinct
+    # postflop boards) can't grow it without limit. Cleared wholesale on
+    # overflow -- simple and safe: inference sessions never approach the cap,
+    # and postflop boards rarely repeat during training so evictions cost little.
+    _CACHE_CAP = 500_000
 
     def __init__(self):
         self.hand_evaluator = HandEvaluator()
-        self.board_texture = BoardTextureEvaluator()
+        self.postflop = PostflopV2()
         self._bucket_cache = {}
 
     def get_bucket(self, hole_cards, community_cards=None):
@@ -369,6 +380,8 @@ class CardAbstraction:
             return cached
         result = (self.preflop_bucket(hole_cards) if not community_cards
                   else self.postflop_bucket(hole_cards, community_cards))
+        if len(self._bucket_cache) >= self._CACHE_CAP:
+            self._bucket_cache.clear()
         self._bucket_cache[key] = result
         return result
 
@@ -382,10 +395,8 @@ class CardAbstraction:
         return bucket
 
     def postflop_bucket(self, hole_cards, community_cards):
-        """Return integer bucket 0–7 encoding board-adjusted hand strength."""
-        return self.board_texture.compute_postflop_bucket(
-            hole_cards, community_cards, self.hand_evaluator
-        )
+        """Distribution-aware postflop bucket (12 flop / 12 turn / 10 river)."""
+        return self.postflop.bucket(list(hole_cards), list(community_cards))
 
     def cards_to_string(self, hole_cards):
         """Convert PyPokerEngine cards to readable format"""

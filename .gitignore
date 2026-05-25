@@ -23,8 +23,14 @@ dist-ssr
 *.sln
 *.sw?
 
-# Blueprint
-backend/bot/analysis
+# Blueprints (trained model outputs) are git-ignored; the sibling
+# analysis/abstractions/ (precompute inputs, e.g. bucket centroids) is committed.
+backend/bot/analysis/blueprints/
+
+# Baked postflop lookup tables are large (turn ~126MB) and fully regenerable
+# from the committed centroids via scripts/bake_postflop_table.py, so they are
+# git-ignored. Only the small centroids (the real inputs) are committed.
+backend/bot/analysis/abstractions/postflop_table_*.npz
 
 # Cache
 __pycache__/

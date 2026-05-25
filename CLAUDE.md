@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-AllIn is a heads-up Texas Hold'em poker AI using Monte Carlo CFR+ (Counterfactual Regret Minimization). The trained blueprint strategy lives in a SQLite database under `backend/bot/analysis/`, is served by a Flask API, and powers two React frontend features: a strategy explorer and an interactive game against the bot.
+AllIn is a heads-up Texas Hold'em poker AI using Monte Carlo CFR+ (Counterfactual Regret Minimization). The trained blueprint strategy lives in a SQLite database under `backend/bot/analysis/blueprints/`, is served by a Flask API, and powers two React frontend features: a strategy explorer and an interactive game against the bot.
 
 ### Storage: JSON → SQLite
 
-The blueprint was originally exported as a single `analysis/blueprint.json` file, imported directly into the frontend bundle at build time. That was replaced with SQLite (`analysis/blueprint_<timestamp>.db`) because:
+The blueprint was originally exported as a single `analysis/blueprint.json` file, imported directly into the frontend bundle at build time. That was replaced with SQLite (`analysis/blueprints/blueprint_<timestamp>.db`) because:
 
 - The blueprint grew to ~26k info sets; bundling the JSON bloated the Vite build and shipped the whole strategy to every visitor.
 - SQLite supports **incremental checkpointing and resume** during long training runs (`BlueprintDB.save_batch` / `load_all_to_memory`).
@@ -41,14 +41,14 @@ cd backend/bot
 # Quick test
 python -c "from tests.run_blueprint_trainer import run_training; run_training(100)"
 
-# New full run — creates a timestamped DB, e.g. analysis/blueprint_20260518_160906.db
+# New full run — creates a timestamped DB, e.g. analysis/blueprints/blueprint_20260518_160906.db
 python -c "from tests.run_blueprint_trainer import run_training; run_training(5000000)"
 
 # Resume an existing run
 python -c "from tests.run_blueprint_trainer import run_training; run_training(50000, resume='blueprint_20260518_160906.db')"
 ```
 
-Training writes a timestamped `analysis/blueprint_*.db`. There is **no manual promotion step** — `src/config.py:resolve_blueprint_path()` automatically selects the active blueprint (see Key Constraints).
+Training writes a timestamped `analysis/blueprints/blueprint_*.db`. There is **no manual promotion step** — `src/config.py:resolve_blueprint_path()` automatically selects the active blueprint (see Key Constraints).
 
 ### Tests
 ```bash
@@ -70,7 +70,7 @@ python tests/test_confidence_detection.py  # Subgame confidence-detection integr
 # in milli-big-blinds/hand, via a vectorized best-response walk of the public tree.
 python tests/run_evaluation.py                  # active blueprint, 400 board samples
 python tests/run_evaluation.py --samples 1000
-python tests/run_evaluation.py --db analysis/blueprint_20260518_160906.db
+python tests/run_evaluation.py --db analysis/blueprints/blueprint_20260518_160906.db
 ```
 
 ## Architecture
@@ -82,7 +82,7 @@ Training:
 BlueprintTrainer.train_blueprint()
   → cfr() [Monte Carlo CFR+ with external sampling]
   → InformationSet (regret/strategy storage)
-  → BlueprintDB.save_batch() checkpoints into analysis/blueprint_<timestamp>.db
+  → BlueprintDB.save_batch() checkpoints into analysis/blueprints/blueprint_<timestamp>.db
 
 Strategy explorer (read path):
 Frontend (HandExplorer / KeyExplorer)
@@ -114,7 +114,8 @@ The system revolves around a string key that uniquely identifies a poker situati
 Earlier versions used a handful of named buckets (`premium_pair`, `monster`, etc.). These were replaced with finer, equity- and texture-driven buckets for sharper strategy resolution:
 
 - **15 preflop buckets** — `pf_0` (weakest) … `pf_14` (strongest), assigned from precomputed Monte Carlo equity (`scripts/compute_preflop_equity.py`). `pf_14` is TT+.
-- **8 postflop buckets** — integers `0`–`7` from `BoardTextureEvaluator`, combining phevaluator hand strength with board danger: `0` pure bluff, `1` weak draw, `2` strong draw, `3` combo draw, `4` weakest made, `5` medium made, `6` strong made, `7` near-nuts.
+- **Distribution-aware (potential-aware) postflop buckets** — **12 flop / 12 turn / 10 river** (`PostflopV2`). Each hand is described by the *distribution* of its equity-vs-uniform-range over board runouts (a histogram), and clustered by Earth Mover's Distance. This separates hands with equal current equity but different *trajectories* (a static made hand vs a polarized draw) — which the old single-axis scheme merged. Pipeline: `scripts/compute_postflop_buckets.py` fits centroids (`analysis/abstractions/postflop_centroids_*.npz`); `scripts/bake_postflop_table.py` bakes a canonical-situation→bucket lookup table (`analysis/abstractions/postflop_table_{flop,turn}.npz`) via suit isomorphism (`src/abstractions/canonical.py`); river is computed at runtime (1-D equity vs a uniform range → spike histogram → nearest river centroid, cached). **This replaced the old 8-bucket `BoardTextureEvaluator` heuristic — blueprints must be (re)trained under it; v1 blueprints are incompatible.**
+  - **Committed vs regenerated:** the small **centroids** (`postflop_centroids_*.npz`) are the real inputs and are committed to git. The large **baked tables** (`postflop_table_*.npz` — turn is ~126MB) are **git-ignored** (`.gitignore`) and regenerated from the centroids by running `python scripts/bake_postflop_table.py --street {flop,turn}` from `backend/bot/`. A fresh clone must re-bake before training/inference, or `PostflopV2` falls back to slow per-situation lazy bucketing (it warns once). The **river table is intentionally not baked** (~90M canonical situations → impractical size); river always uses the cached runtime path.
 
 ### Action Abstractions (`backend/bot/src/abstractions/action_abstractions.py`)
 
@@ -192,7 +193,7 @@ Never add, commit, or push code in this repository, or any commands that is unsa
 ## Key Constraints
 
 - The Flask API **must** be started from `backend/api/` — it uses `sys.path.insert(0, backend_dir)` so imports like `from bot.src.bot.game_adapter import GameAdapter` resolve correctly.
-- The active blueprint is resolved by `src/config.py:resolve_blueprint_path()`: the `analysis/blueprint_*.db` with the highest `total_iterations`, or whatever `ALLIN_BLUEPRINT_DB` points at. There is no `blueprint.json`/`blueprint.db` to maintain by hand.
+- The active blueprint is resolved by `src/config.py:resolve_blueprint_path()`: the `analysis/blueprints/blueprint_*.db` with the highest `total_iterations`, or whatever `ALLIN_BLUEPRINT_DB` points at. There is no `blueprint.json`/`blueprint.db` to maintain by hand.
 - Inference always opens the DB with `read_only=True`; only training opens it read/write.
 - Each hand of `GameSession` starts both players at `STARTING_STACK` (the blueprint assumes ~200 effective). Cross-hand profit/loss is tracked separately in `human_net`.
 - Stakes: `STARTING_STACK = 200` chips with SB=1 / BB=2, i.e. **100 BB effective stacks** — standard heads-up depth. Starting pot is always 3 chips. Pot math is in chips throughout the backend; the frontend displays everything in BB (chips ÷ 2).
@@ -200,5 +201,49 @@ Never add, commit, or push code in this repository, or any commands that is unsa
 
 ## Roadmap Notes
 
-- Future goal: online 1v1 play deployed on AWS, with subgame solving added to the bot. The `SessionStore` / `BotStrategy` interfaces and the Flask-free game core exist so those are additive, not rewrites.
-- Also planned (post subgame-solving): unrestricted human bet sizing. The action contract is kept a thin `{action, size}` object so widening it to `{action, amount}` is a localized change in `GameSession` and the API.
+The overall build plan is a phased dependency chain (status as of 2026-05-24). The key
+constraint is **Phase 3 must precede Phase 4**: the river solver needs a hand-level range
+as input, so the range tracker has to exist before the solver.
+
+- **Phase 0 — Measurement harness** ✅ done. LBR + head-to-head/AIVAT + best-response
+  exploitability (`src/evaluation/`); baselined at ~11,256 (BR) / ~3,636 (LBR) mbb/hand.
+  Built first so every later change is *scored, not guessed*.
+- **Phase 1b — DCFR gamma** ✅ done. Strategy-sum discount (`gamma=2`) with its own
+  opponent-node clock (`information_set.py`, `blueprint_trainer.py`).
+- **Phase 1a — Pseudo-harmonic action translation** ⬜ not done. Inference-only quick win,
+  independent of everything else: blend the two bracketing pattern-key lookups in
+  `BlueprintStrategy._distribution` instead of snapping off-grid bets to the nearest size
+  (and stop hard-capping overbets at `large`). Cheapest open exploitability patch.
+- **Phase 2 — Potential-aware postflop buckets** 🔄 in progress. This is the distribution-aware
+  abstraction work, tracked internally as sub-phases A (cluster centroids) ✅ / B (bake
+  canonical→bucket tables + migrate `CardAbstraction` to `PostflopV2`) 🔄 / C (retrain
+  blueprint on v2 + re-measure BR/LBR) ⬜. Replaces the old 8-bucket heuristic with 12/12/10.
+- **Phase 3 — Hand-level Bayesian range tracker** ⬜. Hand-level (not bucket-level) range,
+  hooked into `GameSession` JSON state, with a confidence score that decays on off-tree
+  actions. **Prerequisite for Phase 4.** (A bucket-level prototype already exists in
+  `evaluation/lbr.py`'s `BotRange`.)
+- **Phase 4 — River endgame solver (unsafe, no gadget)** ⬜. The flagship: `RiverSubgameSolver(BotStrategy)`
+  builds the small river betting tree, takes both ranges from Phase 3, runs vectorized CFR+,
+  reads off the action for the bot's actual hand; falls back to the blueprint on flop/turn.
+  Requires injecting the bot's hole cards into `decide()` (`bot_strategy.py:21` does not
+  currently receive them) via a per-hand `hand_getter`. v1 is *unsafe* (theoretically
+  exploitable via the frozen-range trap); accept that for v1.
+- **Phase 5 — Safety + depth** ⬜ (multi-week; only after 0–4 prove out). 5a: reach/gadget
+  for the river solver (provably no-more-exploitable than the blueprint). 5b: turn/flop
+  depth-limited solving with **blueprint counterfactual values as the leaf value function**
+  (needs storing those values — new data — plus the 5a gadget).
+
+Dependency chain: **0 → 1 → 2 → 3 → 4 → 5** (1a and 1b are independent quick wins; 2 is
+high-leverage but technically optional before 3; 3 strictly gates 4).
+
+Deferred / low-priority: opponent modeling (only coarse aggregate stats — aggression %,
+fold-to-c-bet — off by default; per-bucket modeling is infeasible in one human session due
+to data sparsity); strategy purification (cheap inference A/B once the harness exists);
+widening the betting abstraction (4th size / 3rd raise) only if LBR reveals missing-line leaks.
+
+Productionization (additive, the interfaces already exist for these):
+- Online 1v1 play deployed on AWS — swap `InMemorySessionStore` for a Redis/DynamoDB-backed
+  store; the Flask-free game core and `BotStrategy` / `SessionStore` interfaces make this
+  additive, not a rewrite.
+- Unrestricted human bet sizing — widen the thin `{action, size}` contract to `{action, amount}`,
+  a localized change in `GameSession` and the API (pairs naturally with Phase 1a / Phase 4).

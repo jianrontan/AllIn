@@ -42,7 +42,7 @@ distribution over actions (e.g. fold 10% / call 45% / bet 45%). The bot samples
 from that distribution to play.
 
 > **Big architectural fact:** the blueprint is stored in **SQLite**
-> (`backend/bot/analysis/blueprint_<timestamp>.db`), not a JSON file. SQLite gives
+> (`backend/bot/analysis/blueprints/blueprint_<timestamp>.db`), not a JSON file. SQLite gives
 > incremental checkpoint/resume during long training runs and lets the API read a
 > blueprint (WAL + read-only) while a separate training run is still writing. The
 > frontend no longer bundles the blueprint at all — it queries the API.
@@ -237,7 +237,7 @@ read a file a training process holds open. Tables: `info_sets`,
 
 ### `config.py` — `resolve_blueprint_path()`
 
-Picks the active blueprint automatically: the `analysis/blueprint_*.db` with the
+Picks the active blueprint automatically: the `analysis/blueprints/blueprint_*.db` with the
 highest `total_iterations` (that isn't actively being written), or whatever
 `ALLIN_BLUEPRINT_DB` points at. **No manual promotion step.**
 
@@ -375,7 +375,7 @@ premium starting range plays differently than the same board for a weak range).
 
 ## 8. Blueprint Storage — SQLite Schema
 
-The blueprint lives in `backend/bot/analysis/blueprint_<timestamp>.db` (WAL
+The blueprint lives in `backend/bot/analysis/blueprints/blueprint_<timestamp>.db` (WAL
 mode, so you may also see `-wal` / `-shm` sidecar files during/after a run).
 
 - **`info_sets`** — one row per info-set key, storing the cumulative regrets and

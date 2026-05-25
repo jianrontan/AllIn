@@ -7,8 +7,8 @@ and AIVAT-corrected (variance-reduced). Use this to compare blueprint versions
 Usage (from backend/bot/):
     # New 6M gamma=2 (A) vs old 6.5M gamma=0 (B):
     python tests/run_match.py \
-        --db-a analysis/blueprint_20260523_171956.db \
-        --db-b analysis/blueprint_20260521_170429.db --hands 20000
+        --db-a analysis/blueprints/blueprint_20260523_171956.db \
+        --db-b analysis/blueprints/blueprint_20260521_170429.db --hands 20000
 
     # Sanity: a blueprint vs itself (expect ~0):
     python tests/run_match.py --hands 10000

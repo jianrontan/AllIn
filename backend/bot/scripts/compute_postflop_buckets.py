@@ -37,7 +37,7 @@ Run from backend/bot/:
 
 This DRAFT prints cluster occupancy and assigns two textbook hands (top pair vs
 nut flush draw on the same flop) to show they land in different buckets. It
-saves centroids to analysis/postflop_centroids_<street>.npz.
+saves centroids to analysis/abstractions/postflop_centroids_<street>.npz.
 """
 import argparse
 import os
@@ -47,79 +47,17 @@ from itertools import combinations
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from phevaluator.evaluator import evaluate_cards
-
-SUITS = ['H', 'D', 'C', 'S']
-RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A']
-DECK = [s + r for r in RANKS for s in SUITS]
-ALL_HANDS = list(combinations(DECK, 2))
-_SUIT_MAP = {'S': 's', 'H': 'h', 'D': 'd', 'C': 'c'}
-
-STREET_BOARD = {'flop': 3, 'turn': 4, 'river': 5}
-
-
-def to_phev(card):
-    return card[1] + _SUIT_MAP[card[0]]
-
-
-def rank7(cards):
-    return evaluate_cards(*[to_phev(c) for c in cards])
-
-
-# ----------------------------------------------------------------------
-# Equity distribution feature
-# ----------------------------------------------------------------------
-
-def hand_winrate(hole, board5, opp_hands):
-    """Win-rate (win + 0.5 tie) of `hole` vs a uniform opp range on a 5-card board."""
-    hr = rank7(list(hole) + list(board5))
-    win = tie = 0
-    for opp in opp_hands:
-        orank = rank7(list(opp) + list(board5))
-        if hr < orank:        # lower phevaluator score = stronger
-            win += 1
-        elif hr == orank:
-            tie += 1
-    n = len(opp_hands)
-    return (win + 0.5 * tie) / n if n else 0.5
-
-
-def equity_distribution(hole, board, bins, n_runout, n_opp, rng):
-    """Histogram of per-runout win-rates -> the hand's equity distribution."""
-    dead = set(hole) | set(board)
-    deck = [c for c in DECK if c not in dead]
-    need = 5 - len(board)
-
-    if need == 0:
-        runouts = [()]
-    elif need == 1:
-        runouts = [(c,) for c in deck]                  # enumerate the 44-46 rivers
-    else:
-        runouts = [tuple(rng.sample(deck, need)) for _ in range(n_runout)]
-
-    winrates = []
-    for ro in runouts:
-        full = board + list(ro)
-        blocked = dead | set(ro)
-        opp = [h for h in ALL_HANDS if h[0] not in blocked and h[1] not in blocked]
-        if n_opp and len(opp) > n_opp:
-            opp = rng.sample(opp, n_opp)
-        winrates.append(hand_winrate(hole, full, opp))
-
-    hist, _ = np.histogram(winrates, bins=bins, range=(0.0, 1.0))
-    h = hist.astype(float)
-    s = h.sum()
-    return h / s if s > 0 else h
+# Feature primitives live in the shared module so the baker and runtime use the
+# exact same equity-distribution definition the centroids were fit on.
+from src.abstractions.postflop_features import (   # noqa: E402
+    SUITS, RANKS, DECK, ALL_HANDS, STREET_BOARD,
+    to_phev, rank7, hand_winrate, equity_distribution, emd, assign,
+)
 
 
 # ----------------------------------------------------------------------
 # EMD k-means (1-D histograms)
 # ----------------------------------------------------------------------
-
-def emd(a, b):
-    """1-D Earth Mover's Distance = L1 between CDFs."""
-    return np.abs(np.cumsum(a) - np.cumsum(b)).sum()
-
 
 def kmeans_emd(feats, k, iters, rng):
     n = len(feats)
@@ -148,10 +86,6 @@ def kmeans_emd(feats, k, iters, rng):
     remap = {old: new for new, old in enumerate(order)}
     labels = np.array([remap[int(l)] for l in labels])
     return np.array(centroids), labels
-
-
-def assign(feat, centroids):
-    return int(np.argmin([emd(feat, c) for c in centroids]))
 
 
 # ----------------------------------------------------------------------
@@ -206,8 +140,9 @@ def main():
         print(f"  {b:>4} | {counts[b] / counts.sum():5.1%} | {mean_eq:6.3f} "
               f"| spread={spread:5.3f} {bar}")
 
-    out = os.path.join(os.path.dirname(__file__), '..', 'analysis',
-                       f'postflop_centroids_{args.street}.npz')
+    out_dir = os.path.join(os.path.dirname(__file__), '..', 'analysis', 'abstractions')
+    os.makedirs(out_dir, exist_ok=True)
+    out = os.path.join(out_dir, f'postflop_centroids_{args.street}.npz')
     np.savez(out, centroids=centroids, bins=args.bins)
     print(f"\nsaved centroids -> {os.path.relpath(out)}")
 

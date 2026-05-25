@@ -16,7 +16,7 @@ For architecture and internals, see [`CLAUDE.md`](CLAUDE.md).
 
 - **Python 3.12** (the bot, training, API)
 - **Node.js 18+** and npm (the frontend)
-- A trained blueprint DB in `backend/bot/analysis/` (you train one in step 3,
+- A trained blueprint DB in `backend/bot/analysis/blueprints/` (you train one in step 3,
   or drop in an existing `blueprint_*.db`)
 
 ---
@@ -40,7 +40,7 @@ is not needed at runtime, but installing everything keeps one command simple.
 
 ## 3. Train a blueprint
 
-Training produces a timestamped SQLite file in `backend/bot/analysis/`, e.g.
+Training produces a timestamped SQLite file in `backend/bot/analysis/blueprints/`, e.g.
 `blueprint_20260522_160906.db`. There is **no manual "make it active" step** —
 the API and bot automatically use the blueprint with the most training
 iterations (see "How the active blueprint is chosen" below).
@@ -135,7 +135,7 @@ training change to confirm the strategy is actually improving.
 cd backend/bot
 python tests/run_evaluation.py                  # active blueprint, 400 board samples
 python tests/run_evaluation.py --samples 1000   # more samples = lower variance
-python tests/run_evaluation.py --db analysis/blueprint_20260522_160906.db
+python tests/run_evaluation.py --db analysis/blueprints/blueprint_20260522_160906.db
 ```
 
 ---
@@ -158,7 +158,7 @@ The property tests can also run under pytest:
 
 ## 8. How the active blueprint is chosen
 
-`src/config.py:resolve_blueprint_path()` picks the `analysis/blueprint_*.db`
+`src/config.py:resolve_blueprint_path()` picks the `analysis/blueprints/blueprint_*.db`
 with the **highest training iterations** (that isn't currently being written
 to). So when you finish a longer run, the API/bot switch to it automatically on
 restart — no file renaming or promotion step.
@@ -168,7 +168,7 @@ before starting the API:
 
 ```bash
 # macOS/Linux
-export ALLIN_BLUEPRINT_DB=/abs/path/to/backend/bot/analysis/blueprint_20260522_160906.db
+export ALLIN_BLUEPRINT_DB=/abs/path/to/backend/bot/analysis/blueprints/blueprint_20260522_160906.db
 # Windows PowerShell
 $env:ALLIN_BLUEPRINT_DB = "C:\Ron\AllIn\backend\bot\analysis\blueprint_20260522_160906.db"
 ```
@@ -188,7 +188,7 @@ $env:ALLIN_BLUEPRINT_DB = "C:\Ron\AllIn\backend\bot\analysis\blueprint_20260522_
 ## 10. Troubleshooting
 
 - **API says no blueprint / `/api/test` shows none** — you have no
-  `blueprint_*.db` in `backend/bot/analysis/`. Train one (step 3) or copy one in.
+  `blueprint_*.db` in `backend/bot/analysis/blueprints/`. Train one (step 3) or copy one in.
 - **`ModuleNotFoundError` when starting the API** — start it from
   `backend/api/` exactly; it adjusts `sys.path` relative to that directory.
 - **Frontend can't reach the API** — confirm the API is on port 5000, or set

@@ -116,16 +116,10 @@ def test_cfr_returns_bounded_p0_value():
         p0_cards, p1_cards, community = trainer.deal_random_hand()
         trainer._p0_preflop = ca.get_bucket(p0_cards, None)
         trainer._p1_preflop = ca.get_bucket(p1_cards, None)
-        trainer._p0_postflop = {
-            1: ca.get_bucket(p0_cards, community[:3]),
-            2: ca.get_bucket(p0_cards, community[:4]),
-            3: ca.get_bucket(p0_cards, community[:5]),
-        }
-        trainer._p1_postflop = {
-            1: ca.get_bucket(p1_cards, community[:3]),
-            2: ca.get_bucket(p1_cards, community[:4]),
-            3: ca.get_bucket(p1_cards, community[:5]),
-        }
+        # Lazy postflop bucketing context (mirrors train_blueprint's per-hand setup).
+        trainer._p0_cards = p0_cards
+        trainer._p1_cards = p1_cards
+        trainer._postflop_memo = {}
         trainer.game._calc_cache.clear()
 
         for updating_player in [0, 1]:
@@ -548,14 +542,20 @@ def test_preflop_bucket_valid_format():
 
 
 def test_postflop_bucket_is_integer():
-    """Postflop bucket should be an integer in 0-7."""
+    """Postflop bucket is an integer within the v2 range per street:
+    flop/turn 0-11 (12 buckets), river 0-9 (10 buckets)."""
     ca = CardAbstraction()
     hole_cards = ['HA', 'DA']
-    community = ['HK', 'SQ', 'DJ']  # valid SuitRank cards, no collision with hole cards
-    bucket = ca.postflop_bucket(hole_cards, community)
-    assert isinstance(bucket, int), f"Expected int, got {type(bucket)}: {bucket}"
-    assert 0 <= bucket <= 7, f"Postflop bucket out of range: {bucket}"
-    print(f"PASS test_postflop_bucket_is_integer: bucket = {bucket}")
+    cases = [
+        (['HK', 'SQ', 'DJ'], 11, 'flop'),
+        (['HK', 'SQ', 'DJ', 'C9'], 11, 'turn'),
+        (['HK', 'SQ', 'DJ', 'C9', 'S7'], 9, 'river'),
+    ]
+    for community, hi, street in cases:
+        bucket = ca.postflop_bucket(hole_cards, community)
+        assert isinstance(bucket, int), f"{street}: expected int, got {type(bucket)}: {bucket}"
+        assert 0 <= bucket <= hi, f"{street} bucket out of range [0,{hi}]: {bucket}"
+    print("PASS test_postflop_bucket_is_integer: flop/turn 0-11, river 0-9")
 
 
 # ===========================================================================

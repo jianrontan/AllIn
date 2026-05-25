@@ -24,7 +24,7 @@ through a **Flask** API, and exposes it in an interactive **React** platform.
 
 ### 📊 Trained Blueprint (active model)
 ```
-Active blueprint (analysis/blueprint_*.db):
+Active blueprint (analysis/blueprints/blueprint_*.db):
 ├── Algorithm:          Monte Carlo CFR+ with external sampling + DCFR (α=1.5)
 ├── Training iterations: 6,500,000
 ├── Information sets:    26,052 unique strategic situations
@@ -156,7 +156,7 @@ python -c "from tests.run_blueprint_trainer import run_training; run_training(10
 # A real run — checkpoints as it goes; resume any time with resume='<db>.db'
 python -c "from tests.run_blueprint_trainer import run_training; run_training(5000000)"
 ```
-Training writes a timestamped `backend/bot/analysis/blueprint_*.db`. The API and
+Training writes a timestamped `backend/bot/analysis/blueprints/blueprint_*.db`. The API and
 bot automatically use the blueprint with the most iterations — **no manual
 promotion step**.
 

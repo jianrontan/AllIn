@@ -5,7 +5,7 @@ Score a blueprint's exploitability.
 Usage (from backend/bot/):
     python tests/run_evaluation.py                 # active blueprint, 400 samples
     python tests/run_evaluation.py --samples 1000
-    python tests/run_evaluation.py --db analysis/blueprint_20260518_160906.db
+    python tests/run_evaluation.py --db analysis/blueprints/blueprint_20260518_160906.db
 """
 import argparse
 import os

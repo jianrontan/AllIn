@@ -1,0 +1,142 @@
+# backend/bot/src/abstractions/postflop_v2.py
+"""
+Version-2 postflop bucketing: distribution-aware (potential-aware) buckets.
+
+This is the ONLY postflop scheme now -- CardAbstraction delegates to it directly
+(the legacy BoardTextureEvaluator heuristic is dead). It changes the postflop
+info-set keys versus v1, so v1-trained blueprints are incompatible and must be
+retrained.
+
+How a postflop bucket is produced:
+  * flop / turn : canonicalise (hole, board) -> integer id -> O(log n) lookup in
+                  the pre-baked table (scripts/bake_postflop_table.py). On a miss
+                  (or absent table) fall back to computing the equity-distribution
+                  feature and assigning the nearest centroid -- correct but slow,
+                  so the baked table is what keeps training fast.
+  * river       : NO table by design -- equity vs a uniform range is a single
+                  number, so we build its (spike) histogram and assign the
+                  nearest river centroid, cached per canonical situation. A full
+                  river table is impractical (~90M canonical situations); the
+                  per-situation cache plus a vectorized per-board equity pass
+                  (board_winrates, shared by both players) keeps this cheap.
+
+Bucket counts follow the centroids (12 flop / 12 turn / 10 river by default).
+"""
+import os
+import random
+import warnings
+
+import numpy as np
+
+from .canonical import canonical_key
+from .postflop_features import (
+    load_centroids, encode_situation, equity_distribution, assign,
+    board_winrates, _CARD_IDX, _ABSTRACTIONS_DIR)
+
+_STREET = {3: 'flop', 4: 'turn', 5: 'river'}
+
+
+class PostflopV2:
+    # Cap the caches: canonical river situations number ~90M, so over a long
+    # training run dealt hands rarely repeat and an uncapped cache would grow
+    # without bound for little benefit. Cleared wholesale on overflow.
+    _RIVER_CACHE_CAP = 500_000
+    _BOARD_EQ_CACHE_CAP = 20_000
+
+    def __init__(self, seed=0, lazy_runouts=120, lazy_opp=150):
+        self.rng = random.Random(seed)
+        self.lazy_runouts = lazy_runouts
+        self.lazy_opp = lazy_opp
+        self._tables = {}        # street -> (ids_sorted, buckets) or None
+        self._centroids = {}     # street -> (centroids, bins)
+        self._river_cache = {}   # canonical_key -> bucket
+        self._board_eq_cache = {}  # frozenset(board) -> {sorted card-idx pair: equity}
+        self._warned = set()
+
+    def _centroid(self, street):
+        if street not in self._centroids:
+            self._centroids[street] = load_centroids(street)
+        return self._centroids[street]
+
+    def _table(self, street):
+        if street not in self._tables:
+            path = os.path.join(_ABSTRACTIONS_DIR, f'postflop_table_{street}.npz')
+            if os.path.exists(path):
+                d = np.load(path)
+                self._tables[street] = (d['ids'], d['buckets'])
+            else:
+                self._tables[street] = None
+        return self._tables[street]
+
+    # ------------------------------------------------------------------
+    def bucket(self, hole, board):
+        street = _STREET[len(board)]
+        centroids, bins = self._centroid(street)
+        ck = canonical_key(tuple(hole), tuple(board))
+        sid = encode_situation(ck)
+
+        # All three streets use the same baked-table fast path; only the
+        # lazy fallback (on a table miss or absent table) differs by street.
+        tab = self._table(street)
+        if tab is not None:
+            ids, buckets = tab
+            i = int(np.searchsorted(ids, sid))
+            if i < len(ids) and ids[i] == sid:
+                return int(buckets[i])
+
+        if street == 'river':
+            return self._river_bucket_lazy(ck, hole, board, centroids, bins)
+        self._warn_once(street)
+        feat = equity_distribution(list(hole), list(board), bins,
+                                   self.lazy_runouts, self.lazy_opp, self.rng)
+        return assign(feat, centroids)
+
+    def _river_bucket_lazy(self, ck, hole, board, centroids, bins):
+        """River bucketing (no baked table -- by design). Equity vs a uniform
+        range is a single number, so build its spike histogram and assign the
+        nearest river centroid. Cached per canonical situation. A full river
+        table is impractical (~90M canonical situations); the per-situation
+        cache plus the per-board equity cache keeps this cheap at runtime."""
+        cached = self._river_cache.get(ck)
+        if cached is not None:
+            return cached
+        eq = self._river_equity(hole, board)
+        hist = np.zeros(bins)
+        hist[min(int(eq * bins), bins - 1)] = 1.0      # spike at the equity value
+        b = assign(hist, centroids)
+        if len(self._river_cache) >= self._RIVER_CACHE_CAP:
+            self._river_cache.clear()
+        self._river_cache[ck] = b
+        return b
+
+    def _river_equity(self, hole, board):
+        """Equity (win + 0.5*tie) vs a uniform range on a complete 5-card board.
+
+        Computed via board_winrates, which ranks EVERY hand on the board in one
+        vectorized pass and is cached per board -- so both players on the same
+        river board (the common training case) share a single ranking pass
+        instead of each running its own ~990-hand loop."""
+        eqs = self._board_equities(board)
+        a, b = _CARD_IDX[hole[0]], _CARD_IDX[hole[1]]
+        return eqs[(a, b) if a < b else (b, a)]
+
+    def _board_equities(self, board):
+        """{sorted (card_idx, card_idx) -> equity} for every hand on `board`."""
+        key = frozenset(board)
+        cached = self._board_eq_cache.get(key)
+        if cached is None:
+            c1, c2, wr = board_winrates(list(board))
+            cached = {}
+            for a, b, w in zip(c1.tolist(), c2.tolist(), wr.tolist()):
+                cached[(a, b) if a < b else (b, a)] = w
+            if len(self._board_eq_cache) >= self._BOARD_EQ_CACHE_CAP:
+                self._board_eq_cache.clear()
+            self._board_eq_cache[key] = cached
+        return cached
+
+    def _warn_once(self, street):
+        if street not in self._warned:
+            warnings.warn(
+                f"postflop_table_{street}.npz missing/incomplete; bucketing lazily "
+                f"(slow). Bake it with scripts/bake_postflop_table.py.")
+            self._warned.add(street)

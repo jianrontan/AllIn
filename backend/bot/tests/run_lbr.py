@@ -8,7 +8,7 @@ HIGHER means the abstraction (not just convergence) is leaking.
 Usage (from backend/bot/):
     python tests/run_lbr.py                       # active blueprint, 3000 hands
     python tests/run_lbr.py --hands 5000
-    python tests/run_lbr.py --db analysis/blueprint_20260521_170429.db
+    python tests/run_lbr.py --db analysis/blueprints/blueprint_20260521_170429.db
 
 NOTE: this is Monte Carlo over real deals, so it is high-variance -- use several
 thousand hands. AIVAT (a later harness piece) will cut the variance sharply.

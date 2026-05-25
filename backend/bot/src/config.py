@@ -3,12 +3,12 @@
 Central configuration / resolution helpers.
 
 The trained blueprint is written as a timestamped SQLite file
-(analysis/blueprint_<timestamp>.db). Nothing is hard-named `blueprint.db`,
-so the API and the bot need a deterministic way to pick the active file.
+(analysis/blueprints/blueprint_<timestamp>.db). Nothing is hard-named
+`blueprint.db`, so the API and the bot need a deterministic way to pick it.
 
 Resolution order:
   1. ALLIN_BLUEPRINT_DB env var (explicit override) — used as-is.
-  2. Among analysis/blueprint_*.db files NOT currently being written by a
+  2. Among analysis/blueprints/blueprint_*.db files NOT currently being written by a
      training run, the one with the highest `total_iterations` (ties broken
      by mtime). If every candidate is busy, fall back to all of them.
 
@@ -30,9 +30,10 @@ from pathlib import Path
 # actively writing this DB right now".
 _BUSY_WINDOW_SECONDS = 300
 
-# analysis/ lives at backend/bot/analysis — two parents up from this file
-# (src/config.py -> src -> bot), then /analysis.
-_DEFAULT_ANALYSIS_DIR = Path(__file__).resolve().parents[1] / "analysis"
+# Blueprints live at backend/bot/analysis/blueprints — two parents up from this
+# file (src/config.py -> src -> bot), then /analysis/blueprints. (The sibling
+# analysis/abstractions holds committed precompute artifacts, not blueprints.)
+_DEFAULT_BLUEPRINT_DIR = Path(__file__).resolve().parents[1] / "analysis" / "blueprints"
 
 
 def _read_total_iterations(db_path):
@@ -69,7 +70,7 @@ def _is_being_written(db_path):
         return False
 
 
-def resolve_blueprint_path(analysis_dir=None):
+def resolve_blueprint_path(blueprint_dir=None):
     """
     Return a Path to the active blueprint DB.
 
@@ -83,11 +84,11 @@ def resolve_blueprint_path(analysis_dir=None):
                 f"ALLIN_BLUEPRINT_DB points to a missing file: {path}")
         return path
 
-    analysis_dir = Path(analysis_dir) if analysis_dir else _DEFAULT_ANALYSIS_DIR
-    candidates = list(analysis_dir.glob("blueprint_*.db"))
+    blueprint_dir = Path(blueprint_dir) if blueprint_dir else _DEFAULT_BLUEPRINT_DIR
+    candidates = list(blueprint_dir.glob("blueprint_*.db"))
     if not candidates:
         raise FileNotFoundError(
-            f"No blueprint_*.db file found in {analysis_dir}. "
+            f"No blueprint_*.db file found in {blueprint_dir}. "
             f"Set ALLIN_BLUEPRINT_DB or run training first.")
 
     # Prefer blueprints that are NOT currently being written by training.
@@ -102,5 +103,5 @@ def resolve_blueprint_path(analysis_dir=None):
     best = max(pool, key=sort_key)
     if _read_total_iterations(best) < 0:
         raise FileNotFoundError(
-            f"Found blueprint files in {analysis_dir} but none were readable.")
+            f"Found blueprint files in {blueprint_dir} but none were readable.")
     return best

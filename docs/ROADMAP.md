@@ -27,7 +27,7 @@ A heads-up blueprint is trained with Monte Carlo CFR+ and stored in SQLite.
 | Persistence | `src/storage/blueprint_db.py` — SQLite, WAL, checkpoint/resume | ✅ |
 | Active-blueprint resolution | `src/config.py:resolve_blueprint_path()` | ✅ |
 
-**Outcome:** training writes `analysis/blueprint_<timestamp>.db`; the API/bot
+**Outcome:** training writes `analysis/blueprints/blueprint_<timestamp>.db`; the API/bot
 auto-select the DB with the most iterations. Correctness has been hardened
 through a documented bug hunt ([../backend/bot/docs/BUG_LOG.md](../backend/bot/docs/BUG_LOG.md))
 plus Hypothesis property tests.

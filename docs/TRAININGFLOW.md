@@ -62,7 +62,7 @@ PokerGame.get_utility(p0, p1, community, history, street, pot, p0_inv, p1_inv)
     ↓
 💽 Checkpoint
 BlueprintDB.save_batch(...) every `checkpoint_every` iterations
-└── analysis/blueprint_<timestamp>.db   (resume-able; total_iterations tracked)
+└── analysis/blueprints/blueprint_<timestamp>.db   (resume-able; total_iterations tracked)
 ```
 
 **Notes**

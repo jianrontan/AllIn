@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from src.cfr.blueprint_trainer import BlueprintTrainer
 from src.storage.blueprint_db import BlueprintDB
 
-ANALYSIS_DIR = Path(__file__).parent.parent / "analysis"
+ANALYSIS_DIR = Path(__file__).parent.parent / "analysis" / "blueprints"
 
 
 def run_training(iterations, resume=None, checkpoint_every=1000,
@@ -54,7 +54,7 @@ def run_training(iterations, resume=None, checkpoint_every=1000,
         import random
         random.seed(seed)
 
-    ANALYSIS_DIR.mkdir(exist_ok=True)
+    ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
 
     if resume:
         db_path = ANALYSIS_DIR / resume
@@ -99,7 +99,7 @@ def run_training(iterations, resume=None, checkpoint_every=1000,
         print(f"  Info sets:         {len(trainer.info_sets)}")
         print(f"  DB:                {db_path}")
         print(f"\nThe API/bot will pick this up automatically once it has the "
-              f"most iterations of any blueprint in analysis/.")
+              f"most iterations of any blueprint in analysis/blueprints/.")
     finally:
         db.close()
 

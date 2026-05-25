@@ -36,6 +36,17 @@ class BlueprintTrainer:
         self.alpha = 1.5
         self.gamma = 2.0
 
+        # Cumulative EV gauge, persisted across resumes. `ev_sum` / `ev_count`
+        # accumulate the per-iteration sampled root value over the blueprint's
+        # ENTIRE lifetime (not just the current session), so the printed mean
+        # is stable across resume boundaries instead of resetting to a noisy
+        # session-only average. NOTE: this is a convergence gauge, not the
+        # blueprint's true EV -- it averages the value of the still-evolving
+        # current strategy (including early iterations). For the real strength
+        # of the average strategy, use the evaluation harness (best_response.py).
+        self.ev_sum = 0.0
+        self.ev_count = 0
+
     def create_deck(self):
         suits = ['H', 'D', 'C', 'S']
         ranks = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A']
@@ -53,6 +64,20 @@ class BlueprintTrainer:
         """Chips the current player must put in to take this action (for stack tracking)."""
         return self.game._action_cost(
             action, street, history, starting_pot, current_player, p0_prev, p1_prev)
+
+    def _postflop_strength(self, player, street, community_cards):
+        """Acting player's postflop strength bucket for this street, computed
+        lazily and memoized per iteration. street 1/2/3 -> board of 3/4/5 cards.
+        Only called for the player about to act at a reached node, so the
+        expensive river bucket is never computed for a hand that ends earlier."""
+        key = (player, street)
+        val = self._postflop_memo.get(key)
+        if val is None:
+            cards = self._p0_cards if player == 0 else self._p1_cards
+            ca = self.game_adapter.card_abstractions
+            val = ca.get_bucket(cards, community_cards[:street + 2])
+            self._postflop_memo[key] = val
+        return val
 
     def cfr(self, p0_cards, p1_cards, community_cards, history,
             street, updating_player, depth=0, iteration=0, starting_pot=None,
@@ -127,8 +152,8 @@ class BlueprintTrainer:
         # Build info set key
         position = 'ip' if current_player == 0 else 'oop'
         preflop_bucket = self._p0_preflop if current_player == 0 else self._p1_preflop
-        strength = (self._p0_postflop[street] if current_player == 0
-                    else self._p1_postflop[street]) if street > 0 else None
+        strength = (self._postflop_strength(current_player, street, community_cards)
+                    if street > 0 else None)
         info_set_key = make_info_set_key(
             street, position, preflop_bucket, strength, bet_pattern)
 
@@ -234,7 +259,7 @@ class BlueprintTrainer:
         print(f"  Starting stack    : {STARTING_STACK}")
         print()
 
-        expected_value = 0
+        session_ev_sum = 0.0
         t_start = time.time()
 
         for i in range(iterations):
@@ -243,25 +268,26 @@ class BlueprintTrainer:
             p0_cards, p1_cards, community_cards = self.deal_random_hand()
 
             ca = self.game_adapter.card_abstractions
+            # Preflop buckets are cheap (dict lookup) -- compute eagerly.
             self._p0_preflop = ca.get_bucket(p0_cards, None)
             self._p1_preflop = ca.get_bucket(p1_cards, None)
-            self._p0_postflop = {
-                1: ca.get_bucket(p0_cards, community_cards[:3]),
-                2: ca.get_bucket(p0_cards, community_cards[:4]),
-                3: ca.get_bucket(p0_cards, community_cards[:5]),
-            }
-            self._p1_postflop = {
-                1: ca.get_bucket(p1_cards, community_cards[:3]),
-                2: ca.get_bucket(p1_cards, community_cards[:4]),
-                3: ca.get_bucket(p1_cards, community_cards[:5]),
-            }
+            # Postflop buckets (esp. river, ~990-hand equity) are expensive and
+            # only the ACTING player's bucket at the CURRENT street is ever read
+            # for a key. Compute them lazily on first use inside cfr(), memoized
+            # per iteration -- so a hand that ends preflop never pays for river
+            # bucketing, and each (player, street) is computed at most once.
+            self._p0_cards = p0_cards
+            self._p1_cards = p1_cards
+            self._postflop_memo = {}
 
             updating_player = actual_iteration % 2
             self.game._calc_cache.clear()
             util = self.cfr(
                 p0_cards, p1_cards, community_cards, [],
                 0, updating_player, 0, actual_iteration, 3)
-            expected_value += util
+            session_ev_sum += util
+            self.ev_sum += util
+            self.ev_count += 1
 
             if (i + 1) % LOG_EVERY == 0:
                 iter_ms = (time.time() - t_iter) * 1000
@@ -274,8 +300,13 @@ class BlueprintTrainer:
                 eta_str = _format_duration(eta_sec)
                 elapsed_str = _format_duration(elapsed_total)
 
+                # Cumulative EV (lifetime, stable across resumes) plus this
+                # session's EV so a resume's local progress is still visible.
+                cum_ev = self.ev_sum / self.ev_count if self.ev_count else 0.0
+                session_ev = session_ev_sum / iters_done
+
                 print(f"  iter {actual_iteration + 1:>9,} / {total_target:,} | "
-                      f"EV: {expected_value / iters_done:+.5f} | "
+                      f"EV(cum): {cum_ev:+.5f} | EV(sess): {session_ev:+.5f} | "
                       f"info sets: {len(self.info_sets):>7,} | "
                       f"{iters_per_sec:>6.1f} it/s | "
                       f"iter_ms: {iter_ms:.1f} | "
@@ -287,17 +318,26 @@ class BlueprintTrainer:
 
         total_elapsed = _format_duration(time.time() - t_start)
         print(f"\nTraining completed in {total_elapsed}.")
-        return expected_value / iterations
+        # Return the lifetime cumulative EV (stable across resumes), not just
+        # this session's average.
+        return self.ev_sum / self.ev_count if self.ev_count else 0.0
 
     def checkpoint_to_db(self, db, iteration):
         db.save_batch(self.info_sets)
         db.set_metadata('total_iterations', iteration + 1)
         db.set_metadata('alpha', self.alpha)
         db.set_metadata('gamma', self.gamma)
+        # Persist the lifetime EV accumulators so the cumulative mean survives
+        # a resume instead of restarting from this session's iterations only.
+        db.set_metadata('ev_sum', self.ev_sum)
+        db.set_metadata('ev_count', self.ev_count)
         print(f"Checkpoint: {len(self.info_sets)} info sets saved at iteration {iteration + 1}")
 
     def resume_from_db(self, db):
         self.info_sets = db.load_all_to_memory()
         start_iteration = db.get_metadata('total_iterations', 0)
+        # Restore lifetime EV accumulators (absent on pre-EV-persistence DBs).
+        self.ev_sum = db.get_metadata('ev_sum', 0.0)
+        self.ev_count = db.get_metadata('ev_count', 0)
         print(f"Resumed: {len(self.info_sets)} info sets, continuing from iteration {start_iteration}")
         return start_iteration
