@@ -31,7 +31,7 @@ import numpy as np
 from .canonical import canonical_key
 from .postflop_features import (
     load_centroids, encode_situation, equity_distribution, assign,
-    board_winrates, _CARD_IDX, _ABSTRACTIONS_DIR)
+    board_winrates, centroid_hash, _CARD_IDX, _ABSTRACTIONS_DIR)
 
 _STREET = {3: 'flop', 4: 'turn', 5: 'river'}
 
@@ -63,10 +63,38 @@ class PostflopV2:
             path = os.path.join(_ABSTRACTIONS_DIR, f'postflop_table_{street}.npz')
             if os.path.exists(path):
                 d = np.load(path)
+                self._verify_stamp(street, d)
                 self._tables[street] = (d['ids'], d['buckets'])
             else:
                 self._tables[street] = None
         return self._tables[street]
+
+    def _verify_stamp(self, street, d):
+        """Guard against a stale table: confirm it was baked from the centroids
+        in use (centroid hash) with the same K and bins (C2/M3). A legacy table
+        with no stamp warns once and proceeds (so pre-stamp bakes keep working
+        until the next re-bake); a stamp MISMATCH is a hard error."""
+        if 'centroid_hash' not in getattr(d, 'files', []):
+            if street not in self._warned:
+                warnings.warn(
+                    f"postflop_table_{street}.npz has no centroid stamp (legacy "
+                    f"bake) -- cannot verify it matches the current centroids. "
+                    f"Re-bake to enable the consistency check.")
+                self._warned.add(street)
+            return
+        centroids, bins = self._centroid(street)
+        want = centroid_hash(centroids, bins)
+        got = str(d['centroid_hash'])
+        if got != want:
+            raise ValueError(
+                f"postflop_table_{street}.npz was baked from DIFFERENT centroids "
+                f"(stamp {got[:8]}... != current {want[:8]}...). The table is stale; "
+                f"re-bake it: python scripts/bake_postflop_table.py --street {street}")
+        nb, tb = int(d['n_buckets']), int(d['bins'])
+        if nb != len(centroids) or tb != bins:
+            raise ValueError(
+                f"postflop_table_{street}.npz K/bins ({nb}/{tb}) != current centroids "
+                f"({len(centroids)}/{bins}); re-bake --street {street}.")
 
     # ------------------------------------------------------------------
     def bucket(self, hole, board):

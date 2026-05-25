@@ -32,14 +32,15 @@ PokerGame.get_legal_actions(street, history, pot, player, stacks…)
 🔑 Build Info-Set Key   (via the single source of truth)
 keys.make_info_set_key(street, position, preflop_bucket, strength, pattern)
 ├── CardAbstraction.get_bucket(cards, None)        → preflop bucket  e.g. pf_12
-├── CardAbstraction.get_bucket(cards, board[:3])   → strength bucket e.g. 6
+├── CardAbstraction.get_bucket(cards, board[:3])   → postflop bucket e.g. 6
+│     └── PostflopV2: distribution-aware (potential-aware) bucket —
+│         canonicalise (hole,board) → O(log n) lookup in the pre-baked
+│         centroid table (flop/turn); river = exact equity → spike → nearest
+│         river centroid. 12 flop / 12 turn / 10 river. Computed once per hand
+│         (memoized), lazily on first use of each street.
 ├── position = 'ip' (P0) | 'oop' (P1)
 ├── pattern  = current-street betting only (resets each street)  e.g. "k"
 └── Output (postflop): "pf_12_6_ip_flop_k"
-    ↓
-🔍 Hand / Board Evaluation
-HandEvaluator.get_raw_hand_value(hole, board)       # via phevaluator
-└── feeds the 8 postflop texture buckets (0 bluff … 7 near-nuts)
     ↓
 💾 Strategy (regret matching, CFR+)
 InformationSet.get_strategy(legal_actions)          # PURE, no side effects
@@ -75,3 +76,12 @@ BlueprintDB.save_batch(...) every `checkpoint_every` iterations
   [DEVELOPER_GUIDE.md §11](DEVELOPER_GUIDE.md#11-known-limitations).
 - After a run, `config.resolve_blueprint_path()` auto-selects the DB with the most
   iterations — no manual promotion step.
+- The printed **EV(cum)** is a lifetime running mean of the per-iteration sampled root
+  value (`ev_sum`/`ev_count`, persisted to DB metadata and restored on resume, so it is
+  stable across resume boundaries); **EV(sess)** is this session only. It is a
+  convergence *gauge* of the evolving strategy, **not** the blueprint's true EV — for
+  that, score the average strategy with the evaluation harness.
+- Hand evaluation goes through `postflop_features.rank7`, which precomputes card→id ids
+  and calls phevaluator's internal evaluator directly (skips per-call string parsing);
+  river equity is computed via the vectorized `board_winrates` shared across both
+  players on a board. Together these made training ~1.87× faster.

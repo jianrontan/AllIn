@@ -63,3 +63,84 @@ class BlueprintStrategy(BotStrategy):
 
     def explain(self, info_set_key, legal_actions, public_state):
         return self._distribution(info_set_key, legal_actions)
+
+    def range_model_fn(self):
+        """Return a strategy_fn(key, legal)->np.ndarray for the opponent range
+        tracker: the blueprint's average strategy restricted to `legal` and
+        renormalised (uniform if the key is unknown). This is the opponent model
+        the tracker assumes (opponent plays the blueprint); the tracker's
+        confidence score guards against that assumption being wrong."""
+        import numpy as np
+
+        def fn(key, legal):
+            stored = self.db.get_average_strategy(key) if self.db else None
+            n = len(legal)
+            if stored:
+                w = np.array([max(0.0, stored.get(a, 0.0)) for a in legal])
+                t = w.sum()
+                if t > 1e-12:
+                    return w / t
+            return np.ones(n) / n
+        return fn
+
+
+class ConfidenceAwareStrategy(BlueprintStrategy):
+    """
+    Plays the blueprint while the opponent looks like the blueprint, and falls
+    back to a direct equity-vs-range decision when the range tracker's confidence
+    collapses (the opponent is playing off-model, so the blueprint's "opponent =
+    blueprint" assumption -- and thus its balance -- no longer holds).
+
+    This is the Phase-3 consumer of the hand-level range tracker. It needs three
+    things from public_state that the plain blueprint ignores: the bot's own
+    `hole_cards`, the live `opp_range` tracker, and `to_call`/`pot` for pot odds.
+    When any are missing (or confidence is high) it is exactly BlueprintStrategy.
+
+    NOTE: the equity fallback policy below is a deliberately simple v1 -- a
+    pot-odds/equity rule, not a solve. It is the safety net for "opponent is
+    doing something the blueprint never expected"; the principled replacement is
+    the Phase-4 river subgame solver, which consumes this same tracked range.
+    """
+
+    # Confidence below this => stop trusting the blueprint's balance. Set low so
+    # the fallback only fires when the opponent is clearly off-model (a few
+    # near-impossible actions drive confidence well under 0.1 in practice).
+    CONFIDENCE_THRESHOLD = 0.15
+
+    def decide(self, info_set_key, legal_actions, public_state):
+        tracker = (public_state or {}).get('opp_range')
+        hole = (public_state or {}).get('hole_cards')
+        if tracker is None or hole is None or tracker.confidence >= self.CONFIDENCE_THRESHOLD:
+            return super().decide(info_set_key, legal_actions, public_state)
+
+        board = public_state.get('community', []) or []
+        eq = tracker.hero_equity(hole, board)
+        to_call = public_state.get('to_call', 0) or 0
+        pot = public_state.get('pot', 0) or 0
+        return self._equity_action(eq, to_call, pot, legal_actions)
+
+    @staticmethod
+    def _equity_action(eq, to_call, pot, legal):
+        """Map (equity, pot odds) to a legal action. Value-bet/raise when well
+        ahead, fold when below pot odds, otherwise check/call."""
+        def first(*opts):
+            for a in opts:
+                if a in legal:
+                    return a
+            return None
+
+        if to_call <= 0:                                   # no bet to face
+            if eq >= 0.62:
+                a = first('bet_medium', 'bet_small', 'bet_large')
+                if a:
+                    return a
+            return first('check') or legal[0]
+
+        pot_odds = to_call / (pot + to_call) if (pot + to_call) > 0 else 0.0
+        if eq < pot_odds:
+            return first('fold') or first('check') or legal[0]
+        if eq >= 0.75:
+            a = first('raise_medium', 'raise_small', 'raise_large')
+            if a:
+                return a
+        return first('call') or first('check') or legal[0]

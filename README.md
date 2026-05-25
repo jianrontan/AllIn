@@ -20,7 +20,9 @@ through a **Flask** API, and exposes it in an interactive **React** platform.
 - **Self-play reinforcement learning**: no human data and no hand-crafted
   heuristics — the strategy emerges purely from **regret minimization**.
 - **Multi-layer abstraction**: a hierarchical state representation built from
-  **15 equity-based preflop buckets + 8 board-texture postflop buckets**.
+  **15 equity-based preflop buckets + distribution-aware (potential-aware)
+  postflop buckets (12 flop / 12 turn / 10 river)** clustered by Earth Mover's
+  Distance over equity distributions.
 
 ### 📊 Trained Blueprint (active model)
 ```
@@ -91,7 +93,7 @@ SQLite checkpoint → automatic active-blueprint selection → API inference
 
 ### 🤖 Strategy Engine
 - **Fast inference**: direct blueprint lookup from SQLite, no per-decision search.
-- **Equity- and texture-driven abstractions**: 15 preflop + 8 postflop buckets.
+- **Distribution-aware abstractions**: 15 preflop + 12/12/10 potential-aware postflop buckets (EMD-clustered equity distributions).
 - **Mixed-strategy output**: probability distributions over fold / call / bet /
   raise / all-in, sampled at play time.
 - **Honest "unknown" handling**: situations never reached in training report

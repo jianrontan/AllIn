@@ -64,9 +64,12 @@ AllIn/
 │   │   ├── src/
 │   │   │   ├── config.py                     # resolve_blueprint_path() — picks the active DB
 │   │   │   ├── abstractions/
-│   │   │   │   ├── card_abstractions.py      # 15 preflop + 8 postflop buckets
+│   │   │   │   ├── card_abstractions.py      # 15 preflop + 12/12/10 postflop (delegates to PostflopV2)
+│   │   │   │   ├── postflop_v2.py            # Distribution-aware postflop buckets (table lookup + river runtime)
+│   │   │   │   ├── postflop_features.py      # Shared: equity dist, EMD, rank7, board_winrates, centroid_hash
+│   │   │   │   ├── canonical.py              # Suit-isomorphism canonicalisation of (hole, board)
 │   │   │   │   ├── action_abstractions.py    # Bet sizing + PyPokerEngine⇄CFR conversion
-│   │   │   │   └── hand_evaluator.py         # Wraps phevaluator
+│   │   │   │   └── hand_evaluator.py         # Wraps phevaluator (via postflop_features.rank7)
 │   │   │   ├── cfr/
 │   │   │   │   ├── blueprint_trainer.py      # MCCFR+ training loop
 │   │   │   │   ├── poker_game.py             # Stack-aware abstracted rules engine
@@ -75,8 +78,9 @@ AllIn/
 │   │   │   ├── storage/
 │   │   │   │   └── blueprint_db.py           # SQLite wrapper (BlueprintDB)
 │   │   │   ├── game/                         # Transport-agnostic live-hand engine (no Flask)
-│   │   │   │   ├── game_session.py           # GameSession — drives one hand
-│   │   │   │   ├── bot_strategy.py           # BotStrategy iface + BlueprintStrategy
+│   │   │   │   ├── game_session.py           # GameSession — drives one hand; maintains opp range tracker
+│   │   │   │   ├── range_tracker.py          # RangeTracker — hand-level Bayesian opponent range + confidence
+│   │   │   │   ├── bot_strategy.py           # BotStrategy iface + BlueprintStrategy + ConfidenceAwareStrategy
 │   │   │   │   ├── session_store.py          # SessionStore iface + InMemorySessionStore
 │   │   │   │   └── cards.py                  # Deck + engine⇄display card conversion
 │   │   │   ├── bot/
@@ -87,8 +91,11 @@ AllIn/
 │   │   │   │   ├── off_tree_detector.py
 │   │   │   │   ├── subgame_detector.py
 │   │   │   │   └── player_blueprint_adapter.py
-│   │   │   └── evaluation/
-│   │   │       └── best_response.py          # Exploitability via best-response walk
+│   │   │   └── evaluation/                   # Measurement harness (scored, not guessed)
+│   │   │       ├── best_response.py          # In-abstraction exploitability (BR)
+│   │   │       ├── lbr.py                     # Local Best Response — off-tree lower bound (+ BotRange)
+│   │   │       ├── match.py                   # Head-to-head match runner
+│   │   │       └── aivat.py                   # AIVAT variance-reduced head-to-head estimator
 │   │   └── tests/
 │   │       ├── run_blueprint_trainer.py      # Training entrypoint (new run / resume)
 │   │       ├── run_evaluation.py             # Exploitability CLI
@@ -144,10 +151,17 @@ Finer, equity- and texture-driven buckets (the old hand-named buckets are gone):
 - **15 preflop buckets** — `pf_0` (weakest) … `pf_14` (strongest), assigned from
   precomputed Monte Carlo equity (`scripts/compute_preflop_equity.py`).
   `pf_14` ≈ TT+.
-- **8 postflop buckets** — integers `0`–`7` from a board-texture evaluator
-  combining phevaluator hand strength with board danger:
-  `0` pure bluff · `1` weak draw · `2` strong draw · `3` combo draw ·
-  `4` weakest made · `5` medium made · `6` strong made · `7` near-nuts.
+- **Distribution-aware (potential-aware) postflop buckets** — integers, **12 flop /
+  12 turn / 10 river** (`PostflopV2`). Each hand is described by the *distribution* of
+  its equity-vs-uniform-range over board runouts (a 30-bin histogram) and clustered by
+  Earth Mover's Distance, so hands with equal current equity but different *trajectories*
+  (a static made hand vs a polarized draw) get different buckets — which the old
+  single-axis 8-bucket board-texture heuristic merged. Pipeline:
+  `scripts/compute_postflop_buckets.py` fits centroids → `scripts/bake_postflop_table.py`
+  bakes a canonical-situation→bucket table (suit-isomorphism via `canonical.py`,
+  centroid-stamped) → `postflop_v2.py` does O(log n) table lookups (flop/turn) and exact
+  runtime equity (river). **Replaced the old `BoardTextureEvaluator` (now dead code);
+  v1 blueprints are incompatible and must be retrained.**
 
 ### Action abstraction (`abstractions/action_abstractions.py`)
 
@@ -248,10 +262,21 @@ No Flask imports, so it is reusable if the transport changes (e.g. WebSockets).
 - `game_session.py` — `GameSession` drives one full hand through `PokerGame`:
   deals a real deck, applies actions, advances streets, runs showdown. Fully
   JSON-serializable (all state in `self.data`). `advance_bot_turns()` runs the
-  bot until it is the human's turn.
+  bot until it is the human's turn. When given a `strategy_fn`, it also maintains
+  a per-hand opponent **range tracker** (observe on human actions, reveal on
+  streets) in `self.data['opp_range']`, and exposes the bot's read via
+  `public_view().botRead`.
+- `range_tracker.py` — `RangeTracker` (Phase 3): a hand-level Bayesian belief over
+  the opponent's hole cards (per-hand weights, card removal, Bayesian updates from
+  a blueprint opponent-model `strategy_fn`, a confidence score that decays on
+  off-model play, and `hero_equity` vs the belief). The input a future river
+  subgame solver consumes. (`evaluation/lbr.py:BotRange` is the older sibling;
+  not yet merged.)
 - `bot_strategy.py` — `BotStrategy` interface + `BlueprintStrategy` (blueprint
-  lookup). The interface receives full public state, not just the bucketed key,
-  so a subgame-solving strategy is a drop-in replacement.
+  lookup) + `ConfidenceAwareStrategy` (blueprint while the range tracker is
+  confident; equity-vs-range fallback when confidence collapses). The interface
+  receives full public state — including the bot's `hole_cards` — not just the
+  bucketed key, so a subgame-solving strategy is a drop-in replacement.
 - `session_store.py` — `SessionStore` interface + `InMemorySessionStore` (a
   Redis/DynamoDB store would drop in for multi-process / AWS).
 - `cards.py` — deck plus conversion between **engine format** (`SuitRank`, e.g.
@@ -288,7 +313,7 @@ run_blueprint_trainer.run_training(N)         # tests/run_blueprint_trainer.py
       cfr(..., updating_player = i % 2)        # P0-perspective value
         PokerGame.get_legal_actions(street, history, pot, player, stacks…)
         keys.make_info_set_key(street, position, preflop_bucket, strength, pattern)
-          CardAbstraction.get_bucket(cards, board)   # 15 preflop / 8 postflop
+          CardAbstraction.get_bucket(cards, board)   # 15 preflop / 12-12-10 postflop
         InformationSet.get_strategy(legal_actions)   # CFR+ regret matching (pure)
         [updating player] explore all actions → recurse, update regrets (DCFR, floor 0)
         [opponent]        sample one action  → recurse, accumulate_strategy
@@ -356,7 +381,7 @@ Example: "pf_13_ip_"
 
 Example: "pf_9_5_ip_turn_m"
   preflop_bucket = pf_9      (the starting-hand bucket, fixed for the hand)
-  strength       = 5         (this street's postflop strength bucket, 0–7)
+  strength       = 5         (this street's postflop bucket; 0–11 flop/turn, 0–9 river)
   position       = ip
   street         = turn
   pattern        = m         (opponent bet medium)
@@ -472,7 +497,8 @@ the test harness could drop it too and drive `PokerGame` directly.
 ## 12. PlantUML Diagrams
 
 > ⚠️ **These diagrams predate the SQLite migration, the abstraction overhaul
-> (15/8 buckets), the position-aware keys, and the `game/` engine.** They still
+> (15 preflop / 12-12-10 distribution-aware postflop), the position-aware keys,
+> the range tracker, and the `game/` engine.** They still
 > convey the broad shape (training vs inference, key assembly) but the class
 > names, bucket names, JSON storage, and "bug annotations" are stale. Treat
 > §2–§9 above as authoritative and regenerate the `.puml` sources before relying

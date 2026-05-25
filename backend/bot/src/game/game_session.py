@@ -20,6 +20,7 @@ from ..cfr.poker_game import PokerGame, STARTING_STACK
 from ..abstractions.card_abstractions import CardAbstraction
 from ..abstractions.hand_evaluator import HandEvaluator, RANK_MAP
 from .cards import shuffled_deck, to_display_list
+from .range_tracker import RangeTracker
 
 _STREET_NAMES = ['preflop', 'flop', 'turn', 'river']
 _BOARD_COUNT = [0, 3, 4, 5]              # community cards visible per street
@@ -58,29 +59,35 @@ def _action_char(action):
 
 
 class GameSession:
-    def __init__(self, data):
+    def __init__(self, data, strategy_fn=None):
         self.data = data
         self.game = PokerGame()
         self.cards = CardAbstraction()
         self.evaluator = HandEvaluator()
+        # Opponent model for the hand-level range tracker (Phase 3). A callback
+        # strategy_fn(key, legal)->probs; the live API injects the blueprint's
+        # average strategy. None disables tracking (the tracker is never built),
+        # so DB-free callers (tests, the strategy explorer) are unaffected. Never
+        # serialised -- it's a rebuilt helper like self.game / self.cards.
+        self.strategy_fn = strategy_fn
 
     # ------------------------------------------------------------------
     # Construction / serialisation
     # ------------------------------------------------------------------
 
     @classmethod
-    def new(cls, session_id, player_id):
+    def new(cls, session_id, player_id, strategy_fn=None):
         session = cls({
             'session_id': session_id,
             'player_id': player_id,
             'human_net': 0.0,
-        })
+        }, strategy_fn=strategy_fn)
         session._deal_hand(hand_number=1, human_seat=0)
         return session
 
     @classmethod
-    def from_dict(cls, data):
-        return cls(dict(data))
+    def from_dict(cls, data, strategy_fn=None):
+        return cls(dict(data), strategy_fn=strategy_fn)
 
     def to_dict(self):
         return self.data
@@ -113,7 +120,40 @@ class GameSession:
         d['action_log'] = []
         d['result'] = None
         d['revealed_board'] = 0
+        # Hand-level belief over the HUMAN's hole cards, from the bot's seat
+        # (the bot knows its own cards, so they're removed from the combos).
+        # Only built when an opponent model is available; None disables tracking.
+        if self.strategy_fn is not None:
+            bot_seat = 1 - human_seat
+            bot_cards = d['p0_cards'] if bot_seat == 0 else d['p1_cards']
+            d['opp_range'] = RangeTracker(bot_cards, self.cards).to_dict()
+        else:
+            d['opp_range'] = None
         self._settle()
+
+    # ------------------------------------------------------------------
+    # Opponent range tracking (Phase 3)
+    # ------------------------------------------------------------------
+
+    def _load_range(self):
+        rt = self.data.get('opp_range')
+        return RangeTracker.from_dict(rt, self.cards) if rt is not None else None
+
+    def _opp_position(self):
+        """The human's position string (the opponent the tracker models)."""
+        return 'ip' if self.data['human_seat'] == 0 else 'oop'
+
+    def opponent_read(self, k=8):
+        """Bot's current belief about the human's hand: confidence + top-k hands.
+        None when tracking is disabled (no opponent model)."""
+        tracker = self._load_range()
+        if tracker is None:
+            return None
+        return {
+            'confidence': round(tracker.confidence, 4),
+            'topHands': [{'cards': to_display_list(list(h)), 'prob': round(p, 4)}
+                         for h, p in tracker.top_hands(k)],
+        }
 
     # ------------------------------------------------------------------
     # Turn / action queries
@@ -157,6 +197,18 @@ class GameSession:
         d = self.data
         player = self.current_player()
         cost = self._action_cost(action)
+
+        # Range-track the HUMAN's action (the opponent, from the bot's view).
+        # Must read bet_pattern/board BEFORE this action is appended below, so
+        # the lookup context matches how the blueprint keyed the decision.
+        if (player == d['human_seat'] and self.strategy_fn is not None
+                and d.get('opp_range') is not None):
+            tracker = self._load_range()
+            street = d['street']
+            board = d['community'][:_BOARD_COUNT[min(street, 3)]]
+            tracker.observe(self.strategy_fn, action, street, self._opp_position(),
+                            d['bet_pattern'], legal, board)
+            d['opp_range'] = tracker.to_dict()
 
         d['history'].append(action)
         d['bet_pattern'] += _action_char(action)
@@ -202,6 +254,13 @@ class GameSession:
         d['p1_invested'] = p1_inv + p1_this
         d['history'] = []
         d['bet_pattern'] = ''
+
+        # Newly-dealt board cards are now impossible for the opponent to hold.
+        # reveal() is model-free, so it runs regardless of strategy_fn.
+        if d.get('opp_range') is not None:
+            tracker = self._load_range()
+            tracker.reveal(d['community'][:_BOARD_COUNT[min(d['street'], 3)]])
+            d['opp_range'] = tracker.to_dict()
 
     def _resolve(self):
         d = self.data
@@ -256,9 +315,17 @@ class GameSession:
         return f"{starting}_{strength}_{position}_{_STREET_NAMES[street]}_{pattern}"
 
     def bot_public_state(self):
-        """Public game state handed to BotStrategy.decide()."""
+        """State handed to BotStrategy.decide() for the player to act.
+
+        Richer than the bucketed key: includes the acting player's own
+        `hole_cards` (its own cards, never the opponent's), the live `opp_range`
+        tracker, and `to_call` so a range-aware/solver strategy has everything it
+        needs. The plain BlueprintStrategy ignores the extras."""
         d = self.data
         street = min(d['street'], 3)
+        actor = self.current_player()
+        legal = self.legal_actions()
+        to_call = self._action_cost('call') if 'call' in legal else 0.0
         return {
             'street': _STREET_NAMES[street],
             'pot': self.game.calculate_current_pot(
@@ -268,6 +335,9 @@ class GameSession:
             'history': list(d['history']),
             'p0_stack': d['p0_stack'],
             'p1_stack': d['p1_stack'],
+            'hole_cards': d['p0_cards'] if actor == 0 else d['p1_cards'],
+            'to_call': to_call,
+            'opp_range': self._load_range(),
         }
 
     def describe_hand(self, cards, board):
@@ -364,6 +434,10 @@ class GameSession:
             'legalActions': legal,
             'actionLog': action_log,
             'result': d['result'],
+            # The bot's belief about the human's hand (confidence + top hands).
+            # Safe to show: it's a guess about the human's OWN cards and never
+            # reveals the bot's cards. None when tracking is disabled.
+            'botRead': None if hand_over else self.opponent_read(6),
         }
 
 

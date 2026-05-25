@@ -72,6 +72,39 @@ function BetChip({ chips }) {
     );
 }
 
+// The bot's hand-level Bayesian belief about the human's hole cards (Phase 3
+// range tracker). `confidence` is how well the human's actions have matched the
+// blueprint model the bot updates against — it drops if you play unexpectedly.
+// Showing it is safe: it's a guess about the player's OWN cards, and never
+// reveals the bot's cards.
+function BotRead({ read }) {
+    if (!read || !read.topHands || read.topHands.length === 0) return null;
+    const confPct = Math.round(read.confidence * 100);
+    return (
+        <div className="mt-7">
+            <h4 className="text-xs uppercase tracking-wider text-neutral-500 mb-2">
+                Bot&rsquo;s read of your hand
+            </h4>
+            <div className="text-sm text-neutral-400 mb-2">
+                Read confidence:{' '}
+                <span className="text-neutral-200 font-medium tabular-nums">{confPct}%</span>
+                <span className="text-neutral-600">
+                    {' '}· top hands it puts you on
+                </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+                {read.topHands.map((h, i) => (
+                    <span key={i} className="px-2 py-1 rounded bg-black/30 text-xs
+                                             tabular-nums text-neutral-300">
+                        {h.cards.join(' ')}{' '}
+                        <span className="text-neutral-500">{(h.prob * 100).toFixed(1)}%</span>
+                    </span>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 function AiGame() {
     const [view, setView] = useState(null);
     const [busy, setBusy] = useState(false);
@@ -262,6 +295,9 @@ function AiGame() {
                         </span>
                     )}
                 </div>
+
+                {/* Bot's read of your hand (range tracker) */}
+                {!handOver && <BotRead read={view.botRead} />}
 
                 {/* Action log */}
                 {view.actionLog.length > 0 && (

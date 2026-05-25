@@ -14,7 +14,7 @@ print(f"DEBUG: Backend dir: {backend_dir}")
 # --- Shared backend resources (loaded once at startup) -----------------------
 from bot.src.config import resolve_blueprint_path
 from bot.src.storage.blueprint_db import BlueprintDB
-from bot.src.game.bot_strategy import BlueprintStrategy
+from bot.src.game.bot_strategy import BlueprintStrategy, ConfidenceAwareStrategy
 from bot.src.game.session_store import InMemorySessionStore
 from bot.src.game.game_session import GameSession, advance_bot_turns, GameError
 from bot.src.game.cards import to_engine
@@ -22,7 +22,13 @@ from bot.src.game.cards import to_engine
 # The blueprint DB is opened read-only so a concurrent training run is safe.
 _BLUEPRINT_PATH = resolve_blueprint_path()
 BLUEPRINT_DB = BlueprintDB(_BLUEPRINT_PATH, read_only=True)
-BOT = BlueprintStrategy(BLUEPRINT_DB)
+# Confidence-aware bot: plays the blueprint while the opponent looks on-model,
+# falls back to equity-vs-range when the range tracker's confidence collapses.
+# Behaves identically to BlueprintStrategy in the common (confident) case.
+BOT = ConfidenceAwareStrategy(BLUEPRINT_DB)
+# Opponent model for the hand-level range tracker (Phase 3); injected into every
+# GameSession so the bot maintains a belief over the human's hand as it plays.
+BOT_RANGE_FN = BOT.range_model_fn()
 
 # SessionStore: in-memory for now. Swap for a Redis/DynamoDB-backed store to
 # run multiple backend processes (see session_store.py).
@@ -187,7 +193,7 @@ def _load_session(session_id):
     data = SESSIONS.get(session_id)
     if data is None:
         return None, (jsonify({"error": "session not found or expired"}), 404)
-    return GameSession.from_dict(data), None
+    return GameSession.from_dict(data, strategy_fn=BOT_RANGE_FN), None
 
 
 @app.route('/api/game/new', methods=['POST'])
@@ -197,7 +203,7 @@ def game_new():
     player_id = data.get('playerId') or str(uuid.uuid4())
     session_id = str(uuid.uuid4())
 
-    session = GameSession.new(session_id, player_id)
+    session = GameSession.new(session_id, player_id, strategy_fn=BOT_RANGE_FN)
     advance_bot_turns(session, BOT)          # bot may act first (when it is SB)
     SESSIONS.put(session_id, session.to_dict())
 

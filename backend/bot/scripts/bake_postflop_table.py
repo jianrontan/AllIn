@@ -34,7 +34,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from src.abstractions.postflop_features import (   # noqa: E402
     DECK, STREET_BOARD, _CARD_IDX, _ABSTRACTIONS_DIR,
-    board_winrates, assign, load_centroids, encode_situation)
+    board_winrates, assign, load_centroids, encode_situation, centroid_hash)
 from src.abstractions.canonical import canonical_key   # noqa: E402
 
 
@@ -95,8 +95,14 @@ def _save(street, ids, buckets):
     os.makedirs(_ABSTRACTIONS_DIR, exist_ok=True)
     order = np.argsort(ids)
     out = os.path.join(_ABSTRACTIONS_DIR, f'postflop_table_{street}.npz')
+    # Stamp the table with the centroids it was baked from (+ K, bins) so a load
+    # can detect a stale table after centroids are regenerated (C2/M3).
+    centroids, bins = load_centroids(street)
     np.savez(out, ids=np.asarray(ids, np.int64)[order],
-             buckets=np.asarray(buckets, np.uint8)[order])
+             buckets=np.asarray(buckets, np.uint8)[order],
+             centroid_hash=np.array(centroid_hash(centroids, bins)),
+             n_buckets=np.array(len(centroids)),
+             bins=np.array(int(bins)))
     return out
 
 

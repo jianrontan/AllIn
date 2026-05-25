@@ -10,6 +10,88 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-005 — Potential-aware abstraction: silent-divergence risk class (review + hardening)
+
+| | |
+|---|---|
+| **Date** | 2026-05-25 |
+| **Area** | Postflop abstraction (`src/abstractions/postflop_v2.py`, `postflop_features.py`, `scripts/bake_postflop_table.py`) |
+| **Severity** | Latent — no manifested defect; hardened proactively |
+| **Status** | Hardened (C2/M3 fixed); related items filed / deferred |
+
+**Summary.** A static review of the new distribution-aware (PostflopV2) abstraction
+flagged a *class* of silent-divergence risks: the bucket for a hand is produced by
+three code paths that don't have to agree, and a baked lookup table carried no link
+to the centroids that produced it. No bug had manifested — but nothing in code
+*enforced* consistency.
+
+**Symptom.** None observed. Found by review, not by failure. (Contrast BUG-002/003/004,
+which manifested as bad EV / negative stacks / wrong pots.)
+
+### The risk class
+
+1. **Three sampling regimes feed one nearest-centroid assignment.** Centroid fitting
+   (`compute_postflop_buckets.py`, 60 runouts / 200 opp-samples), table baking
+   (`bake_postflop_table.py`, 200 flop runouts / full 990 opp), and the runtime lazy
+   fallback (`postflop_v2.py`, 120 runouts / 150 opp) estimate the equity distribution
+   differently, so on boundary hands they can assign different buckets (~3% measured at
+   bake time). The docs called the lazy path "correct but slow" but it is a *different
+   function* than the table.
+2. **No centroid→table version link.** A baked table stored only `ids`/`buckets`. If
+   centroids were regenerated without re-baking, training/inference (table path) and the
+   river/lazy paths would use *different* centroids — self-inconsistent, no error raised.
+
+### Why it was not actively biting training
+
+Verified, not assumed: instrumented a real 4,000-iteration run and counted **0** lazy
+fallback calls. Training buckets every flop/turn hand via the deterministic baked table
+and river via exact equity, so training and inference read the *same* buckets (the
+"single bucketer everywhere" property — trainer, `best_response.py`, `lbr.py`,
+`game_session.py`, `range_tracker.py` all route through `CardAbstraction.get_bucket`).
+The ~3% disagreement is table-vs-lazy, and lazy only fires on a table miss (the table is
+complete — 100% hit on random samples), so it never fires in the baked pipeline. The risk
+is purely *latent* — it would bite a clone that skipped baking, or a future run on a
+stale table.
+
+### The fix (C2 + M3)
+
+Stamp every baked table with a fingerprint of its centroids and assert on load:
+- `postflop_features.centroid_hash(centroids, bins)` — sha1 over float64 centroids + bins.
+- `bake_postflop_table._save` writes `centroid_hash` + `n_buckets` (K) + `bins` into the npz.
+- `PostflopV2._verify_stamp` (in `_table`, on load): matching stamp → proceed; **stamp
+  mismatch (stale table) or wrong K/bins → hard `ValueError`** naming the re-bake command;
+  legacy stamp-less table → warn once and proceed (so pre-stamp tables keep working until
+  the next re-bake). This makes "regenerate centroids, forget to re-bake" impossible to do
+  silently.
+
+Tests: `tests/test_postflop_table_stamp.py` (5) + real `np.savez`/`np.load` round-trip.
+
+### Filed / deferred (not fixed now)
+
+- **N1** — the 126 MB turn table reloads per `CardAbstraction` instance (→ per API request);
+  training is unaffected (one instance). Fix at the next API/AWS perf pass (module-level cache).
+- **M1** — river centroids fit on sampled equity but assigned on exact equity (consistent
+  between train/infer; a mild calibration nit). Refit on exact equity if river play looks off.
+- **M2** — EMD k-means uses Euclidean-mean updates rather than the 1-D Wasserstein barycenter,
+  and doesn't reseed empty clusters (verified balanced occupancy, no dead buckets in practice).
+  **Deferred decision:** revisit only if the v2 BR/LBR numbers disappoint vs baseline
+  (11,256 / 3,636 mbb).
+- **C1 lazy determinism** — the fallback's shared RNG makes lazy assignments order-dependent;
+  moot in training (never fires). Cheap insurance for later.
+
+### Lessons
+
+- **"Different function, same purpose" is a latent train/inference hazard** even when the
+  paths currently agree — enforce equality (one parameterization, or a stamp) rather than
+  trusting that a fallback matches the primary path.
+- **Artifacts that derive from inputs need a version link.** A baked table is a cache of the
+  centroids; without a fingerprint, a stale cache corrupts silently. (Same spirit as the
+  single-source-of-truth `cfr/keys.py`.)
+- **Verify "is it actually happening" before rating severity.** Counting lazy calls during
+  real training turned a "Critical silent divergence" into a measured "0 — latent only."
+
+---
+
 ## BUG-004 — Calling an all-in cost 0 chips when the caller was already ahead this street
 
 | | |

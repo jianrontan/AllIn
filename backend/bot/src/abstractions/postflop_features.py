@@ -114,6 +114,19 @@ def load_centroids(street):
     return data['centroids'], int(data['bins'])
 
 
+def centroid_hash(centroids, bins):
+    """Stable fingerprint of a street's centroids + bin count, used to stamp a
+    baked table and verify on load that the table was built from these exact
+    centroids (guards against a stale table after centroids are regenerated).
+    Cast to float64 so the hash is independent of the saved dtype."""
+    import hashlib
+    h = hashlib.sha1()
+    h.update(np.ascontiguousarray(centroids, dtype=np.float64).tobytes())
+    h.update(b'|')
+    h.update(str(int(bins)).encode())
+    return h.hexdigest()
+
+
 _CARD_IDX = {c: i for i, c in enumerate(DECK)}     # global 0..51
 
 
