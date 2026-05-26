@@ -107,4 +107,4 @@ def run_training(iterations, resume=None, checkpoint_every=1000,
 
 
 if __name__ == "__main__":
-    run_training(3000000, checkpoint_every=50000)
+    run_training(10000000, checkpoint_every=50000)

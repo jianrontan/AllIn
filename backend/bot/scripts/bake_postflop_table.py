@@ -48,7 +48,7 @@ def _canonical_boards(nboard):
     return list(reps.values())
 
 
-def _process_board(street, board, centroids, bins, flop_runouts, rng):
+def _process_board(street, board, centroids, bins, flop_runouts):
     """Yield (situation_id, bucket) for every canonical hole on this board."""
     nboard = STREET_BOARD[street]
     remaining = [c for c in DECK if c not in set(board)]
@@ -67,7 +67,16 @@ def _process_board(street, board, centroids, bins, flop_runouts, rng):
     elif nboard == 4:
         runouts = [(c,) for c in remaining]
     elif flop_runouts and flop_runouts < len(remaining) * (len(remaining) - 1) // 2:
-        runouts = [tuple(rng.sample(remaining, 2)) for _ in range(flop_runouts)]
+        # #8 fix: seed the runout sample PER BOARD (deterministic, independent of
+        # board processing order and of any global seed), so a re-bake is
+        # bit-identical given the same centroids/flop_runouts. That makes the
+        # centroid stamp sufficient to detect a stale table. (Previously a single
+        # shared RNG made each board's sample depend on processing order, so two
+        # bakes with different seeds/orders silently produced different tables
+        # under the same centroid stamp.) A str seed hashes deterministically
+        # across processes (unlike Python's salted hash()).
+        board_rng = random.Random('flop-runouts|' + ''.join(sorted(board)))
+        runouts = [tuple(board_rng.sample(remaining, 2)) for _ in range(flop_runouts)]
     else:
         runouts = list(combinations(remaining, 2))
 
@@ -113,9 +122,10 @@ def main():
     p.add_argument('--limit-boards', type=int, default=0, help="Smoke: N boards, no save.")
     p.add_argument('--flop-runouts', type=int, default=200,
                    help="Sampled turn+river runouts per flop board (0 = enumerate all 1176).")
-    p.add_argument('--seed', type=int, default=42)
+    p.add_argument('--seed', type=int, default=42,
+                   help="(unused) the flop runout sample is now seeded deterministically "
+                        "per board (#8); kept for CLI back-compat.")
     args = p.parse_args()
-    rng = random.Random(args.seed)
 
     centroids, bins = load_centroids(args.street)
     print(f"Baking {args.street}: K={len(centroids)} buckets, bins={bins}")
@@ -127,7 +137,7 @@ def main():
     t0 = time.time()
     for bi, board in enumerate(boards):
         for sid, b in _process_board(args.street, board, centroids, bins,
-                                     args.flop_runouts, rng):
+                                     args.flop_runouts):
             ids.append(sid)
             buckets.append(b)
             counts[b] += 1
