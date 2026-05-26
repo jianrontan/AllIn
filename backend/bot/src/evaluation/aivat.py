@@ -51,6 +51,11 @@ class AIVATEstimator:
         # Reuse LBR's equity_vs_range, restricted_probs, _raw_strategy, cards.
         self.lbr = LBREvaluator(strat_b, seed=seed)
         self.cards = self.lbr.cards
+        # Guard: the preflop control variate's true mean assumes all 169
+        # canonical starting hands are present; a missing key would make
+        # _preflop_eq fall back to 0.5 and bias the CV.
+        assert len(_PREFLOP_EQUITY) == 169, (
+            f"_PREFLOP_EQUITY has {len(_PREFLOP_EQUITY)} hands, expected 169")
         # True mean of the preflop-equity control variate (combo-weighted).
         tot = sum(_PREFLOP_EQUITY[k] * _combos(k) for k in _PREFLOP_EQUITY)
         n = sum(_combos(k) for k in _PREFLOP_EQUITY)

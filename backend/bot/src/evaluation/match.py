@@ -20,6 +20,7 @@ import numpy as np
 
 from ..cfr.keys import make_info_set_key, action_char
 from ..cfr.poker_game import STARTING_STACK
+from ..abstractions.sizing import preflop_open_chips, PREFLOP_RAISE_MULT, POSTFLOP_BET_MULT
 from ..abstractions.card_abstractions import CardAbstraction
 from ..abstractions.hand_evaluator import HandEvaluator
 
@@ -44,17 +45,16 @@ def _legal_actions(to_call, num_aggr, stack, pot):
 
 
 def _sizing(size, street, pot, to_call, committed, num_aggr):
-    """Chips ADDED for an abstract bet/raise size (training sizing)."""
+    """Chips ADDED for an abstract bet/raise size. Sizes come from
+    abstractions/sizing.py (single source of truth); mirrors lbr._bot_sizing."""
     if street == 0:
-        if num_aggr == 0:
-            to_amt = {'small': 6, 'medium': 10, 'large': 14}[size]
+        if num_aggr == 0:                          # open: absolute BB ladder
+            to_amt = preflop_open_chips()[size]
             return int(round(to_amt - committed))
-        if num_aggr == 1:
-            to_amt = {'small': 18, 'medium': 24, 'large': 32}[size]
-            return int(round(to_amt - committed))
-        mult = {'small': 0.66, 'medium': 1.33, 'large': 2.0}[size]
+        # 3-bet / 4-bet+: pot-relative (unified, matches the engine).
+        mult = PREFLOP_RAISE_MULT[size]
         return int(round(to_call + mult * (pot + to_call)))
-    mult = {'small': 0.33, 'medium': 0.66, 'large': 1.0}[size]
+    mult = POSTFLOP_BET_MULT[size]
     if to_call > 0:
         return int(round(to_call + mult * (pot + to_call)))
     return int(round(mult * pot))

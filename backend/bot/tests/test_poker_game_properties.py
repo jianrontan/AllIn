@@ -488,6 +488,59 @@ def test_G1_contribution_sum_equals_pot_delta(walk):
 
 
 # ---------------------------------------------------------------------------
+# F2 / F3 — zero-sum + terminal chip conservation (asserted, not just documented)
+# ---------------------------------------------------------------------------
+
+@given(session_walk(max_steps=200, max_hands=5))
+@settings(max_examples=150, deadline=None,
+          suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large])
+def test_F2_zero_sum_and_terminal_conservation(walk):
+    """F3: at a terminal, every chip in the pot was contributed by the two
+    players (final_pot == p0_total + p1_total). F2: the game is zero-sum —
+    both players' utilities sum to 0 — checked with an INDEPENDENT showdown
+    evaluation (not via get_utility), which also cross-checks get_utility."""
+    session, _ = walk
+    d = session.data
+    if d['status'] != 'hand_over':
+        return
+    g = session.game
+    street = min(d['street'], 3)
+    final_pot = g.calculate_current_pot(
+        d['starting_pot'], d['history'], street, d['p0_invested'], d['p1_invested'])
+    p0_total = d['p0_invested'] + g.get_player_contribution_this_round(
+        d['history'], street, d['starting_pot'], 0, d['p0_invested'], d['p1_invested'])
+    p1_total = d['p1_invested'] + g.get_player_contribution_this_round(
+        d['history'], street, d['starting_pot'], 1, d['p0_invested'], d['p1_invested'])
+
+    # F3: terminal chip conservation.
+    assert abs(final_pot - (p0_total + p1_total)) < 1e-4, (
+        f"pot {final_pot} != contributions {p0_total + p1_total}")
+
+    # Independent winner determination (mirrors a showdown, not get_utility).
+    if 'fold' in d['history']:
+        folder = g._acting_player(d['history'].index('fold'), street)
+        share0 = 0.0 if folder == 0 else final_pot
+    else:
+        board = d['community'][:5] if 'allin' in d['history'] \
+            else d['community'][:g.get_community_cards_count(street)]
+        r0 = session.evaluator.get_raw_hand_value(d['p0_cards'], board)
+        r1 = session.evaluator.get_raw_hand_value(d['p1_cards'], board)
+        share0 = final_pot if r0 < r1 else (0.0 if r0 > r1 else final_pot / 2.0)
+
+    util0_indep = share0 - p0_total
+    util1_indep = (final_pot - share0) - p1_total
+    # F2: zero-sum.
+    assert abs(util0_indep + util1_indep) < 1e-4, (
+        f"not zero-sum: {util0_indep} + {util1_indep} != 0")
+    # Cross-check the engine's get_utility against the independent accounting.
+    util0_engine = g.get_utility(
+        d['p0_cards'], d['p1_cards'], d['community'], d['history'], street,
+        d['starting_pot'], d['p0_invested'], d['p1_invested'])
+    assert abs(util0_engine - util0_indep) < 1e-4, (
+        f"get_utility {util0_engine} != independent {util0_indep}")
+
+
+# ---------------------------------------------------------------------------
 # Console runner (mirrors test_cfr_correctness.py style)
 # ---------------------------------------------------------------------------
 
@@ -509,3 +562,4 @@ if __name__ == '__main__':
     print(f"\n{'=' * 70}")
     print(f"Results: {passed} passed, {failed} failed out of {passed + failed}")
     print(f"{'=' * 70}")
+    sys.exit(1 if failed else 0)

@@ -1,7 +1,34 @@
 # backend/bot/src/cfr/poker_game.py
 from ..abstractions.hand_evaluator import HandEvaluator
+from ..abstractions.sizing import preflop_open_chips, PREFLOP_RAISE_MULT, POSTFLOP_BET_MULT
 
 STARTING_STACK = 200
+
+
+# ----------------------------------------------------------------------
+# Custom (unrestricted) bet/raise support
+# ----------------------------------------------------------------------
+# A human may bet an arbitrary, off-grid chip amount. Such an action is encoded
+# as 'bet_custom_<total>' / 'raise_custom_<total>', where <total> is the player's
+# raise-to TOTAL street commitment after the action (the same quantity the sized
+# bet/raise branches produce). This keeps `history` a flat list of strings — the
+# engine can still recover every chip amount by name — so the chip-conservation
+# fuzz / property tests stay valid. The bot's own actions remain on the abstract
+# grid; only the human can produce a custom action. Off-grid amounts are mapped
+# onto the trained grid for blueprint lookup via cfr/translation.py.
+
+def _is_custom(action):
+    return isinstance(action, str) and '_custom_' in action
+
+
+def _custom_total(action):
+    """Raise-to street total encoded in a custom action ('bet_custom_37.5' -> 37.5)."""
+    return float(action.rsplit('_', 1)[1])
+
+
+def make_custom_action(is_raise, total):
+    """Build the canonical custom action string for a raise-to `total`."""
+    return f"{'raise' if is_raise else 'bet'}_custom_{total:g}"
 
 
 class PokerGame:
@@ -14,7 +41,7 @@ class PokerGame:
         self.streets = ['preflop', 'flop', 'turn', 'river']
         self.max_raises_per_street = 2  # max raises per street (1 bet + 2 raises = 3 total)
         self.hand_evaluator = HandEvaluator()
-        self.BET_MULTIPLIERS = {'small': 0.33, 'medium': 0.66, 'large': 1.00}
+        self.BET_MULTIPLIERS = dict(POSTFLOP_BET_MULT)
         self._calc_cache = {}
 
     def _acting_player(self, action_index, street):
@@ -75,6 +102,41 @@ class PokerGame:
             return self.calculate_raise_amount(
                 action, street, starting_pot, history, len(history), p0_prev, p1_prev)
         return 0.0
+
+    def custom_bet_bounds(self, street, history, starting_pot, current_player,
+                          p0_stack, p1_stack, p0_prev=0.0, p1_prev=0.0):
+        """
+        Legal raise-to TOTAL (this street) range [min_total, max_total) for an
+        unrestricted custom bet/raise by `current_player`, or None when no custom
+        bet/raise is legal here (aggression closed, or only an all-in fits).
+
+        min_total = min legal bet (BB) or min legal raise; max_total = the all-in
+        street total. A request equal to max_total is an all-in and must be sent
+        as 'allin', not a custom action. All quantities are CHIPS.
+        """
+        legal = self.get_legal_actions(
+            street, history, starting_pot, current_player,
+            p0_stack, p1_stack, p0_prev, p1_prev)
+        # Aggression must be available at this node (a sized bet/raise survived,
+        # or the only aggressive option is the shove).
+        if not any(a.startswith(('bet_', 'raise_')) for a in legal) and 'allin' not in legal:
+            return None
+
+        contribution = self.get_player_contribution_this_round(
+            history, street, starting_pot, current_player, p0_prev, p1_prev)
+        remaining = p0_stack if current_player == 0 else p1_stack
+        max_total = contribution + remaining        # all-in street total
+
+        to_call = self.get_call_amount_from_history(
+            street, history, starting_pot, p0_prev, p1_prev)
+        if to_call > 0:
+            min_total = self.get_min_raise(street, history, starting_pot, p0_prev, p1_prev)
+        else:
+            min_total = contribution + 2.0          # min bet = 1 BB
+
+        if min_total >= max_total:
+            return None                              # only an all-in fits
+        return (float(min_total), float(max_total))
 
     def _apply_stack_constraints(self, actions, player_remaining,
                                  street, history, starting_pot,
@@ -142,36 +204,18 @@ class PokerGame:
                 actions, player_remaining, street, history, starting_pot,
                 current_player, p0_prev, p1_prev)
 
-        elif len(history) == 1:
-            if history[0] == 'call':
-                actions = ['check', 'bet_small', 'bet_medium', 'bet_large']
-                return self._apply_stack_constraints(
+        # SB limped (call): BB may check or raise (a raise over the BB is modelled
+        # as bet_*, since the blinds are already posted).
+        if len(history) == 1 and history[0] == 'call':
+            actions = ['check', 'bet_small', 'bet_medium', 'bet_large']
+            return self._apply_stack_constraints(
                 actions, player_remaining, street, history, starting_pot,
                 current_player, p0_prev, p1_prev)
 
-            elif history[0].startswith('bet_'):
-                actions = ['fold', 'call']
-                min_raise = self.get_min_raise(street, history, starting_pot, p0_prev, p1_prev)
-                three_bet_amounts = self.get_preflop_bet_amounts('3bet', starting_pot)
-                for size_name in ['small', 'medium', 'large']:
-                    if three_bet_amounts[size_name] >= min_raise:
-                        actions.append(f'raise_{size_name}')
-                return self._apply_stack_constraints(
-                actions, player_remaining, street, history, starting_pot,
-                current_player, p0_prev, p1_prev)
-
-        elif len(history) == 2:
-            if history[0] == 'call' and history[1].startswith('bet_'):
-                actions = ['fold', 'call']
-                min_raise = self.get_min_raise(street, history, starting_pot, p0_prev, p1_prev)
-                three_bet_amounts = self.get_preflop_bet_amounts('3bet', starting_pot)
-                for size_name in ['small', 'medium', 'large']:
-                    if three_bet_amounts[size_name] >= min_raise:
-                        actions.append(f'raise_{size_name}')
-                return self._apply_stack_constraints(
-                actions, player_remaining, street, history, starting_pot,
-                current_player, p0_prev, p1_prev)
-
+        # Everything else facing a bet/raise (3-bet, 4-bet, limp-then-raise) is
+        # handled uniformly by the pot-relative branch below -- there is no
+        # special absolute-3-bet case, so the sizes scale with the open and never
+        # collapse below the minimum legal raise.
         last_action = history[-1]
 
         if last_action == 'check':
@@ -338,8 +382,12 @@ class PokerGame:
     def calculate_bet_amount(self, action, street, starting_pot, history_before,
                              p0_prev=0.0, p1_prev=0.0):
         """Calculate the actual bet amount for bet actions"""
-        size = action.split('_')[1]
         current_player = self._acting_player(len(history_before), street)
+        if _is_custom(action):
+            current_contribution = self.get_player_contribution_this_round(
+                history_before, street, starting_pot, current_player, p0_prev, p1_prev)
+            return _custom_total(action) - current_contribution
+        size = action.split('_')[1]
         if street == 0:
             action_type = self.get_preflop_action_type(history_before)
             bet_amounts = self.get_preflop_bet_amounts(action_type, starting_pot)
@@ -355,9 +403,14 @@ class PokerGame:
     def calculate_raise_amount(self, action, street, starting_pot, history_before, action_index,
                                p0_prev=0.0, p1_prev=0.0):
         """Calculate the additional amount needed for raise actions"""
-        size = action.split('_')[1]
         current_player = self._acting_player(action_index, street)
 
+        if _is_custom(action):
+            current_contribution = self.get_player_contribution_this_round(
+                history_before, street, starting_pot, current_player, p0_prev, p1_prev)
+            return _custom_total(action) - current_contribution
+
+        size = action.split('_')[1]
         if street == 0:
             action_type = self.get_preflop_action_type(history_before)
             if action_type != 'pot_relative':
@@ -460,7 +513,9 @@ class PokerGame:
                     contribution += amount
 
                 elif action.startswith(('bet_', 'raise_')):
-                    if street == 0:
+                    if _is_custom(action):
+                        contribution = _custom_total(action)
+                    elif street == 0:
                         action_type = self.get_preflop_action_type(history[:i])
                         if action_type != 'pot_relative':
                             bet_amounts = self.get_preflop_bet_amounts(action_type, starting_pot)
@@ -528,7 +583,9 @@ class PokerGame:
                 last_bet_amt = STARTING_STACK - bet_player_prev
                 break
             elif act.startswith(('bet_', 'raise_')):
-                if street == 0:
+                if _is_custom(act):
+                    last_bet_amt = _custom_total(act)
+                elif street == 0:
                     action_type = self.get_preflop_action_type(history[:i])
                     if action_type != 'pot_relative':
                         size = act.split('_')[1]
@@ -582,7 +639,9 @@ class PokerGame:
 
         for i, action in enumerate(history):
             if action.startswith(('bet_', 'raise_')):
-                if street == 0:
+                if _is_custom(action):
+                    bet_amounts.append(_custom_total(action))
+                elif street == 0:
                     action_type = self.get_preflop_action_type(history[:i])
                     if action_type != 'pot_relative':
                         bet_amounts_dict = self.get_preflop_bet_amounts(action_type, starting_pot)
@@ -615,25 +674,18 @@ class PokerGame:
         return 2.0
 
     def get_preflop_action_type(self, history):
+        # Only the OPEN (first-in raise) is sized absolutely (BB-anchored). Every
+        # subsequent raise -- 3-bet, 4-bet, ... -- is pot-relative (unified). The
+        # old separate absolute '3bet' tier collapsed below the min-raise vs a
+        # large open; pot-relative scales so all sizes stay legal.
         if not history:
             return 'open'
         bet_raise_count = sum(1 for a in history if a.startswith(('bet_', 'raise_')))
-        if bet_raise_count == 0:
-            return 'open'
-        elif bet_raise_count == 1:
-            return '3bet'
-        else:
-            return 'pot_relative'
+        return 'open' if bet_raise_count == 0 else 'pot_relative'
 
     def get_preflop_bet_amounts(self, action_type, current_pot):
-        big_blind = 2
+        # Centralised in abstractions/sizing.py (single source of truth).
         if action_type == 'open':
-            return {'small': 3 * big_blind, 'medium': 5 * big_blind, 'large': 7 * big_blind}
-        elif action_type == '3bet':
-            return {'small': 9 * big_blind, 'medium': 12 * big_blind, 'large': 16 * big_blind}
-        else:  # pot_relative
-            return {
-                'small': 0.66 * current_pot,
-                'medium': 1.33 * current_pot,
-                'large': 2.0 * current_pot,
-            }
+            return preflop_open_chips()                     # raise-TO totals, chips
+        # pot_relative (3-bet / 4-bet+): fraction of pot-after-call.
+        return {k: m * current_pot for k, m in PREFLOP_RAISE_MULT.items()}

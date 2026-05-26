@@ -34,16 +34,23 @@ function KeyExplorer() {
             ? `${b}_${pos}_${pat}`
             : `${b}_${st}_${pos}_${s}_${pat}`;
 
+    // Postflop bucket count is per-street (12 flop / 12 turn / 10 river), so a
+    // bucket valid on the flop may be out of range on the river — clamp it.
+    const bucketsForStreet = (s) =>
+        (s === 'preflop' ? [] : (abstractions?.postflopBuckets?.[s] || []));
+
     // Any dropdown change rewrites the key text field.
     const sync = (next) => {
         const s = next.street ?? street;
         const b = next.bucket ?? bucket;
-        const st = next.strength ?? strength;
+        let st = next.strength ?? strength;
         const pos = next.position ?? position;
         const pat = next.pattern ?? pattern;
+        const buckets = bucketsForStreet(s);
+        if (buckets.length && st > buckets.length - 1) st = buckets.length - 1;
         if (next.street !== undefined) setStreet(next.street);
         if (next.bucket !== undefined) setBucket(next.bucket);
-        if (next.strength !== undefined) setStrength(next.strength);
+        if (next.strength !== undefined || st !== strength) setStrength(st);
         if (next.position !== undefined) setPosition(next.position);
         if (next.pattern !== undefined) setPattern(next.pattern);
         setKeyText(composeKey(s, b, st, pos, pat));
@@ -99,13 +106,11 @@ function KeyExplorer() {
 
                 {street !== 'preflop' && (
                     <div>
-                        <label className={LABEL}>Postflop strength</label>
+                        <label className={LABEL}>Postflop bucket</label>
                         <select className={SELECT} value={strength}
                             onChange={(e) => sync({ strength: Number(e.target.value) })}>
-                            {abstractions.postflopBuckets.map((b) => (
-                                <option key={b.value} value={b.value}>
-                                    {b.value} — {b.label}
-                                </option>
+                            {bucketsForStreet(street).map((b) => (
+                                <option key={b} value={b}>{b}</option>
                             ))}
                         </select>
                     </div>

@@ -148,8 +148,10 @@ python tests/test_game_session.py          # Game core: GameSession, bot strateg
 python tests/test_cfr_correctness.py       # CFR correctness + chip-conservation fuzz
 python tests/test_poker_game_properties.py # Hypothesis property tests for engine invariants
 python tests/test_player.py                # Bot vs RandomPlayer via PyPokerEngine
-python tests/test_confidence_detection.py  # Subgame confidence-detection integration
+python tests/test_custom_betting.py        # Unrestricted custom bets + action translation
 ```
+
+Or run everything under pytest from `backend/bot/`: `python -m pytest tests/ -q`
 
 The property tests can also run under pytest:
 `python -m pytest tests/test_poker_game_properties.py -v`.

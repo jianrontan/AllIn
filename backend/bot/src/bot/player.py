@@ -53,11 +53,18 @@ class Player(BasePokerPlayer):
         strategy_dict = self.db.get_average_strategy(info_set_key) if self.db else None
 
         if strategy_dict:
-            strategy = [strategy_dict.get(a, 0.0) for a in cfr_actions]
+            strategy = [max(0.0, strategy_dict.get(a, 0.0)) for a in cfr_actions]
             print(f"[CFR_Bot] Found: {info_set_key}")
         else:
+            strategy = [0.0] * len(cfr_actions)
+
+        # Fall back to uniform when the stored strategy has no mass on the CURRENT
+        # legal actions (unknown key, or the blueprint trained a different legal
+        # set here). Without this, random.choices raises "Total of weights must be
+        # greater than zero". Mirrors BlueprintStrategy._distribution.
+        if sum(strategy) <= 1e-12:
             strategy = [1.0 / len(cfr_actions)] * len(cfr_actions)
-            print(f"[CFR_Bot] Unknown: {info_set_key}, using uniform strategy")
+            print(f"[CFR_Bot] Unknown/zero-mass: {info_set_key}, using uniform strategy")
 
         print(f"[CFR_Bot] Strategy: {dict(zip(cfr_actions, strategy))}")
 

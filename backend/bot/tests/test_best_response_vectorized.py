@@ -81,5 +81,10 @@ def main():
     print("PASS: vectorized showdown matches brute-force oracle.")
 
 
+# pytest entry point (the assertions live in main()).
+def test_best_response_vectorized():
+    main()
+
+
 if __name__ == '__main__':
     main()

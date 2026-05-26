@@ -1,4 +1,5 @@
 # backend/bot/abstractions/action_abstractions.py
+from .sizing import preflop_open_chips, PREFLOP_RAISE_MULT, POSTFLOP_BET_MULT
 
 
 class ActionAbstraction:
@@ -43,53 +44,25 @@ class ActionAbstraction:
         # `pot_size` from the caller is the pot BEFORE this bet (pre-bet pot).
         pre_bet_pot_size = pot_size if pot_size > 0 else 1
 
+        # Classify by nearest abstraction size, with boundaries at the midpoints
+        # of the sizes in abstractions/sizing.py (so this can't drift from the
+        # trained grid). NOTE: this opponent-bet categorisation is the
+        # PyPokerEngine path; the LIVE bot maps off-grid bets via
+        # cfr/translation.py (pseudo-harmonic), not this function.
+        def _bucket(value, sizes):
+            lo = (sizes['small'] + sizes['medium']) / 2.0
+            hi = (sizes['medium'] + sizes['large']) / 2.0
+            return 'small' if value <= lo else ('medium' if value <= hi else 'large')
+
         if street == 'preflop':
-            bet_raise_count = 0
-            if action_history:
-                bet_raise_count = sum(1 for a in action_history
-                                      if a.get('action', '').upper() in ['BET', 'RAISE'])
-
-            if bet_raise_count == 0:
-                # Opens: training sizes small=6, medium=10, large=14 chips
-                if bet_amount <= 8:
-                    return 'small'
-                elif bet_amount <= 12:
-                    return 'medium'
-                else:
-                    return 'large'
-            elif bet_raise_count == 1:
-                # 3-bets: training sizes small=18, medium=24, large=32 chips
-                if bet_amount <= 21:
-                    return 'small'
-                elif bet_amount <= 28:
-                    return 'medium'
-                else:
-                    return 'large'
-            else:
-                # 4-bets+: training sizes are pot-relative (~0.66/1.33/2.0x the
-                # pot-after-call). As a fraction of the pre-bet pot the bet-to
-                # amounts land at roughly 1.3 / 2.3 / 3.2 — approximate, since the
-                # exact value also depends on the call amount this function does
-                # not see. 4-bet lines are rare.
-                bet_ratio = bet_amount / pre_bet_pot_size
-                if bet_ratio <= 1.8:
-                    return 'small'
-                elif bet_ratio <= 2.75:
-                    return 'medium'
-                else:
-                    return 'large'
-        else:
-            if bet_amount > 1.0 * pre_bet_pot_size:
-                return 'large'
-
-        # Postflop ratio buckets (training sizes 0.33 / 0.66 / 1.0x pot)
-        bet_ratio = bet_amount / pre_bet_pot_size
-        if bet_ratio <= 0.49:
-            return 'small'
-        elif bet_ratio <= 0.7:
-            return 'medium'
-        else:
-            return 'large'
+            bet_raise_count = sum(
+                1 for a in (action_history or [])
+                if a.get('action', '').upper() in ['BET', 'RAISE'])
+            if bet_raise_count == 0:                          # open: absolute chips
+                return _bucket(bet_amount, preflop_open_chips())
+            # 3-bet / 4-bet+: pot-relative (fraction of the pre-bet pot, approx).
+            return _bucket(bet_amount / pre_bet_pot_size, PREFLOP_RAISE_MULT)
+        return _bucket(bet_amount / pre_bet_pot_size, POSTFLOP_BET_MULT)
 
     def pypoker_to_cfr_actions(self, pypoker_valid_actions, game_state, round_state):
         """
@@ -204,31 +177,18 @@ class ActionAbstraction:
         big_blind = game_state.get('big_blind', 2)
         street = round_state.get('street', 'preflop')
 
+        # Sizes from abstractions/sizing.py (single source of truth).
         if street == 'preflop':
             action_history = round_state.get('action_histories', {}).get('preflop', [])
             bet_raise_count = sum(1 for a in action_history
                                   if a.get('action', '').upper() in ['BET', 'RAISE'])
-
-            if bet_raise_count == 0:
-                sizing = {'small': 6, 'medium': 10, 'large': 14}
-                return sizing[size_name]
-            elif bet_raise_count == 1:
-                # Matches poker_game.py get_preflop_bet_amounts('3bet'): 9/12/16 × BB(2)
-                sizing = {'small': 18, 'medium': 24, 'large': 32}
-                return sizing[size_name]
-            else:
-                multipliers = {'small': 0.66, 'medium': 1.33, 'large': 2.0}
-                if action_type == 'raise':
-                    to_call = current_bet - player_contrib
-                    pot_after_call = pot_size + to_call
-                    return (multipliers[size_name] * pot_after_call) + to_call
-                else:
-                    return multipliers[size_name] * pot_size
+            if bet_raise_count == 0:                       # open: absolute BB ladder
+                return preflop_open_chips()[size_name]
+            multipliers = PREFLOP_RAISE_MULT               # 3-bet / 4-bet+: pot-relative
         else:
-            multipliers = {'small': 0.33, 'medium': 0.66, 'large': 1.0}
-            if action_type == 'raise':
-                to_call = current_bet - player_contrib
-                pot_after_call = pot_size + to_call
-                return (multipliers[size_name] * pot_after_call) + to_call
-            else:
-                return multipliers[size_name] * pot_size
+            multipliers = POSTFLOP_BET_MULT
+        if action_type == 'raise':
+            to_call = current_bet - player_contrib
+            pot_after_call = pot_size + to_call
+            return multipliers[size_name] * pot_after_call + to_call
+        return multipliers[size_name] * pot_size

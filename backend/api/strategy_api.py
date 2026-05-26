@@ -16,8 +16,9 @@ from bot.src.config import resolve_blueprint_path
 from bot.src.storage.blueprint_db import BlueprintDB
 from bot.src.game.bot_strategy import BlueprintStrategy, ConfidenceAwareStrategy
 from bot.src.game.session_store import InMemorySessionStore
-from bot.src.game.game_session import GameSession, advance_bot_turns, GameError
+from bot.src.game.game_session import GameSession, advance_bot_turns, GameError, BIG_BLIND
 from bot.src.game.cards import to_engine
+from bot.src.cfr.poker_game import make_custom_action
 
 # The blueprint DB is opened read-only so a concurrent training run is safe.
 _BLUEPRINT_PATH = resolve_blueprint_path()
@@ -62,10 +63,13 @@ def handle_preflight():
 # Strategy lookup
 # =============================================================================
 
-# Postflop strength bucket labels (see BoardTextureEvaluator in hand_evaluator.py)
-_POSTFLOP_BUCKET_LABELS = {
-    0: 'pure bluff', 1: 'weak draw', 2: 'strong draw', 3: 'combo draw',
-    4: 'weakest made', 5: 'medium made', 6: 'strong made', 7: 'near-nuts',
+# Postflop bucket COUNTS per street, read from the live PostflopV2 centroids
+# (distribution-aware/EMD clusters — integers, no human labels). Derived from the
+# centroid files so the Key Explorer can't drift from the real abstraction
+# (e.g. the old hardcoded 8-bucket 0-7 list). 12 flop / 12 turn / 10 river today.
+from bot.src.abstractions.postflop_features import load_centroids
+_POSTFLOP_BUCKET_COUNTS = {
+    street: len(load_centroids(street)[0]) for street in ('flop', 'turn', 'river')
 }
 _PATTERN_CHARS = {
     'k': 'check', 'c': 'call', 'f': 'fold',
@@ -166,9 +170,10 @@ def get_abstractions():
     """Vocabulary the frontend Key Explorer dropdowns are built from."""
     return jsonify({
         "preflopBuckets": [f"pf_{i}" for i in range(15)],
-        "postflopBuckets": [
-            {"value": v, "label": _POSTFLOP_BUCKET_LABELS[v]} for v in range(8)
-        ],
+        # Per-street postflop bucket ids (distribution-aware; no semantic labels).
+        "postflopBuckets": {
+            street: list(range(n)) for street, n in _POSTFLOP_BUCKET_COUNTS.items()
+        },
         "positions": [
             {"value": "ip", "label": "in position (button/SB)"},
             {"value": "oop", "label": "out of position (BB)"},
@@ -232,8 +237,20 @@ def game_action():
     if not session.is_human_turn():
         return jsonify({"error": "not your turn"}), 409
 
+    action = data.get('action')
+    # Unrestricted sizing: the UI sends {action: 'bet_custom'|'raise_custom',
+    # amountBb: <raise-to TOTAL in big blinds>}. Convert BB -> chips and build the
+    # internal custom action string; GameSession validates against poker rules.
+    if action in ('bet_custom', 'raise_custom'):
+        try:
+            amount_bb = float(data.get('amountBb'))
+        except (TypeError, ValueError):
+            return jsonify({"error": "amountBb must be a number"}), 400
+        chips = round(amount_bb * BIG_BLIND, 2)
+        action = make_custom_action(action == 'raise_custom', chips)
+
     try:
-        session.apply_action(data.get('action'))
+        session.apply_action(action)
         advance_bot_turns(session, BOT)
     except GameError as e:
         return jsonify({"error": str(e)}), 400

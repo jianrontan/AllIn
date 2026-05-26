@@ -46,23 +46,29 @@ class RandomPlayer(BasePokerPlayer):
 
 
 def test_game():
-    try:
-        # Setup game
-        config = setup_config(
-            max_round=10, initial_stack=100, small_blind_amount=1)
-        config.register_player(name="CFR_Bot", algorithm=Player())
-        config.register_player(name="Random_Bot", algorithm=RandomPlayer())
+    """The CFR bot plays a full PyPokerEngine match vs a random player without
+    crashing, and chips are conserved end-to-end. (Previously this swallowed all
+    exceptions and asserted nothing, so it 'passed' even if the bot crashed or
+    mis-bet.)"""
+    initial_stack = 100
+    config = setup_config(
+        max_round=10, initial_stack=initial_stack, small_blind_amount=1)
+    config.register_player(name="CFR_Bot", algorithm=Player())
+    config.register_player(name="Random_Bot", algorithm=RandomPlayer())
 
-        # Run game
-        print("Starting poker game...")
-        game_result = start_poker(config, verbose=1)
-        print(f"Game completed: {game_result}")
+    # No try/except: a bot crash or an illegal action must FAIL the test.
+    game_result = start_poker(config, verbose=0)
 
-    except Exception as e:
-        print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
+    assert game_result is not None, "start_poker returned no result"
+    players = game_result['players']
+    assert len(players) == 2, f"expected 2 players, got {len(players)}"
+    # Heads-up is zero-sum: total chips are conserved across the whole match.
+    total = sum(p['stack'] for p in players)
+    assert total == 2 * initial_stack, (
+        f"chips not conserved: {total} != {2 * initial_stack}")
+    assert all(p['stack'] >= 0 for p in players), "a stack went negative"
 
 
 if __name__ == "__main__":
     test_game()
+    print("PASS test_game (bot played a full match, chips conserved)")

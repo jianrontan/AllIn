@@ -37,6 +37,8 @@ export const getStrategyFromHand = (payload) =>
 export const newGame = (playerId) => jsonPost('/api/game/new', { playerId });
 export const getGameState = (id) =>
     request('/api/game/state?id=' + encodeURIComponent(id));
-export const sendGameAction = (id, action) =>
-    jsonPost('/api/game/action', { id, action });
+// `extra` carries unrestricted-sizing fields, e.g. { amountBb } for a
+// bet_custom / raise_custom action.
+export const sendGameAction = (id, action, extra = {}) =>
+    jsonPost('/api/game/action', { id, action, ...extra });
 export const nextHand = (id) => jsonPost('/api/game/next-hand', { id });

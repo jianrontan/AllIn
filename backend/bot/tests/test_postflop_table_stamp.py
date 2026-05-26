@@ -94,3 +94,4 @@ if __name__ == '__main__':
             print(f"FAIL {fn.__name__}: {e!r}")
     print("\n" + "=" * 60)
     print(f"Results: {passed} passed, {failed} failed out of {len(TESTS)} tests")
+    sys.exit(1 if failed else 0)

@@ -19,9 +19,9 @@ class InformationSet:
         self.cumulative_regrets = {}
         self.cumulative_strategy = {}
         self.legal_actions = []
-        self.visit_count = 0             # regret-update count (DCFR alpha/beta clock)
+        self.visit_count = 0             # regret-update count (alpha discount clock)
         self.last_visited_iteration = -1  # -1 so iteration 0 increments visit_count
-        self.strategy_visit_count = 0     # avg-strategy update count (DCFR gamma clock)
+        self.strategy_visit_count = 0     # avg-strategy update count (gamma discount clock)
         self.last_strategy_iteration = -1  # -1 so iteration 0 increments the gamma clock
 
     def get_strategy(self, legal_actions):
@@ -38,6 +38,13 @@ class InformationSet:
         # merges correctly. Read the average strategy over cumulative_strategy's
         # own keys, never over this stored list.
 
+        # NOTE: a pure-Python rewrite (sum()/list-comp) is NOT bit-identical here
+        # and was rejected by tests/perf_seed_compare.py: numpy's >=5-element sum
+        # uses an 8-way-unrolled reduction whose ULP differs from Python's
+        # left-to-right sum(), and that ULP flips occasional random.choices()
+        # samples at a bisect boundary -> the training trajectory diverges. Keep
+        # numpy so the blueprint is reproducible. (If sped up later, it must
+        # reproduce numpy's exact reduction order, not just match to a tolerance.)
         regrets = np.array([max(0.0, self.cumulative_regrets.get(a, 0.0))
                             for a in legal_actions])
         total = regrets.sum()

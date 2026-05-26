@@ -1,6 +1,7 @@
 # backend/bot/src/bot/game_adapter.py
 from ..abstractions.card_abstractions import CardAbstraction
 from ..abstractions.action_abstractions import ActionAbstraction
+from ..cfr.keys import make_info_set_key, STREET_NAMES
 
 
 class GameAdapter:
@@ -12,18 +13,22 @@ class GameAdapter:
         """
         Generate info set key from round state action history.
         position: 'ip' (SB/BTN, acts last postflop) or 'oop' (BB, acts first postflop).
+        Built through keys.py (single source of truth) so this PyPokerEngine path
+        can't drift from the trainer / live key format.
         """
         betting_pattern = self._extract_betting_pattern(round_state)
+        street_str = round_state.get('street', 'preflop')
+        street = STREET_NAMES.index(street_str) if street_str in STREET_NAMES else 0
 
-        if round_state.get('street') == 'preflop':
-            card_bucket = self.card_abstractions.get_bucket(hole_card, None)
-            return f"{card_bucket}_{position}_{betting_pattern}"
-        else:
-            starting_hand = self.card_abstractions.get_bucket(hole_card, None)
-            current_strength = self.card_abstractions.get_bucket(
-                hole_card, round_state.get('community_card'))
-            street = round_state.get('street')
-            return f"{starting_hand}_{current_strength}_{position}_{street}_{betting_pattern}"
+        if street == 0:
+            return make_info_set_key(
+                0, position, self.card_abstractions.get_bucket(hole_card, None),
+                None, betting_pattern)
+        starting_hand = self.card_abstractions.get_bucket(hole_card, None)
+        current_strength = self.card_abstractions.get_bucket(
+            hole_card, round_state.get('community_card'))
+        return make_info_set_key(
+            street, position, starting_hand, current_strength, betting_pattern)
 
     def _extract_betting_pattern(self, round_state):
         """Extract betting pattern string from round_state action histories"""

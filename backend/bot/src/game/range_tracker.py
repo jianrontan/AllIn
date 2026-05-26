@@ -141,10 +141,16 @@ class RangeTracker:
                 surprise = -np.log(p_a + 1e-12)
                 self.confidence *= float(np.exp(-max(0.0, surprise - entropy)))
 
-        self.w = self.w * mat[:, ai]
-        s = self.w.sum()
+        new_w = self.w * mat[:, ai]
+        s = new_w.sum()
         if s > 1e-12:
-            self.w /= s    # renormalise to keep weights from underflowing
+            self.w = new_w / s          # renormalise to keep weights from underflowing
+        # else: the observed action has ~zero model-probability across EVERY live
+        # hand (the opponent is off-model). Applying this update would zero the
+        # belief permanently and blind the bot (hero_equity -> 0.5 forever). Keep
+        # the prior range instead; the confidence drop computed above already
+        # records that the action was unexpected, and the consumer falls back to
+        # blueprint/equity when confidence is low.
 
     # -- accessors -----------------------------------------------------
     def weighted_hands(self):

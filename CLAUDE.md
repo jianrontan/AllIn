@@ -57,7 +57,12 @@ python tests/test_game_session.py          # Game core: GameSession, SessionStor
 python tests/test_cfr_correctness.py       # CFR algorithm correctness + chip-conservation fuzz
 python tests/test_poker_game_properties.py # Hypothesis property tests for engine invariants
 python tests/test_player.py                # CFR_Bot vs RandomPlayer via PyPokerEngine
-python tests/test_confidence_detection.py  # Subgame confidence-detection integration
+python tests/test_custom_betting.py        # Unrestricted custom bets + action translation
+```
+
+Or run the whole suite under pytest from `backend/bot/`:
+```bash
+python -m pytest tests/ -q
 ```
 
 `test_poker_game_properties.py` uses [Hypothesis](https://hypothesis.readthedocs.io/)
@@ -120,14 +125,27 @@ Earlier versions used a handful of named buckets (`premium_pair`, `monster`, etc
 
 ### Action Abstractions (`backend/bot/src/abstractions/action_abstractions.py`)
 
-Bet sizes mapped to: `small`=0.33x pot, `medium`=0.66x pot, `large`=1.0x pot. Preflop sizing differs:
-- Opens: 3BB/5BB/7BB → small/medium/large
-- 3-bets: 9BB/12BB/16BB → small/medium/large
-- 4-bets+: pot-relative (0.66x/1.33x/2.0x)
+**Sizes are the single source of truth in `src/abstractions/sizing.py`** — the engine
+(`poker_game.py`), the eval harness (`lbr.py`), and the PyPokerEngine path
+(`action_abstractions.py`) all import from it (a `tests/test_sizing_consistency.py` guards
+against drift). Changing any size is an **abstraction change → retrain required** (existing
+blueprints become incompatible).
+
+- **Postflop** bet/raise: `small`=0.33x, `medium`=0.66x, `large`=1.0x pot (a raise is a
+  fraction of the pot-after-call) + all-in. Overbets (>pot) are deliberately omitted and left
+  to the Phase-4 subgame solver.
+- **Preflop open** (first-in raise): BB-anchored ladder — `small`=2BB, `medium`=2.5BB,
+  `large`=3.5BB. Small opens are GTO-optimal in heads-up; bigger human opens are handled at
+  inference by action translation (`cfr/translation.py`), not by the bot's own ladder.
+- **Preflop 3-bet AND 4-bet+** (unified): pot-relative, raise-to = `to_call + {0.66, 1.0, 1.5}
+  × pot-after-call`. (The old absolute 3-bet ladder collapsed below the min-raise versus a
+  large open; pot-relative scales so all three sizes stay legal at every open size.)
+- An unrestricted/off-grid bet (custom human size, or an exploiter) maps onto this grid via
+  pseudo-harmonic action translation (Phase 1a).
 
 ### CFR Training (`backend/bot/src/cfr/`)
 
-- `blueprint_trainer.py` — `BlueprintTrainer.cfr()` implements Monte Carlo CFR+ with external sampling and DCFR regret discounting (`alpha`). Updating player explores all actions; opponent samples one. Checkpoints into a `BlueprintDB`.
+- `blueprint_trainer.py` — `BlueprintTrainer.cfr()` implements Monte Carlo CFR+ with external sampling and Linear-CFR-style regret discounting (`alpha`). Updating player explores all actions; opponent samples one. Checkpoints into a `BlueprintDB`. (The discount is CFR+/Linear-CFR — `((t-1)/t)**alpha` on floored regrets, no negative-regret `beta`, per-role clocks — *not* canonical DCFR; see the trainer docstring.)
 - `poker_game.py` — `PokerGame` handles game logic (independent of PyPokerEngine). Player 0 = SB/button, player 1 = BB. Max 3 bet/raise actions per street (1 bet + 2 raises). Handles stack constraints and all-ins.
 - `information_set.py` — `InformationSet` stores cumulative regrets and strategy. CFR+ floors regrets at 0.
 - `keys.py` — **single source of truth** for info-set key construction (`make_info_set_key`) and the action→pattern-character map (`action_char`). The trainer and every consumer that looks a situation up in the blueprint (the evaluation harness, a future subgame solver) build keys through this module so the two can never drift. Change the key format here and everywhere stays in sync.
@@ -210,12 +228,17 @@ as input, so the range tracker has to exist before the solver.
 - **Phase 0 — Measurement harness** ✅ done. LBR + head-to-head/AIVAT + best-response
   exploitability (`src/evaluation/`); baselined at ~11,256 (BR) / ~3,636 (LBR) mbb/hand.
   Built first so every later change is *scored, not guessed*.
-- **Phase 1b — DCFR gamma** ✅ done. Strategy-sum discount (`gamma=2`) with its own
-  opponent-node clock (`information_set.py`, `blueprint_trainer.py`).
-- **Phase 1a — Pseudo-harmonic action translation** ⬜ not done. Inference-only quick win,
-  independent of everything else: blend the two bracketing pattern-key lookups in
-  `BlueprintStrategy._distribution` instead of snapping off-grid bets to the nearest size
-  (and stop hard-capping overbets at `large`). Cheapest open exploitability patch.
+- **Phase 1b — strategy-sum discount (gamma)** ✅ done. Linear-CFR-style avg-strategy
+  discount (`gamma=2`) with its own opponent-node clock (`information_set.py`,
+  `blueprint_trainer.py`). (Not canonical DCFR — see the trainer docstring.)
+- **Phase 1a — Pseudo-harmonic action translation** ✅ done (2026-05-26), shipped together
+  with unrestricted custom human bet sizing. Inference-only (no retraining). `cfr/translation.py`
+  blends the two bracketing grid sizes (Ganzfried-Sandholm) over a per-node grid; consumed by
+  `BlueprintStrategy._state_distribution` (live bot) and mirrored in `lbr.py`'s victim model.
+  The human can now bet any legal chip amount via `bet_custom_<total>`/`raise_custom_<total>`
+  (engine stores the raise-to total; `{action, amountBb}` API contract; custom-BB box in the UI
+  beside the size buttons). Result: LBR **3609 → 1670 mbb/hand** (~54% cut) on the v2 9.15M
+  snapshot. Tests: `tests/test_custom_betting.py`.
 - **Phase 2 — Potential-aware postflop buckets** 🔄 in progress. This is the distribution-aware
   abstraction work, tracked internally as sub-phases A (cluster centroids) ✅ / B (bake
   canonical→bucket tables + migrate `CardAbstraction` to `PostflopV2`) 🔄 / C (retrain
@@ -247,5 +270,7 @@ Productionization (additive, the interfaces already exist for these):
 - Online 1v1 play deployed on AWS — swap `InMemorySessionStore` for a Redis/DynamoDB-backed
   store; the Flask-free game core and `BotStrategy` / `SessionStore` interfaces make this
   additive, not a rewrite.
-- Unrestricted human bet sizing — widen the thin `{action, size}` contract to `{action, amount}`,
-  a localized change in `GameSession` and the API (pairs naturally with Phase 1a / Phase 4).
+- Unrestricted human bet sizing — ✅ done (2026-05-26, with Phase 1a). The API accepts
+  `{action: 'bet_custom'|'raise_custom', amountBb}`; the engine stores the raise-to chip total
+  in `history` as `bet_custom_<total>`/`raise_custom_<total>` (chip-conservation tests intact),
+  and off-grid bets are handled by action translation (see Phase 1a above).

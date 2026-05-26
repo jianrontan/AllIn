@@ -40,6 +40,8 @@ import numpy as np
 
 from ..cfr.poker_game import PokerGame, STARTING_STACK
 from ..cfr.keys import make_info_set_key, action_char
+from ..cfr import translation
+from ..abstractions.sizing import preflop_open_chips, PREFLOP_RAISE_MULT, POSTFLOP_BET_MULT
 from ..abstractions.card_abstractions import CardAbstraction
 from ..abstractions.action_abstractions import ActionAbstraction
 from ..abstractions.hand_evaluator import HandEvaluator
@@ -226,19 +228,37 @@ class LBREvaluator:
 
         if is_allin:
             char = 'a'
-        else:
-            amount = new_committed_lbr if street == 0 else total_add
+            translated = [('a', 1.0)]
+        elif street == 0:
+            # Preflop sizes are absolute chip ladders -> keep the chip-threshold
+            # categorisation (single char; preflop translation deferred).
             gstate = {'pot_size': max(1, pot), 'big_blind': BB,
                       'player_stack': stack[lbr_seat]}
-            act = {'action': 'raise' if is_raise else 'bet', 'amount': amount}
+            act = {'action': 'raise' if is_raise else 'bet', 'amount': new_committed_lbr}
             hist = [{'action': 'RAISE'}] * num_aggr
-            char = self.actions.categorize_bet_size(
-                act, gstate, hist, 'preflop' if street == 0 else 'flop')[0]
+            char = self.actions.categorize_bet_size(act, gstate, hist, 'preflop')[0]
+            translated = [(char, 1.0)]
+        else:
+            # Postflop: the DEPLOYED bot translates an off-grid bet pseudo-
+            # harmonically onto its two bracketing grid sizes (cfr/translation.py,
+            # bot_strategy.py). Mirror that here so LBR measures the translating
+            # bot, not a snap-to-nearest victim that LBR could over-exploit.
+            eff_frac = translation.eff_fraction(total_add, to_call, pot)
+            allin_frac = translation.eff_fraction(stack[lbr_seat], to_call, pot)
+            grid = list(translation.POSTFLOP_GRID)
+            if allin_frac > 1.0:
+                grid.append(('a', allin_frac))
+            translated = translation.translate_bet(eff_frac, grid)
+            char = translation.nearest_char(eff_frac, grid)
 
         # The bot faces LBR's bet: how often does the blueprint fold (per hand)?
-        bot_pattern = pattern + char
-        pfold = botrange.per_hand_action_prob(
-            self._raw_strategy, 'fold', street, self._pos(bot_seat), bot_pattern, vis)
+        # Blend the bracketing sizes' per-hand fold probabilities (a single
+        # bracket -- on-grid or preflop -- reduces to the exact lookup).
+        pfold = None
+        for c, w in translated:
+            p = botrange.per_hand_action_prob(
+                self._raw_strategy, 'fold', street, self._pos(bot_seat), pattern + c, vis)
+            pfold = w * p if pfold is None else pfold + w * p
         w = botrange.w
         wt = w.sum()
         p_fold = float((w * pfold).sum()) / wt if wt > 1e-12 else 0.0
@@ -253,17 +273,16 @@ class LBREvaluator:
         return (value, char, total_add, True)
 
     def _bot_sizing(self, size, street, pot, to_call, bot_committed, num_aggr):
-        """Chips the bot ADDS for an abstract bet/raise size (training sizing)."""
+        """Chips the bot ADDS for an abstract bet/raise size (training sizing).
+        Sizes come from abstractions/sizing.py (single source of truth)."""
         if street == 0:
-            if num_aggr == 0:
-                to_amt = {'small': 6, 'medium': 10, 'large': 14}[size]
+            if num_aggr == 0:                          # open: absolute BB ladder
+                to_amt = preflop_open_chips()[size]
                 return int(round(to_amt - bot_committed))
-            if num_aggr == 1:
-                to_amt = {'small': 18, 'medium': 24, 'large': 32}[size]
-                return int(round(to_amt - bot_committed))
-            mult = {'small': 0.66, 'medium': 1.33, 'large': 2.0}[size]
+            # 3-bet / 4-bet+: pot-relative (unified, matches the engine).
+            mult = PREFLOP_RAISE_MULT[size]
             return int(round(to_call + mult * (pot + to_call)))
-        mult = {'small': 0.33, 'medium': 0.66, 'large': 1.0}[size]
+        mult = POSTFLOP_BET_MULT[size]
         if to_call > 0:
             return int(round(to_call + mult * (pot + to_call)))
         return int(round(mult * pot))

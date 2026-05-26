@@ -25,14 +25,31 @@ class BlueprintTrainer:
 
     def __init__(self):
         self.info_sets = {}
+        # Keys created/mutated since the last checkpoint. Checkpoints persist
+        # only these (every visited info set is mutated -- regrets or strategy --
+        # so marking on touch is complete), turning the checkpoint from an
+        # O(all info sets) full-table rewrite into O(touched-since-last). The DB
+        # always holds the latest row for every key, so resume is unaffected.
+        self._dirty = set()
         self.game = PokerGame()
         self.game_adapter = GameAdapter()
         self.deck = self.create_deck()
         self.BET_MULTIPLIERS = {'small': 0.33, 'medium': 0.66, 'large': 1.00}
 
-        # DCFR discount exponents (Brown & Sandholm 2019). alpha discounts the
-        # cumulative regrets; gamma discounts the cumulative AVERAGE strategy so
-        # that later (better-converged) iterations dominate the blueprint.
+        # Discount exponents (Linear-CFR-style; cf. Brown & Sandholm 2019).
+        # alpha discounts the cumulative regrets; gamma discounts the cumulative
+        # AVERAGE strategy so later (better-converged) iterations dominate the
+        # blueprint.
+        #
+        # NOTE: this is CFR+ with a Linear-CFR-style discount, NOT the canonical
+        # Discounted CFR (DCFR) scheme. Differences, on purpose: (1) regrets are
+        # floored at 0 (CFR+) and the discount is applied to those non-negative
+        # regrets -- there is no separate negative-regret exponent beta;
+        # (2) the per-step decay is ((t-1)/t)**alpha (Linear CFR at alpha=1),
+        # not DCFR's t**a/(t**a+1) multiplier; (3) the alpha/gamma clocks advance
+        # on each role's own visit counts, not a single global t. It is a valid,
+        # convergent regret-minimiser; just don't expect canonical-DCFR behaviour
+        # when tuning alpha.
         self.alpha = 1.5
         self.gamma = 2.0
 
@@ -84,7 +101,7 @@ class BlueprintTrainer:
             p0_invested=0.0, p1_invested=0.0, bet_pattern='',
             p0_stack=None, p1_stack=None):
         """
-        External-sampling Monte Carlo CFR+ (with DCFR regret discounting).
+        External-sampling Monte Carlo CFR+ (with Linear-CFR-style regret discounting).
 
         Perspective convention: cfr() ALWAYS returns the value from P0's fixed
         perspective. get_utility() returns P0's perspective; terminal and
@@ -160,6 +177,10 @@ class BlueprintTrainer:
         if info_set_key not in self.info_sets:
             self.info_sets[info_set_key] = InformationSet()
         info_set = self.info_sets[info_set_key]
+        # This visit mutates the info set (regret update at a traverser node, or
+        # average-strategy accumulation at an opponent node), so mark it dirty for
+        # the next checkpoint.
+        self._dirty.add(info_set_key)
 
         strategy = info_set.get_strategy(legal_actions)
 
@@ -174,7 +195,7 @@ class BlueprintTrainer:
 
         if current_player == updating_player:
             # --- Traverser node: explore every action, update regrets. ---
-            # First visit of this iteration: bump the DCFR clock and discount
+            # First visit of this iteration: bump the discount clock and discount
             # the prior cumulative regret ONCE. An info set can be reached more
             # than once per traversal (different lines collapse onto the same
             # key), so decaying inside the per-action loop would over-discount.
@@ -206,7 +227,7 @@ class BlueprintTrainer:
             node_value = sum(strategy[i] * own_values[i]
                              for i in range(len(legal_actions)))
 
-            # Accumulate this visit's regret (CFR+ floors at 0). The DCFR
+            # Accumulate this visit's regret (CFR+ floors at 0). The discount
             # discount was already applied once at the first visit above; no
             # reach weighting — external sampling handles opponent reach.
             for i, action in enumerate(legal_actions):
@@ -219,7 +240,7 @@ class BlueprintTrainer:
 
         else:
             # --- Opponent node: accumulate avg strategy, sample one action. ---
-            # DCFR gamma: discount the prior average-strategy sum ONCE per
+            # gamma discount: discount the prior average-strategy sum ONCE per
             # iteration (its own clock, separate from the regret clock) before
             # adding this visit's contribution, so later iterations dominate.
             # Same once-per-iteration guard as the regret discount above: an info
@@ -323,21 +344,47 @@ class BlueprintTrainer:
         return self.ev_sum / self.ev_count if self.ev_count else 0.0
 
     def checkpoint_to_db(self, db, iteration):
-        db.save_batch(self.info_sets)
-        db.set_metadata('total_iterations', iteration + 1)
-        db.set_metadata('alpha', self.alpha)
-        db.set_metadata('gamma', self.gamma)
-        # Persist the lifetime EV accumulators so the cumulative mean survives
-        # a resume instead of restarting from this session's iterations only.
-        db.set_metadata('ev_sum', self.ev_sum)
-        db.set_metadata('ev_count', self.ev_count)
-        print(f"Checkpoint: {len(self.info_sets)} info sets saved at iteration {iteration + 1}")
+        # Atomic: info sets + all metadata land together or not at all, so an
+        # interrupt mid-checkpoint can't leave info sets ahead of total_iterations
+        # (which would double-count regrets on resume).
+        #
+        # Incremental: persist ONLY the info sets touched since the last
+        # checkpoint (the dirty set). INSERT OR REPLACE leaves untouched rows as
+        # previously written, and every row was written when it was first dirtied,
+        # so the on-disk blueprint is byte-identical to a full rewrite while the
+        # write cost is O(touched) instead of O(all). Guarded by
+        # tests/test_checkpoint_dirty.py (DB == in-memory) + the seed-compare.
+        dirty = {k: self.info_sets[k] for k in self._dirty if k in self.info_sets}
+        db.save_checkpoint(dirty, {
+            'total_iterations': iteration + 1,
+            'alpha': self.alpha,
+            'gamma': self.gamma,
+            # Lifetime EV accumulators so the cumulative mean survives a resume.
+            'ev_sum': self.ev_sum,
+            'ev_count': self.ev_count,
+        })
+        self._dirty.clear()
+        print(f"Checkpoint: {len(dirty)} info sets written "
+              f"({len(self.info_sets)} total) at iteration {iteration + 1}")
 
     def resume_from_db(self, db):
         self.info_sets = db.load_all_to_memory()
+        # Every loaded row is already on disk; nothing is dirty until mutated.
+        self._dirty.clear()
         start_iteration = db.get_metadata('total_iterations', 0)
         # Restore lifetime EV accumulators (absent on pre-EV-persistence DBs).
         self.ev_sum = db.get_metadata('ev_sum', 0.0)
         self.ev_count = db.get_metadata('ev_count', 0)
+        # Refuse to silently change the discount schedule mid-blueprint:
+        # the average strategy is only valid under one consistent (alpha, gamma).
+        # Pre-schedule DBs (no stored value) are skipped for backward compat.
+        for name in ('alpha', 'gamma'):
+            stored = db.get_metadata(name, None)
+            if stored is not None and abs(float(stored) - getattr(self, name)) > 1e-9:
+                raise ValueError(
+                    f"Resume {name} mismatch: this blueprint was trained with "
+                    f"{name}={stored}, but the run is configured with {getattr(self, name)}. "
+                    f"Changing the discount schedule mid-blueprint corrupts the average "
+                    f"strategy. Resume without overriding {name} (or pass the stored value).")
         print(f"Resumed: {len(self.info_sets)} info sets, continuing from iteration {start_iteration}")
         return start_iteration

@@ -110,6 +110,28 @@ def _key0(h):
     return make_info_set_key(0, 'oop', CARDS.get_bucket(list(h), None), None, '')
 
 
+def test_offmodel_action_preserves_range():
+    """C1: an action with ~zero model-prob across ALL live hands must NOT zero
+    the belief — the range is preserved (not annihilated) and the bot stays
+    informed; only confidence drops."""
+    t = RangeTracker(('HA', 'DK'), CARDS)
+    legal = ['fold', 'call', 'raise']
+
+    def never_folds(key, legal):
+        m = {'fold': 0.0, 'call': 0.5, 'raise': 0.5}
+        return np.array([m[a] for a in legal])
+
+    before = t.w.copy()
+    conf_before = t.confidence
+    t.observe(never_folds, 'fold', 0, 'oop', '', legal, [])   # impossible under model
+    assert t.w.sum() > 0.0, "range was zeroed (C1 regression!)"
+    assert np.allclose(t.w, before), "zero-prob update should leave the range unchanged"
+    assert t.confidence < conf_before, "confidence should drop on the off-model action"
+    eq = t.hero_equity(['HA', 'DK'], ['HQ', 'HJ', 'HT', 'C2', 'S4'])
+    assert 0.0 <= eq <= 1.0
+    print(f"PASS test_offmodel_action_preserves_range: conf {conf_before:.2f}->{t.confidence:.3f}")
+
+
 def test_serialization_roundtrip():
     t = RangeTracker(('HA', 'DK'), CARDS)
     legal = ['fold', 'call', 'raise']
@@ -269,6 +291,7 @@ TESTS = [
     test_uniform_model_no_confidence_loss,
     test_confidence_drops_on_offmodel_action,
     test_bayesian_update_shifts_toward_consistent_hands,
+    test_offmodel_action_preserves_range,
     test_serialization_roundtrip,
     test_gamesession_tracking_disabled_without_model,
     test_gamesession_tracks_and_serializes,
@@ -296,3 +319,4 @@ if __name__ == '__main__':
         print("Failed:")
         for name, err in fails:
             print(f"  {name}: {err}")
+    sys.exit(1 if failed else 0)

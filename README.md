@@ -15,8 +15,9 @@ through a **Flask** API, and exposes it in an interactive **React** platform.
 - **Monte Carlo CFR+ with external sampling**: each iteration samples chance and
   opponent actions, walking one trajectory through the game tree instead of the
   full exponential tree — making millions of training iterations tractable.
-- **Discounted CFR (DCFR)**: time-discounted regret updates (α = 1.5) for faster,
-  more stable convergence toward a Nash equilibrium.
+- **Discounted CFR+ (Linear-CFR-style)**: time-discounted regret updates (α = 1.5)
+  for faster, more stable convergence toward a Nash equilibrium. (CFR+ with a
+  `((t-1)/t)^α` discount on floored regrets — not the canonical DCFR α/β/γ scheme.)
 - **Self-play reinforcement learning**: no human data and no hand-crafted
   heuristics — the strategy emerges purely from **regret minimization**.
 - **Multi-layer abstraction**: a hierarchical state representation built from
@@ -27,7 +28,7 @@ through a **Flask** API, and exposes it in an interactive **React** platform.
 ### 📊 Trained Blueprint (active model)
 ```
 Active blueprint (analysis/blueprints/blueprint_*.db):
-├── Algorithm:          Monte Carlo CFR+ with external sampling + DCFR (α=1.5)
+├── Algorithm:          Monte Carlo CFR+ with external sampling + Linear-CFR-style discount (α=1.5)
 ├── Training iterations: 6,500,000
 ├── Information sets:    26,052 unique strategic situations
 ├── Game:               Heads-up NLHE, 100 BB effective stacks (SB 1 / BB 2)
@@ -76,7 +77,7 @@ SQLite checkpoint → automatic active-blueprint selection → API inference
 - **SQLite** — blueprint persistence with checkpoint/resume + read-while-writing
 
 ### 🧮 Algorithms
-- **Monte Carlo CFR+** with **external sampling** and **DCFR** discounting
+- **Monte Carlo CFR+** with **external sampling** and **Linear-CFR-style** discounting
 - **Nash-equilibrium approximation** through iterative self-play
 - **Feature engineering**: equity-based card bucketing, action abstraction, and
   position-aware information-set keys

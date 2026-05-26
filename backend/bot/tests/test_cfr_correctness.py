@@ -236,7 +236,7 @@ def test_utility_p0_folds_preflop():
 def test_utility_p1_folds_preflop():
     """When P1 folds after P0 open, P0 wins the pot (BB already posted)."""
     game = PokerGame()
-    # P0 opens small (6 chips) -> P1 folds
+    # P0 opens small (4 chips) -> P1 folds
     p0_cards = ['HA', 'DA']
     p1_cards = ['H2', 'D3']
     community = ['CQ', 'SJ', 'CT', 'S4', 'C5']
@@ -653,13 +653,13 @@ def test_position_in_key():
 def test_street_transition_pot():
     """After preflop action, CFR should transition to street=1 with correct new pot."""
     game = PokerGame()
-    # Preflop: P0 opens small bet (bet_small = 6 chips target)
+    # Preflop: P0 opens small bet (bet_small = 4 chips target)
     # P1 calls -> round complete, pot should be bet_small_target * 2
     starting_pot = 3
     history = ['bet_small', 'call']
     pot = game.calculate_current_pot(starting_pot, history, 0, 0.0, 0.0)
-    # P0 opened to 6 total (SB=1 + 5 more), P1 called to 6 total (BB=2 + 4 more)
-    # pot = 6 + 6 = 12
+    # P0 opened to 4 total (SB=1 + 3 more), P1 called to 4 total (BB=2 + 2 more)
+    # pot = 4 + 4 = 8
     assert pot > starting_pot, f"Pot after bet+call should exceed starting_pot, got {pot}"
     print(f"PASS test_street_transition_pot: pot after preflop bet+call = {pot}")
 
@@ -1028,23 +1028,30 @@ def test_action_char_mapping():
 
 
 def test_preflop_open_sizes():
-    """Preflop open sizing: small=6, medium=10, large=14 chips."""
+    """Preflop open sizing: small=2BB(4), medium=2.5BB(5), large=3.5BB(7) chips."""
     game = PokerGame()
     amounts = game.get_preflop_bet_amounts('open', 3)  # starting_pot not used for fixed opens
-    assert amounts['small'] == 6, f"Expected small=6, got {amounts['small']}"
-    assert amounts['medium'] == 10, f"Expected medium=10, got {amounts['medium']}"
-    assert amounts['large'] == 14, f"Expected large=14, got {amounts['large']}"
+    assert amounts['small'] == 4, f"Expected small=4, got {amounts['small']}"
+    assert amounts['medium'] == 5, f"Expected medium=5, got {amounts['medium']}"
+    assert amounts['large'] == 7, f"Expected large=7, got {amounts['large']}"
     print(f"PASS test_preflop_open_sizes: {amounts}")
 
 
-def test_preflop_3bet_sizes():
-    """Preflop 3-bet sizing: small=18, medium=24, large=32 chips."""
+def test_preflop_3bet_is_pot_relative_no_collapse():
+    """3-bets are now pot-relative (unified with 4-bets), so all three sizes stay
+    legal versus EVERY open size -- the old absolute ladder collapsed to only
+    'large' versus a big open."""
     game = PokerGame()
-    amounts = game.get_preflop_bet_amounts('3bet', 3)
-    assert amounts['small'] == 18, f"Expected small=18, got {amounts['small']}"
-    assert amounts['medium'] == 24, f"Expected medium=24, got {amounts['medium']}"
-    assert amounts['large'] == 32, f"Expected large=32, got {amounts['large']}"
-    print(f"PASS test_preflop_3bet_sizes: {amounts}")
+    sp = 3.0
+    # 3-bet+ is pot-relative, not a fixed type.
+    assert game.get_preflop_action_type(['bet_medium']) == 'pot_relative'
+    for open_action in ('bet_small', 'bet_medium', 'bet_large'):
+        legal = game.get_legal_actions(
+            0, [open_action], sp, 1, STARTING_STACK - 1, STARTING_STACK - 2, 0.0, 0.0)
+        raises = [a for a in legal if a.startswith('raise_')]
+        assert raises == ['raise_small', 'raise_medium', 'raise_large'], (
+            f"vs {open_action}, expected all three 3-bets legal, got {raises}")
+    print("PASS test_preflop_3bet_is_pot_relative_no_collapse")
 
 
 def test_postflop_bet_multipliers():
@@ -1066,10 +1073,10 @@ def test_action_abstraction_preflop_open_sizing():
     medium = aa._calculate_target_amount('medium', 'bet', game_state, round_state)
     large = aa._calculate_target_amount('large', 'bet', game_state, round_state)
 
-    # Training: open small=6, medium=10, large=14
-    assert small == 6, f"Preflop open small should be 6, got {small}"
-    assert medium == 10, f"Preflop open medium should be 10, got {medium}"
-    assert large == 14, f"Preflop open large should be 14, got {large}"
+    # Training: open small=2BB(4), medium=2.5BB(5), large=3.5BB(7)
+    assert small == 4, f"Preflop open small should be 4, got {small}"
+    assert medium == 5, f"Preflop open medium should be 5, got {medium}"
+    assert large == 7, f"Preflop open large should be 7, got {large}"
     print(f"PASS test_action_abstraction_preflop_open_sizing: {small}/{medium}/{large}")
 
 
@@ -1239,7 +1246,7 @@ ALL_TESTS = [
     # Action abstraction
     test_action_char_mapping,
     test_preflop_open_sizes,
-    test_preflop_3bet_sizes,
+    test_preflop_3bet_is_pot_relative_no_collapse,
     test_postflop_bet_multipliers,
     test_action_abstraction_preflop_open_sizing,
     test_action_abstraction_postflop_bet_sizing,

@@ -17,7 +17,7 @@ BlueprintTrainer.deal_random_hand()
 ├── Player 1: ['DQ', 'CJ']
 └── Community: ['SA', 'HK', 'CQ', 'HJ', 'D2']
     ↓
-🧠 CFR Algorithm (external-sampling MCCFR+, DCFR discounting)
+🧠 CFR Algorithm (external-sampling MCCFR+, Linear-CFR-style discounting)
 BlueprintTrainer.cfr(..., updating_player)
 ├── updating player: explore EVERY legal action, update regrets
 ├── opponent:        SAMPLE one action from current strategy
@@ -52,7 +52,7 @@ InformationSet.get_strategy(legal_actions)          # PURE, no side effects
 🔄 Recursive Exploration
 BlueprintTrainer.cfr(...) on each child
 ├── updating player: sum regret-weighted child values, update cumulative_regrets
-│                    (DCFR discount applied once per info set per iteration)
+│                    (discount applied once per info set per iteration)
 └── opponent:        recurse only into the sampled action
     ↓
 🏁 Terminal Evaluation (player-0 perspective)

@@ -42,12 +42,12 @@ def run_training(iterations, resume=None, checkpoint_every=1000,
                            None = start a fresh run with a new timestamped DB.
         checkpoint_every:  Save to DB every N iterations.
         seed:              If set, seed Python's RNG so the traversal/sampling
-                           trajectory is reproducible. The DCFR gamma value does
+                           trajectory is reproducible. The gamma discount does
                            NOT affect the trajectory (it only reweights the
                            average-strategy sum), so two runs with the same seed
                            and different gamma differ ONLY in the blueprint.
-        gamma:             Override the trainer's DCFR strategy-sum discount
-                           (e.g. 0.0 for the no-discount control, 2.0 for DCFR).
+        gamma:             Override the trainer's strategy-sum discount exponent
+                           (e.g. 0.0 for the no-discount control, 2.0 default).
                            None keeps the trainer default.
     """
     if seed is not None:
@@ -73,7 +73,7 @@ def run_training(iterations, resume=None, checkpoint_every=1000,
     trainer = BlueprintTrainer()
     if gamma is not None:
         trainer.gamma = gamma
-    print(f"DCFR: alpha={trainer.alpha} gamma={trainer.gamma} "
+    print(f"discount: alpha={trainer.alpha} gamma={trainer.gamma} "
           f"seed={seed if seed is not None else 'unset'}")
 
     start_iteration = 0

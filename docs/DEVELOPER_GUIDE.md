@@ -103,7 +103,7 @@ AllIn/
 │   │       ├── test_poker_game_properties.py # Hypothesis property tests
 │   │       ├── test_game_session.py          # Game core
 │   │       ├── test_player.py                # Bot vs RandomPlayer (PyPokerEngine)
-│   │       └── test_confidence_detection.py  # Subgame detection integration
+│   │       └── test_custom_betting.py        # Custom bets + action translation
 │   └── api/
 │       └── strategy_api.py                   # Flask REST API (start from backend/api/)
 └── frontend/
@@ -129,8 +129,12 @@ equilibrium. This codebase uses three refinements:
   At the updating player's nodes we explore *every* legal action; at the
   opponent's nodes we *sample a single* action from the current strategy. This
   turns a full O(|A|^depth) tree walk into roughly O(|A| × depth) per iteration.
-- **DCFR (Discounted CFR)** — regrets are discounted over time (`alpha`), applied
-  once per info set per iteration on first visit.
+- **Discounted CFR+ (Linear-CFR-style, *not* canonical DCFR)** — regrets are
+  discounted over time by `((t-1)/t)**alpha`, applied once per info set per
+  iteration on first visit, on top of the CFR+ zero-floor. There is no separate
+  negative-regret `beta`, and the alpha/gamma clocks advance on each role's own
+  visit counts rather than a global `t`. Valid and convergent; just not the
+  canonical `t^a/(t^a+1)` DCFR scheme (see `blueprint_trainer.py` for the full note).
 
 **Sign convention:** `cfr()` returns value from **player 0's perspective**
 throughout. At a decision node the sign is flipped to compute the acting
@@ -163,14 +167,22 @@ Finer, equity- and texture-driven buckets (the old hand-named buckets are gone):
   runtime equity (river). **Replaced the old `BoardTextureEvaluator` (now dead code);
   v1 blueprints are incompatible and must be retrained.**
 
-### Action abstraction (`abstractions/action_abstractions.py`)
+### Action abstraction (`abstractions/sizing.py` + `action_abstractions.py`)
 
-Postflop bet sizes collapse to three fractions of the pot:
-`small`=0.33× · `medium`=0.66× · `large`=1.0×. Preflop differs:
+Sizes live in **`abstractions/sizing.py`** (single source of truth; the engine, the LBR
+harness, and the PyPokerEngine path all import it — `tests/test_sizing_consistency.py` guards
+against drift). Changing a size is an **abstraction change → retrain required**.
 
-- **Opens**: 3 / 5 / 7 BB → small / medium / large
-- **3-bets**: 9 / 12 / 16 BB → small / medium / large
-- **4-bets+**: pot-relative (0.66× / 1.33× / 2.0×)
+Postflop bet sizes are three fractions of the pot:
+`small`=0.33× · `medium`=0.66× · `large`=1.0× (a raise is a fraction of pot-after-call).
+Preflop differs:
+
+- **Opens** (first-in raise): BB-anchored — 2 / 2.5 / 3.5 BB → small / medium / large.
+- **3-bets AND 4-bets+** (unified): pot-relative, raise-to = `to_call + {0.66, 1.0, 1.5} ×
+  pot-after-call`. (Replaces the old absolute 3-bet ladder, which collapsed below the
+  min-raise versus a large open — only `large` stayed legal.)
+- Off-grid bets (custom human sizes, exploiter bets) map onto this grid via pseudo-harmonic
+  action translation (`cfr/translation.py`).
 
 Plus `check`, `call`, `fold`, and `allin`. The engine allows at most **3 sized
 aggression actions per street** (1 bet + 2 raises). When a sized bet/raise would
@@ -218,7 +230,7 @@ first postflop). Responsibilities:
 ### `cfr/information_set.py` — `InformationSet`
 
 Stores `cumulative_regrets` and `cumulative_strategy` (both dicts keyed by
-action name) plus DCFR bookkeeping. Three deliberately separate operations:
+action name) plus discount bookkeeping. Three deliberately separate operations:
 
 - `get_strategy(legal_actions)` — **pure** CFR+ regret matching over *this
   visit's* legal actions. No side effects.
@@ -315,7 +327,7 @@ run_blueprint_trainer.run_training(N)         # tests/run_blueprint_trainer.py
         keys.make_info_set_key(street, position, preflop_bucket, strength, pattern)
           CardAbstraction.get_bucket(cards, board)   # 15 preflop / 12-12-10 postflop
         InformationSet.get_strategy(legal_actions)   # CFR+ regret matching (pure)
-        [updating player] explore all actions → recurse, update regrets (DCFR, floor 0)
+        [updating player] explore all actions → recurse, update regrets (discount, floor 0)
         [opponent]        sample one action  → recurse, accumulate_strategy
     BlueprintDB.save_batch(...) every `checkpoint_every` iterations
 ```
@@ -443,10 +455,15 @@ Results are in milli-big-blinds per hand (mbb/hand); lower is better.
 | Test | What it covers |
 |---|---|
 | `test_cfr_correctness.py` | CFR invariants (regrets ≥ 0, average strategy sums to 1, EV finite/near-zero in self-play) + a hand-rolled random-playout fuzz with chip-conservation and call-cost invariants |
-| `test_poker_game_properties.py` | **Hypothesis** property-based tests over a `session_walk` strategy: chip conservation, call/contribution arithmetic, all-in semantics, legal-action shape, street symmetry, terminal/utility bounds. Shrinks failures to minimal counter-examples |
+| `test_poker_game_properties.py` | **Hypothesis** property-based tests over a `session_walk` strategy: chip conservation, call/contribution arithmetic, all-in semantics, legal-action shape, street symmetry, terminal/utility bounds, **zero-sum (F2) + terminal pot conservation (F3)**. Shrinks failures to minimal counter-examples |
 | `test_game_session.py` | Game core: `GameSession`, `SessionStore`, bot strategy |
-| `test_player.py` | PyPokerEngine path: bot vs `RandomPlayer` |
-| `test_confidence_detection.py` | Subgame confidence-detection integration |
+| `test_player.py` | PyPokerEngine path: bot vs `RandomPlayer` (asserts chip conservation over a full match) |
+| `test_custom_betting.py` | Unrestricted custom bet sizing + pseudo-harmonic action translation |
+| `test_storage_and_resolve.py` | `resolve_blueprint_path` selection + `BlueprintDB` checkpoint/resume round-trip |
+| `test_action_abstraction_roundtrip.py` | Engine bet sizing ↔ `categorize_bet_size` round-trip (postflop bets, preflop opens) |
+| `test_aivat.py` | AIVAT river control variate is zero-mean (unbiasedness) |
+| `test_eval_api_smoke.py` | Best-response tree-walk smoke + Flask health endpoint |
+| `test_best_response_vectorized.py`, `test_lbr_equity.py`, `test_lbr_range.py`, `test_canonical.py` | Oracle checks (BR showdown vs brute force, LBR equity, canonicaliser) — now collected by pytest |
 
 **Lesson baked into the suite (see BUG_LOG.md):** internally-consistent bugs
 (e.g. a call costing 0 chips, which preserves chip conservation on both sides)
@@ -463,7 +480,7 @@ property tests require `hypothesis` (in `requirements.txt`).
 
 The "known bugs" that previously filled this section are **fixed** — see
 [`backend/bot/docs/BUG_LOG.md`](../backend/bot/docs/BUG_LOG.md) for the full
-history (sign convention, DCFR multi-visit decay, average-strategy readout,
+history (sign convention, multi-visit discount decay, average-strategy readout,
 contribution double-count, all-in call cost). What remains are *abstraction
 limitations*, not bugs:
 

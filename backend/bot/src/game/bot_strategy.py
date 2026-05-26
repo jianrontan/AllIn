@@ -15,6 +15,8 @@ means writing a new class here — nothing else changes.
 import random
 from abc import ABC, abstractmethod
 
+from ..cfr import translation
+
 
 class BotStrategy(ABC):
     @abstractmethod
@@ -55,14 +57,27 @@ class BlueprintStrategy(BotStrategy):
         n = len(legal_actions)
         return {a: 1.0 / n for a in legal_actions}
 
+    def _state_distribution(self, info_set_key, legal_actions, public_state):
+        """Distribution accounting for action translation. When the opponent
+        just made an off-grid bet, `public_state['translation']` carries the
+        bracketing blueprint keys + pseudo-harmonic weights; blend their
+        responses. Otherwise it is the plain single-key lookup."""
+        trans = (public_state or {}).get('translation')
+        if trans:
+            blended = translation.blend(
+                trans, lambda key: self._distribution(key, legal_actions))
+            if blended:
+                return blended
+        return self._distribution(info_set_key, legal_actions)
+
     def decide(self, info_set_key, legal_actions, public_state):
-        dist = self._distribution(info_set_key, legal_actions)
+        dist = self._state_distribution(info_set_key, legal_actions, public_state)
         actions = list(dist.keys())
         weights = list(dist.values())
         return random.choices(actions, weights=weights)[0]
 
     def explain(self, info_set_key, legal_actions, public_state):
-        return self._distribution(info_set_key, legal_actions)
+        return self._state_distribution(info_set_key, legal_actions, public_state)
 
     def range_model_fn(self):
         """Return a strategy_fn(key, legal)->np.ndarray for the opponent range

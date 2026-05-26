@@ -84,5 +84,10 @@ def main():
     print("\nPASS: equity_vs_range matches brute force (river/turn exact, flop within tol).")
 
 
+# pytest entry point (the assertions live in main()).
+def test_lbr_equity():
+    main()
+
+
 if __name__ == '__main__':
     main()

@@ -1,12 +1,13 @@
 # Poker AI Roadmap
 
-Last updated: 2026-05-25
+Last updated: 2026-05-26
 
 Status legend: ✅ done · 🚧 in progress · 📅 planned
 
 This roadmap tracks the arc from a static blueprint to online, subgame-solving
 play. For how the current system works see [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md);
-for commands see [../USER_GUIDE.md](../USER_GUIDE.md).
+for commands see [../USER_GUIDE.md](../USER_GUIDE.md). Speculative, not-yet-committed
+features (WASM client-offload, bot personality layer) live in [IDEAS.md](IDEAS.md).
 
 ---
 
@@ -23,7 +24,7 @@ A heads-up blueprint is trained with Monte Carlo CFR+ and stored in SQLite.
 | Action abstraction | `src/abstractions/action_abstractions.py` — small/medium/large + preflop ladders + all-in | ✅ |
 | Abstracted rules engine | `src/cfr/poker_game.py` — stack-aware, all-ins, 3 aggressions/street | ✅ |
 | Info-set keys | `src/cfr/keys.py` — single source of truth, position-aware | ✅ |
-| CFR+ trainer | `src/cfr/blueprint_trainer.py` — external-sampling MCCFR+, DCFR discounting | ✅ |
+| CFR+ trainer | `src/cfr/blueprint_trainer.py` — external-sampling MCCFR+, Linear-CFR-style discounting (regret + strategy-sum; not canonical DCFR) | ✅ |
 | Regret/strategy storage | `src/cfr/information_set.py` | ✅ |
 | Persistence | `src/storage/blueprint_db.py` — SQLite, WAL, checkpoint/resume | ✅ |
 | Active-blueprint resolution | `src/config.py:resolve_blueprint_path()` | ✅ |
@@ -103,8 +104,10 @@ Deploy for real-time online heads-up play.
 - Swap `InMemorySessionStore` for a Redis/DynamoDB-backed store (multi-process).
 - Consider a WebSocket transport for live play (the `game/` engine is already
   transport-agnostic).
-- **Unrestricted human bet sizing**: widen the thin `{action, size}` contract to
-  `{action, amount}` — a localized change in `GameSession` and the API.
+- ~~**Unrestricted human bet sizing**~~ ✅ done (2026-05-26). The human can bet any
+  legal chip amount: `{action:'bet_custom'|'raise_custom', amountBb}`; the engine
+  stores the raise-to total in `history`, and off-grid bets are mapped onto the
+  trained grid by pseudo-harmonic action translation (`cfr/translation.py`).
 
 ---
 

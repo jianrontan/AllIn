@@ -78,5 +78,10 @@ def main():
     print("\nPASS: BotRange card-removal + Bayesian update behave correctly.")
 
 
+# pytest entry point (the assertions live in main()).
+def test_lbr_range():
+    main()
+
+
 if __name__ == '__main__':
     main()

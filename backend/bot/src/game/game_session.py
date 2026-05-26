@@ -16,7 +16,10 @@ Design notes
 * Cards are stored in engine format (SuitRank); conversion to display format
   happens only in public_view().
 """
-from ..cfr.poker_game import PokerGame, STARTING_STACK
+from ..cfr.poker_game import (
+    PokerGame, STARTING_STACK, _is_custom, _custom_total, make_custom_action)
+from ..cfr.keys import action_char, make_info_set_key
+from ..cfr import translation
 from ..abstractions.card_abstractions import CardAbstraction
 from ..abstractions.hand_evaluator import HandEvaluator, RANK_MAP
 from .cards import shuffled_deck, to_display_list
@@ -181,37 +184,95 @@ class GameSession:
             action, d['street'], d['history'], d['starting_pot'],
             self.current_player(), d['p0_invested'], d['p1_invested'])
 
+    def _current_pot(self):
+        d = self.data
+        return self.game.calculate_current_pot(
+            d['starting_pot'], d['history'], d['street'],
+            d['p0_invested'], d['p1_invested'])
+
+    def _node_grid(self, legal):
+        """The trained bet-size grid available at the current node, as a sorted
+        [(char, frac), ...] on the eff_fraction axis (bet / pot-after-call).
+        Built from the engine's real sizes so it is correct preflop (absolute
+        ladders) and postflop (pot multipliers). Translation maps an off-grid
+        custom bet onto these chars."""
+        pot = self._current_pot()
+        to_call = self._action_cost('call') if 'call' in legal else 0.0
+        grid = {}
+        for a in legal:
+            if a.startswith(('bet_', 'raise_')):
+                frac = translation.eff_fraction(self._action_cost(a), to_call, pot)
+                grid[action_char(a)] = frac
+            elif a == 'allin':
+                frac = translation.eff_fraction(self._action_cost('allin'), to_call, pot)
+                grid['a'] = frac
+        return sorted(grid.items(), key=lambda cf: cf[1])
+
+    def custom_bounds(self):
+        """Min/max legal raise-to TOTAL (CHIPS) for a custom bet/raise by the
+        player to act, or None if no custom bet/raise is legal here. The API/UI
+        validate a human custom amount against this."""
+        if self.data['status'] != 'in_hand':
+            return None
+        d = self.data
+        return self.game.custom_bet_bounds(
+            d['street'], d['history'], d['starting_pot'], self.current_player(),
+            d['p0_stack'], d['p1_stack'], d['p0_invested'], d['p1_invested'])
+
     # ------------------------------------------------------------------
     # Applying actions
     # ------------------------------------------------------------------
 
     def apply_action(self, action):
-        """Apply one action by whoever is currently to act."""
+        """Apply one action by whoever is currently to act.
+
+        `action` is a grid action (check/call/fold/bet_*/raise_*/allin) or a
+        custom action 'bet_custom_<total>' / 'raise_custom_<total>' carrying an
+        unrestricted raise-to chip total. A custom bet is mapped onto the trained
+        grid (pseudo-harmonic translation): its pattern char is the nearest grid
+        size, and a blended response for the bot is stashed in pending_translation."""
         if self.data['status'] != 'in_hand':
             raise GameError("Hand is over.")
-        legal = self.legal_actions()
-        if action not in legal:
-            raise GameError(
-                f"Illegal action {action!r}; legal: {legal}")
-
         d = self.data
+        legal = self.legal_actions()
         player = self.current_player()
+        custom = _is_custom(action)
+
+        # -- legality --
+        snapped_action = action
+        translated = None
+        base_pattern = d['bet_pattern']
+        if custom:
+            action = self._validate_custom(action, legal)
+            grid = self._node_grid(legal)
+            pot, to_call = self._current_pot(), (self._action_cost('call') if 'call' in legal else 0.0)
+            eff = translation.eff_fraction(self._action_cost(action), to_call, pot)
+            translated = translation.translate_bet(eff, grid)
+            char = translation.nearest_char(eff, grid)
+            snapped_action = self._grid_action_for_char(char, legal)
+        elif action not in legal:
+            raise GameError(f"Illegal action {action!r}; legal: {legal}")
+        else:
+            char = _action_char(action)
+
         cost = self._action_cost(action)
 
         # Range-track the HUMAN's action (the opponent, from the bot's view).
-        # Must read bet_pattern/board BEFORE this action is appended below, so
-        # the lookup context matches how the blueprint keyed the decision.
+        # Must read bet_pattern/board BEFORE this action is appended. A custom
+        # bet is observed as its nearest grid action (the tracker models the
+        # opponent as the blueprint, which only knows grid sizes; a far-off-grid
+        # bet then looks improbable and correctly erodes confidence).
         if (player == d['human_seat'] and self.strategy_fn is not None
                 and d.get('opp_range') is not None):
             tracker = self._load_range()
             street = d['street']
             board = d['community'][:_BOARD_COUNT[min(street, 3)]]
-            tracker.observe(self.strategy_fn, action, street, self._opp_position(),
+            tracker.observe(self.strategy_fn, snapped_action, street, self._opp_position(),
                             d['bet_pattern'], legal, board)
             d['opp_range'] = tracker.to_dict()
 
         d['history'].append(action)
-        d['bet_pattern'] += _action_char(action)
+        d['bet_pattern'] += char
         if player == 0:
             d['p0_stack'] -= cost
         else:
@@ -219,10 +280,50 @@ class GameSession:
         d['action_log'].append({
             'player': player,
             'street': _STREET_NAMES[min(d['street'], 3)],
-            'action': action,
+            'action': snapped_action if custom else action,
             'chips': round(cost, 2),
         })
+
+        # An off-grid human bet leaves a blended response for the bot to consume
+        # on its immediate next decision; any other action clears it.
+        if custom and len(translated) > 1:
+            d['pending_translation'] = {'base_pattern': base_pattern,
+                                        'weights': [[c, w] for c, w in translated]}
+        else:
+            d.pop('pending_translation', None)
+
         self._settle()
+
+    def _validate_custom(self, action, legal):
+        """Validate a custom bet/raise against the node's bounds; normalise an
+        at/above-stack request to 'allin'. Returns the action to apply."""
+        bounds = self.custom_bounds()
+        if bounds is None:
+            raise GameError("No custom bet/raise is legal here.")
+        lo, hi = bounds
+        total = _custom_total(action)
+        is_raise = action.startswith('raise_')
+        if total >= hi:                       # whole stack -> all-in
+            # A full-stack shove is always a legal raise when aggression is open
+            # (bounds is not None), even when the engine's legal list omits
+            # 'allin' because every sized bet was still affordable.
+            return 'allin'
+        if total < lo - 1e-9:
+            raise GameError(
+                f"Custom amount {total:g} below minimum {lo:g} (chips).")
+        return make_custom_action(is_raise, total)
+
+    @staticmethod
+    def _grid_action_for_char(char, legal):
+        """The legal grid action whose pattern char is `char` (e.g. 'l' ->
+        whichever of bet_large / raise_large is legal here). Used to summarise a
+        custom bet as a real grid action for the range tracker."""
+        if char == 'a' and 'allin' in legal:
+            return 'allin'
+        for a in legal:
+            if a.startswith(('bet_', 'raise_')) and action_char(a) == char:
+                return a
+        return 'allin' if 'allin' in legal else legal[0]
 
     def _settle(self):
         """Resolve terminal nodes / advance streets until a player must act."""
@@ -298,21 +399,25 @@ class GameSession:
     # Info-set keys (for the bot, and for the optional "show blueprint" UI)
     # ------------------------------------------------------------------
 
-    def info_set_key(self, player):
-        """Blueprint info-set key for `player` at the current node."""
+    def info_set_key(self, player, pattern=None):
+        """Blueprint info-set key for `player` at the current node. `pattern`
+        overrides the live bet_pattern (used to build the bracketing keys for
+        action translation)."""
         d = self.data
         cards = d['p0_cards'] if player == 0 else d['p1_cards']
         position = 'ip' if player == 0 else 'oop'
         street = d['street']
-        pattern = d['bet_pattern']
+        pattern = d['bet_pattern'] if pattern is None else pattern
 
+        # Built through keys.py (single source of truth) so the live play path
+        # can never drift from the trainer / evaluation key format.
         if street == 0:
-            bucket = self.cards.get_bucket(cards, None)
-            return f"{bucket}_{position}_{pattern}"
+            return make_info_set_key(0, position, self.cards.get_bucket(cards, None),
+                                     None, pattern)
         starting = self.cards.get_bucket(cards, None)
         board = d['community'][:_BOARD_COUNT[street]]
         strength = self.cards.get_bucket(cards, board)
-        return f"{starting}_{strength}_{position}_{_STREET_NAMES[street]}_{pattern}"
+        return make_info_set_key(street, position, starting, strength, pattern)
 
     def bot_public_state(self):
         """State handed to BotStrategy.decide() for the player to act.
@@ -326,7 +431,7 @@ class GameSession:
         actor = self.current_player()
         legal = self.legal_actions()
         to_call = self._action_cost('call') if 'call' in legal else 0.0
-        return {
+        state = {
             'street': _STREET_NAMES[street],
             'pot': self.game.calculate_current_pot(
                 d['starting_pot'], d['history'], d['street'],
@@ -339,6 +444,17 @@ class GameSession:
             'to_call': to_call,
             'opp_range': self._load_range(),
         }
+        # If the opponent just made an off-grid bet, hand the bot the bracketing
+        # blueprint keys + pseudo-harmonic weights so it blends the responses to
+        # the two adjacent grid sizes instead of snapping to one (action
+        # translation). The plain BlueprintStrategy ignores this; the
+        # ConfidenceAwareStrategy / a solver consume it.
+        pend = d.get('pending_translation')
+        if pend:
+            state['translation'] = [
+                (self.info_set_key(actor, pattern=pend['base_pattern'] + c), w)
+                for c, w in pend['weights']]
+        return state
 
     def describe_hand(self, cards, board):
         """
@@ -394,9 +510,15 @@ class GameSession:
 
         to_act = None
         legal = []
+        custom_bounds = None
         if d['status'] == 'in_hand':
             to_act = 'you' if self.is_human_turn() else 'bot'
             if to_act == 'you':
+                cb = self.custom_bounds()
+                if cb is not None:
+                    # Min/max raise-to TOTAL, in BB, for the custom-amount box.
+                    custom_bounds = {'minBb': round(cb[0] / BIG_BLIND, 2),
+                                     'maxBb': round(cb[1] / BIG_BLIND, 2)}
                 for action in self.legal_actions():
                     cost = self.game._action_cost(
                         action, d['street'], d['history'], d['starting_pot'],
@@ -423,8 +545,15 @@ class GameSession:
             'yourCards': to_display_list(human_cards),
             'yourHand': self.describe_hand(human_cards, d['community'][:board_n]),
             'botCards': to_display_list(bot_cards) if hand_over else None,
+            # Bot's made-hand label, only once its cards are revealed at showdown.
+            'botHand': (self.describe_hand(bot_cards, d['community'][:board_n])
+                        if hand_over else None),
             'community': to_display_list(d['community'][:board_n]),
             'pot': round(pot, 2),
+            # Grand total in the pot INCLUDING chips wagered this street (what the
+            # players are contesting right now); `pot` excludes the live bets.
+            'totalPot': round(d['result']['finalPot'] if hand_over
+                              else grand_total, 2),
             'yourBet': round(your_bet, 2),
             'botBet': round(bot_bet, 2),
             'yourStack': round(human_stack, 2),
@@ -432,6 +561,9 @@ class GameSession:
             'humanNet': round(d['human_net'], 2),
             'toAct': to_act,
             'legalActions': legal,
+            # Min/max for the unrestricted custom-bet box (BB), or None when no
+            # custom bet/raise is legal at this node.
+            'customBounds': custom_bounds,
             'actionLog': action_log,
             'result': d['result'],
             # The bot's belief about the human's hand (confidence + top hands).

@@ -44,7 +44,7 @@ class BlueprintDB:
                 value TEXT NOT NULL
             );
         """)
-        # Migrate DBs created before the DCFR gamma clock existed: add the two
+        # Migrate DBs created before the gamma-discount clock existed: add the two
         # columns if missing. Resuming such a run continues the gamma discount
         # from the correct iteration count instead of silently restarting it.
         for col in ("strategy_visit_count", "last_strategy_iteration"):
@@ -81,6 +81,52 @@ class BlueprintDB:
             rows,
         )
         self.conn.commit()
+
+    def _info_set_rows(self, info_sets_dict):
+        return [
+            (
+                key,
+                json.dumps(info_set.legal_actions),
+                json.dumps(info_set.cumulative_regrets),
+                json.dumps(info_set.cumulative_strategy),
+                info_set.visit_count,
+                info_set.last_visited_iteration,
+                info_set.strategy_visit_count,
+                info_set.last_strategy_iteration,
+            )
+            for key, info_set in info_sets_dict.items()
+        ]
+
+    def save_checkpoint(self, info_sets_dict, metadata):
+        """Persist info sets AND metadata in a SINGLE atomic transaction.
+
+        Writing the info sets and `total_iterations` in separate commits is a
+        resume-corruption hazard: an interrupt (crash / Ctrl-C) between them
+        would leave the info sets at iteration N but the counter at an earlier
+        M, so a resume replays M..N into already-updated info sets and
+        double-counts their regrets. `with self.conn` commits on success and
+        rolls back on any exception (including KeyboardInterrupt), and SQLite's
+        transaction is atomic at the DB level — so a checkpoint either lands
+        completely or not at all. Use this instead of save_batch + set_metadata
+        for training checkpoints.
+        """
+        rows = self._info_set_rows(info_sets_dict)
+        meta_rows = [(k, json.dumps(v)) for k, v in metadata.items()]
+        with self.conn:                       # atomic: one commit, rollback on error
+            self.conn.executemany(
+                """
+                INSERT OR REPLACE INTO info_sets
+                    (key, legal_actions, cumulative_regrets, cumulative_strategy,
+                     visit_count, last_visited_iteration,
+                     strategy_visit_count, last_strategy_iteration)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            self.conn.executemany(
+                "INSERT OR REPLACE INTO training_metadata (key, value) VALUES (?, ?)",
+                meta_rows,
+            )
 
     def get_average_strategy(self, key):
         """

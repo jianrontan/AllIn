@@ -34,7 +34,15 @@ const sortedActions = (actions) =>
     [...actions].sort(
         (a, b) => (ACTION_ORDER[a.action] ?? 99) - (ACTION_ORDER[b.action] ?? 99));
 
-const actionVerb = (action) => ACTION_VERB[action] || action;
+// Preflop the blinds are already posted, so the first aggressive action is a
+// raise over the big blind — the backend models it as `bet_*`, but we show it
+// as "Raise". Postflop, `bet_*` is a genuine bet.
+const actionVerb = (action, street) => {
+    if (street === 'preflop' && action.startsWith('bet_')) {
+        return ACTION_VERB['raise_' + action.slice(4)] || action;
+    }
+    return ACTION_VERB[action] || action;
+};
 
 const actionClasses = (a) => {
     if (a === 'fold') return 'bg-rose-700 hover:bg-rose-600';
@@ -81,7 +89,7 @@ function BotRead({ read }) {
     if (!read || !read.topHands || read.topHands.length === 0) return null;
     const confPct = Math.round(read.confidence * 100);
     return (
-        <div className="mt-7">
+        <div>
             <h4 className="text-xs uppercase tracking-wider text-neutral-500 mb-2">
                 Bot&rsquo;s read of your hand
             </h4>
@@ -109,6 +117,7 @@ function AiGame() {
     const [view, setView] = useState(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
+    const [customAmt, setCustomAmt] = useState('');
     // Guards against React StrictMode invoking the mount effect twice in dev,
     // which would otherwise deal (and orphan) a second game session.
     const sessionStarted = useRef(false);
@@ -149,6 +158,20 @@ function AiGame() {
     const doAction = (action) => run(() => sendGameAction(view.sessionId, action));
     const dealNext = () => run(() => nextHand(view.sessionId));
 
+    // Unrestricted custom bet/raise: it's a raise when there's a bet to call,
+    // otherwise a bet. amountBb is the raise-to TOTAL in big blinds.
+    const facingBet = !!view && view.legalActions.some((la) => la.action === 'call');
+    const customAmtNum = parseFloat(customAmt);
+    const customValid = !!(view && view.customBounds) && !isNaN(customAmtNum)
+        && customAmtNum >= view.customBounds.minBb
+        && customAmtNum <= view.customBounds.maxBb;
+    const doCustom = () => {
+        if (!customValid) return;
+        const action = facingBet ? 'raise_custom' : 'bet_custom';
+        setCustomAmt('');
+        run(() => sendGameAction(view.sessionId, action, { amountBb: customAmtNum }));
+    };
+
     if (!view) {
         return (
             <div className="min-h-screen flex flex-col items-center justify-center
@@ -171,7 +194,7 @@ function AiGame() {
     return (
         <div className="min-h-screen flex justify-center
                         bg-[radial-gradient(ellipse_at_top,#0c2a1f_0%,#0a0a0a_62%)]">
-            <div className="w-full max-w-xl px-6 py-8">
+            <div className="w-full max-w-5xl px-6 py-5">
                 {/* Header */}
                 <div className="flex items-center justify-between">
                     <Link to="/" className="text-sm text-amber-400 hover:text-amber-300">
@@ -185,34 +208,48 @@ function AiGame() {
                 </div>
 
                 <h1 className="mt-2 text-2xl font-bold">Play With AI</h1>
-                <p className="text-neutral-500 text-sm mb-5">
+                <p className="text-neutral-500 text-sm mb-4">
                     Hand #{view.handNumber} · you are{' '}
                     {view.yourSeat === 'button' ? 'on the button (SB)' : 'in the big blind'}
                 </p>
 
+                {/* Two columns on desktop: table + actions on the left, the
+                    bot's read and the action log in a sidebar so they don't push
+                    the table off-screen. Single column (stacked) on mobile. */}
+                <div className="flex flex-col lg:flex-row lg:items-start gap-6">
+                <div className="w-full lg:flex-1 lg:max-w-xl">
+
                 {/* Felt table */}
                 <div className="rounded-[2.25rem] ring-4 ring-amber-600/60
-                                shadow-2xl shadow-black/60 px-6 py-7" style={FELT}>
+                                shadow-2xl shadow-black/60 px-6 py-4" style={FELT}>
                     {/* Bot */}
                     <Seat name="Bot" stackChips={view.botStack}
                         active={view.toAct === 'bot'} />
-                    <div className="flex justify-center gap-2 mt-2">
+                    <div className="flex justify-center gap-2 mt-1.5">
                         {(view.botCards || [null, null]).map((c, i) => (
                             <PlayingCard key={i} card={c} hidden={!view.botCards} />
                         ))}
                     </div>
-                    <div className="h-7 flex items-center justify-center mt-2">
+                    {/* Always shown so the table height doesn't jump; "???" until
+                        the bot's cards are revealed at showdown. */}
+                    <div className="flex justify-center mt-1.5">
+                        <span className="px-3 py-0.5 rounded-full bg-black/30 text-xs
+                                         tracking-wide text-amber-100/90">
+                            Bot has: <span className="font-semibold">{view.botHand || '???'}</span>
+                        </span>
+                    </div>
+                    <div className="h-6 flex items-center justify-center mt-1.5">
                         <BetChip chips={view.botBet} />
                     </div>
 
                     {/* Pot + board */}
-                    <div className="flex flex-col items-center gap-3 py-3
+                    <div className="flex flex-col items-center gap-2 py-2
                                     border-y border-white/10">
                         <span className="px-4 py-1 rounded-full bg-black/40 text-sm
                                          text-amber-200 font-medium">
-                            Pot {fmtBB(view.pot)} BB · {view.street}
+                            Pot {fmtBB(view.totalPot)} BB · {view.street}
                         </span>
-                        <div className="flex justify-center gap-2 min-h-[5rem] items-center">
+                        <div className="flex justify-center gap-2 min-h-[4.25rem] items-center">
                             {view.community.length === 0
                                 ? <span className="text-emerald-200/50 text-sm">
                                     no board yet
@@ -224,20 +261,18 @@ function AiGame() {
                     </div>
 
                     {/* You */}
-                    <div className="h-7 flex items-center justify-center mb-2">
+                    <div className="h-6 flex items-center justify-center mt-1.5">
                         <BetChip chips={view.yourBet} />
                     </div>
-                    <div className="flex justify-center gap-2 mb-2">
+                    <div className="flex justify-center gap-2 mt-1.5">
                         {view.yourCards.map((c, i) => <PlayingCard key={i} card={c} />)}
                     </div>
-                    {view.yourHand && (
-                        <div className="flex justify-center mb-2">
-                            <span className="px-3 py-1 rounded-full bg-black/30 text-xs
-                                             tracking-wide text-emerald-100/90">
-                                You have: <span className="font-semibold">{view.yourHand}</span>
-                            </span>
-                        </div>
-                    )}
+                    <div className="flex justify-center my-1.5">
+                        <span className="px-3 py-0.5 rounded-full bg-black/30 text-xs
+                                         tracking-wide text-emerald-100/90">
+                            You have: <span className="font-semibold">{view.yourHand}</span>
+                        </span>
+                    </div>
                     <Seat name="You" stackChips={view.yourStack} active={yourTurn} />
                 </div>
 
@@ -245,7 +280,7 @@ function AiGame() {
 
                 {/* Result */}
                 {handOver && view.result && (
-                    <div className={'mt-4 rounded-xl px-4 py-3 text-center ' +
+                    <div className={'mt-3 rounded-xl px-4 py-2 text-center ' +
                         (view.result.winner === 'you'
                             ? 'bg-emerald-900/60 border border-emerald-700'
                             : view.result.winner === 'bot'
@@ -264,10 +299,10 @@ function AiGame() {
                 )}
 
                 {/* Actions */}
-                <div className="mt-5 flex flex-wrap gap-2.5">
+                <div className="mt-3 flex flex-wrap gap-2.5">
                     {handOver && (
                         <button onClick={dealNext} disabled={busy}
-                            className="px-7 py-3 rounded-xl font-semibold bg-amber-500
+                            className="px-7 py-2.5 rounded-xl font-semibold bg-amber-500
                                        text-neutral-950 hover:bg-amber-400
                                        disabled:opacity-50 transition-colors">
                             Next hand
@@ -280,7 +315,7 @@ function AiGame() {
                                 'min-w-[5.5rem] disabled:opacity-50 transition-colors ' +
                                 actionClasses(la.action)}>
                             <span className="block font-semibold text-sm leading-tight">
-                                {actionVerb(la.action)}
+                                {actionVerb(la.action, view.street)}
                             </span>
                             {la.chips > 0 && (
                                 <span className="block text-xs opacity-80 tabular-nums">
@@ -296,12 +331,45 @@ function AiGame() {
                     )}
                 </div>
 
+                {/* Custom (unrestricted) bet/raise box */}
+                {!handOver && yourTurn && view.customBounds && (
+                    <div className="mt-3 flex items-center gap-2">
+                        <span className="text-sm text-neutral-400">
+                            {(facingBet || view.street === 'preflop') ? 'Raise to' : 'Bet'}
+                        </span>
+                        <input
+                            type="number" inputMode="decimal"
+                            min={view.customBounds.minBb}
+                            max={view.customBounds.maxBb}
+                            step="0.5"
+                            value={customAmt}
+                            onChange={(e) => setCustomAmt(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') doCustom(); }}
+                            placeholder={`${view.customBounds.minBb}–${view.customBounds.maxBb}`}
+                            className="w-24 px-3 py-2 rounded-xl bg-neutral-800 text-white text-sm
+                                       border border-neutral-700 focus:border-amber-500
+                                       outline-none tabular-nums" />
+                        <span className="text-sm text-neutral-400">BB</span>
+                        <button onClick={doCustom} disabled={busy || !customValid}
+                            className="px-5 py-2 rounded-xl text-white text-sm font-semibold
+                                       bg-sky-700 hover:bg-sky-600 disabled:opacity-40
+                                       transition-colors">
+                            Confirm
+                        </button>
+                    </div>
+                )}
+
+                </div>{/* end main column */}
+
+                {/* Sidebar: bot read + action log */}
+                <aside className="w-full lg:w-80 lg:flex-shrink-0 flex flex-col gap-7">
+
                 {/* Bot's read of your hand (range tracker) */}
                 {!handOver && <BotRead read={view.botRead} />}
 
                 {/* Action log */}
                 {view.actionLog.length > 0 && (
-                    <div className="mt-7">
+                    <div>
                         <h4 className="text-xs uppercase tracking-wider text-neutral-500 mb-2">
                             Action log
                         </h4>
@@ -312,13 +380,15 @@ function AiGame() {
                                         ? 'text-emerald-400' : 'text-amber-400'}>
                                         {e.seat}
                                     </span>
-                                    {' '}· {e.street} · {actionVerb(e.action)}
+                                    {' '}· {e.street} · {actionVerb(e.action, e.street)}
                                     {e.chips > 0 ? ` ${fmtBB(e.chips)} BB` : ''}
                                 </div>
                             ))}
                         </div>
                     </div>
                 )}
+                </aside>{/* end sidebar */}
+                </div>{/* end two-column row */}
             </div>
         </div>
     );
