@@ -32,6 +32,12 @@ backend/bot/analysis/blueprints/
 # git-ignored. Only the small centroids (the real inputs) are committed.
 backend/bot/analysis/abstractions/postflop_table_*.npz
 
+# Seed-compare baseline snapshot: a binary tied to the exact code+abstraction, so
+# it goes stale on any abstraction change (sizing/bake/evaluator) and a check
+# against a stale committed copy fails misleadingly. Regenerate on demand via
+# `python tests/perf_seed_compare.py save perf_baseline.pkl`. Not committed.
+backend/bot/perf_baseline.pkl
+
 # Cache
 __pycache__/
 *.pyc
