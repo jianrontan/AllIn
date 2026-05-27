@@ -47,7 +47,7 @@ class PokerGame:
     def _acting_player(self, action_index, street):
         """Preflop: SB (0) acts first. Postflop: BB (1) acts first (they are OOP)."""
         offset = 1 if street > 0 else 0
-        return (action_index + offset) % 2
+        return (action_index + offset) & 1     # & 1 == % 2 for non-negative ints
 
     # ------------------------------------------------------------------
     # Legal action generation
@@ -436,16 +436,205 @@ class PokerGame:
             history_before, street, starting_pot, current_player, p0_prev, p1_prev)
         return target_amount - current_contribution
 
+    # ==================================================================
+    # Lever A: state-threaded fast path (bit-identical to the history-based
+    # functions above; validated exhaustively by tests/test_lever_a_oracle.py).
+    # The CFR hot path threads this within-street state down the recursion
+    # instead of replaying `history` to re-derive pot/contribution/to-call/legal
+    # actions. State dict keys: pot (total), c=[c0,c1] (this-street contribs),
+    # bet_to (current match level this street), prev_bet_to (for min-raise),
+    # num_br (bet/raise count this street), last_kind/prev_kind
+    # ('start'|'check'|'call'|'aggr'|'fold'), allin_seen.
+    # ==================================================================
+
+    def init_node_state(self, street, starting_pot):
+        base = {'prev_kind': 'none', 'allin_seen': False}
+        if street == 0:
+            return {'pot': float(starting_pot), 'c': [1.0, 2.0], 'bet_to': 2.0,
+                    'prev_bet_to': 0.0, 'num_br': 0, 'last_kind': 'start', **base}
+        return {'pot': float(starting_pot), 'c': [0.0, 0.0], 'bet_to': 0.0,
+                'prev_bet_to': 0.0, 'num_br': 0, 'last_kind': 'start', **base}
+
+    @staticmethod
+    def _ns_round_complete(st):
+        # Mirrors is_round_complete: a call closing a bet/raise, check-check, or
+        # limp(call)-check ends the street.
+        if st['last_kind'] == 'call' and st['num_br'] >= 1:
+            return True
+        if st['last_kind'] == 'check' and st['prev_kind'] in ('check', 'call'):
+            return True
+        return False
+
+    @staticmethod
+    def _ns_to_call(st, cp):
+        return max(0.0, st['bet_to'] - st['c'][cp])
+
+    @staticmethod
+    def _ns_min_raise(st):
+        # Mirrors _compute_min_raise (preflop seeds the sequence with BB=2; the
+        # unified increment formula reproduces every case via prev_bet_to).
+        if st['num_br'] == 0:
+            return 2.0
+        return st['bet_to'] + (st['bet_to'] - st['prev_bet_to'])
+
+    def _ns_sized_total(self, size, street, st, cp):
+        """Raise-TO street total for a sized bet/raise (reuses engine sizing)."""
+        to_call = self._ns_to_call(st, cp)
+        if street == 0:
+            if st['num_br'] == 0:
+                return self.get_preflop_bet_amounts('open', st['pot'])[size]
+            amts = self.get_preflop_bet_amounts('pot_relative', st['pot'] + to_call)
+            return amts[size] + to_call
+        mult = self.BET_MULTIPLIERS[size]
+        if to_call > 0:
+            return mult * (st['pot'] + to_call) + to_call
+        return mult * st['pot']
+
+    def state_action_cost(self, action, street, st, cp, stack_cp):
+        """Chips cp adds for `action` (== _action_cost), from threaded state."""
+        if action in ('check', 'fold'):
+            return 0.0
+        if action == 'call':
+            return self._ns_to_call(st, cp)
+        if action == 'allin':
+            return stack_cp
+        if _is_custom(action):
+            return _custom_total(action) - st['c'][cp]
+        size = action.split('_')[1]
+        return self._ns_sized_total(size, street, st, cp) - st['c'][cp]
+
+    def state_legal_actions(self, street, st, cp, stack_cp):
+        """Legal actions from threaded state (== get_legal_actions). Top-level
+        order matches get_legal_actions: round-complete -> all-in -> aggression
+        cap (these return directly) -> normal (with the stack-constraint pass)."""
+        if self._ns_round_complete(st):
+            return []
+        if st['allin_seen']:
+            return ['fold', 'call']
+        if st['num_br'] >= self.max_raises_per_street + 1:
+            return ['fold', 'call']
+        lk, num_br = st['last_kind'], st['num_br']
+        if street == 0:
+            if lk == 'start':
+                actions = ['fold', 'call', 'bet_small', 'bet_medium', 'bet_large']
+            elif lk == 'call' and num_br == 0:                 # SB limped -> BB option
+                actions = ['check', 'bet_small', 'bet_medium', 'bet_large']
+            else:
+                actions = self._ns_fold_call_raises(street, st, cp)
+        else:
+            if lk in ('start', 'check'):
+                actions = ['check']
+                for size in ('small', 'medium', 'large'):
+                    if self.BET_MULTIPLIERS[size] * st['pot'] >= 2:
+                        actions.append(f'bet_{size}')
+            else:
+                actions = self._ns_fold_call_raises(street, st, cp)
+        return self._ns_stack_constrain(actions, street, st, cp, stack_cp)
+
+    def _ns_fold_call_raises(self, street, st, cp):
+        actions = ['fold', 'call']
+        raise_count = max(0, st['num_br'] - 1)
+        if raise_count < self.max_raises_per_street:
+            mr = self._ns_min_raise(st)
+            for size in ('small', 'medium', 'large'):
+                if self._ns_sized_total(size, street, st, cp) >= mr:
+                    actions.append(f'raise_{size}')
+        return actions
+
+    def _ns_stack_constrain(self, actions, street, st, cp, stack_cp):
+        needs_allin = False
+        filtered = []
+        for a in actions:
+            if not a.startswith(('bet_', 'raise_')):
+                filtered.append(a)
+                continue
+            if self.state_action_cost(a, street, st, cp, stack_cp) >= stack_cp:
+                needs_allin = True
+            else:
+                filtered.append(a)
+        if not needs_allin and not any(a.startswith(('bet_', 'raise_')) for a in filtered):
+            if stack_cp > self._ns_to_call(st, cp):
+                needs_allin = True
+        if needs_allin and 'allin' not in filtered:
+            i = next((j for j, a in enumerate(filtered) if a.startswith(('bet_', 'raise_'))),
+                     len(filtered))
+            filtered.insert(i, 'allin')
+        return filtered
+
+    def advance_node_state(self, st, action, street, cp, stack_cp, p_inv):
+        """New state after cp takes `action`. p_inv = cross-street prior per
+        player (the all-in match level uses the engine's clean STARTING_STACK -
+        prev, matching get_call_amount_from_history, to stay bit-identical)."""
+        new = {'pot': st['pot'], 'c': list(st['c']), 'bet_to': st['bet_to'],
+               'prev_bet_to': st['prev_bet_to'], 'num_br': st['num_br'],
+               'last_kind': st['last_kind'], 'prev_kind': st['last_kind'],
+               'allin_seen': st['allin_seen'] or action == 'allin'}
+        cost = self.state_action_cost(action, street, st, cp, stack_cp)
+        new['pot'] += cost
+        if action == 'check':
+            new['last_kind'] = 'check'
+        elif action == 'fold':
+            new['last_kind'] = 'fold'
+        elif action == 'call':
+            new['c'][cp] += cost
+            new['last_kind'] = 'call'
+        else:                                                  # bet/raise/allin
+            new['prev_bet_to'] = st['bet_to']
+            if action == 'allin':
+                # Engine uses += (_allin_amount); the match level is the clean
+                # STARTING_STACK - prev (get_call_amount_from_history's branch).
+                new['c'][cp] += cost
+                match_level = STARTING_STACK - p_inv[cp]
+            else:
+                # Engine ASSIGNS the raiser's contribution to the clean raise-to
+                # TOTAL (get_player_contribution_this_round). Assigning -- rather
+                # than c_before + cost -- avoids a float-associativity ULP that
+                # compounds across a multi-raise chain.
+                if _is_custom(action):
+                    total = _custom_total(action)
+                else:
+                    total = self._ns_sized_total(action.split('_')[1], street, st, cp)
+                new['c'][cp] = total
+                match_level = total
+            new['bet_to'] = max(st['bet_to'], match_level)
+            new['num_br'] += 1
+            new['last_kind'] = 'aggr'
+        return new
+
+    def _raw_cached(self, cards, board):
+        """Memoized 7-card rank for `cards` on `board` (lower = stronger). The two
+        showdown ranks are fixed per hand but the same terminal recurs across many
+        CFR branches, so caching by (cards, board) avoids recomputing them. Pure
+        function of the inputs -> bit-identical. Shares the per-iteration
+        _calc_cache (cleared each training iteration with everything else).
+        phevaluator scores are >= 1, so None is a safe 'absent' sentinel."""
+        key = ('rank', tuple(cards), tuple(board))
+        v = self._calc_cache.get(key)
+        if v is None:
+            v = self.hand_evaluator.get_raw_hand_value(cards, board)
+            self._calc_cache[key] = v
+        return v
+
     def get_utility(self, p0_cards, p1_cards, community_cards, history, street, starting_pot,
-                    p0_prev_invested=0.0, p1_prev_invested=0.0):
-        """Calculate utility from P0's perspective."""
+                    p0_prev_invested=0.0, p1_prev_invested=0.0,
+                    _final_pot=None, _p0_total=None):
+        """Calculate utility from P0's perspective. `_final_pot` / `_p0_total`
+        are optional threaded values (Lever A) -- when given, the final pot and
+        P0's total are used directly instead of replaying `history`; bit-identical
+        to the replay (validated). Omitted by the eval harness/tests -> replay."""
 
-        final_pot = self.calculate_current_pot(
-            starting_pot, history, street, p0_prev_invested, p1_prev_invested)
+        if _final_pot is not None:
+            final_pot = _final_pot
+        else:
+            final_pot = self.calculate_current_pot(
+                starting_pot, history, street, p0_prev_invested, p1_prev_invested)
 
-        p0_this = self.get_player_contribution_this_round(
-            history, street, starting_pot, 0, p0_prev_invested, p1_prev_invested)
-        p0_total = p0_prev_invested + p0_this
+        if _p0_total is not None:
+            p0_total = _p0_total
+        else:
+            p0_this = self.get_player_contribution_this_round(
+                history, street, starting_pot, 0, p0_prev_invested, p1_prev_invested)
+            p0_total = p0_prev_invested + p0_this
 
         if 'fold' in history:
             folder_index = next(i for i, action in enumerate(history)
@@ -464,8 +653,8 @@ class PokerGame:
             else:
                 community_for_eval = community_cards[:self.get_community_cards_count(street)]
 
-            p0_raw = self.hand_evaluator.get_raw_hand_value(p0_cards, community_for_eval)
-            p1_raw = self.hand_evaluator.get_raw_hand_value(p1_cards, community_for_eval)
+            p0_raw = self._raw_cached(p0_cards, community_for_eval)
+            p1_raw = self._raw_cached(p1_cards, community_for_eval)
 
             if p0_raw < p1_raw:
                 return final_pot - p0_total

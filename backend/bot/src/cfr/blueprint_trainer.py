@@ -77,11 +77,6 @@ class BlueprintTrainer:
         community_cards = shuffled_deck[4:9]
         return p0_cards, p1_cards, community_cards
 
-    def _action_stack_cost(self, action, history, street, starting_pot, p0_prev, p1_prev, current_player):
-        """Chips the current player must put in to take this action (for stack tracking)."""
-        return self.game._action_cost(
-            action, street, history, starting_pot, current_player, p0_prev, p1_prev)
-
     def _postflop_strength(self, player, street, community_cards):
         """Acting player's postflop strength bucket for this street, computed
         lazily and memoized per iteration. street 1/2/3 -> board of 3/4/5 cards.
@@ -99,7 +94,7 @@ class BlueprintTrainer:
     def cfr(self, p0_cards, p1_cards, community_cards, history,
             street, updating_player, depth=0, iteration=0, starting_pot=None,
             p0_invested=0.0, p1_invested=0.0, bet_pattern='',
-            p0_stack=None, p1_stack=None):
+            p0_stack=None, p1_stack=None, st=None):
         """
         External-sampling Monte Carlo CFR+ (with Linear-CFR-style regret discounting).
 
@@ -111,60 +106,59 @@ class BlueprintTrainer:
 
         - Traverser (updating_player): explores every action, updates regrets.
         - Opponent: accumulates the average strategy, samples a single action.
-        """
 
-        if depth > 50:
-            print(f"WARNING: Max depth reached at street {street}, history {history}")
-            return self.game.get_utility(p0_cards, p1_cards, community_cards,
-                                         history, min(street, 3), starting_pot,
-                                         p0_invested, p1_invested)
+        Lever A: `st` is the threaded within-street betting state (pot /
+        contributions / to-call / legal actions), so the hot path never replays
+        `history` for chip math. It's bit-identical to the history-based
+        functions (validated by tests/test_lever_a_oracle.py + the seed-compare).
+        history is still maintained for is_terminal / _acting_player / info-set keys.
+        """
 
         if starting_pot is None:
             starting_pot = 3  # SB(1) + BB(2)
-
         if p0_stack is None:
             p0_stack = STARTING_STACK - 1  # P0 posted SB
         if p1_stack is None:
             p1_stack = STARTING_STACK - 2  # P1 posted BB
+        if st is None:
+            st = self.game.init_node_state(street, starting_pot)
+
+        def _terminal_value(s):
+            # P0-perspective utility using the threaded pot + P0 total (no replay).
+            return self.game.get_utility(
+                p0_cards, p1_cards, community_cards, history, min(s, 3), starting_pot,
+                p0_invested, p1_invested,
+                _final_pot=st['pot'], _p0_total=p0_invested + st['c'][0])
+
+        if depth > 50:
+            print(f"WARNING: Max depth reached at street {street}, history {history}")
+            return _terminal_value(street)
 
         if street > 3:
-            return self.game.get_utility(p0_cards, p1_cards, community_cards,
-                                         history, 3, starting_pot,
-                                         p0_invested, p1_invested)
+            return _terminal_value(3)
 
         if self.game.is_terminal(history, street):
-            return self.game.get_utility(p0_cards, p1_cards, community_cards,
-                                         history, street, starting_pot,
-                                         p0_invested, p1_invested)
+            return _terminal_value(street)
 
         current_player = self.game._acting_player(len(history), street)
+        stack_cp = p0_stack if current_player == 0 else p1_stack
 
-        legal_actions = self.game.get_legal_actions(
-            street, history, starting_pot, current_player,
-            p0_stack, p1_stack, p0_invested, p1_invested)
+        legal_actions = self.game.state_legal_actions(street, st, current_player, stack_cp)
 
         if not legal_actions:
-            current_pot = self.game.calculate_current_pot(
-                starting_pot, history, street, p0_invested, p1_invested)
             if street < 3:
-                p0_this = self.game.get_player_contribution_this_round(
-                    history, street, starting_pot, 0, p0_invested, p1_invested)
-                p1_this = self.game.get_player_contribution_this_round(
-                    history, street, starting_pot, 1, p0_invested, p1_invested)
+                p0_this, p1_this = st['c'][0], st['c'][1]
                 # Recompute stacks from total invested to avoid drift across streets
                 new_p0_stack = STARTING_STACK - (p0_invested + p0_this)
                 new_p1_stack = STARTING_STACK - (p1_invested + p1_this)
-
                 return self.cfr(p0_cards, p1_cards, community_cards, [],
                                 street + 1, updating_player,
-                                depth + 1, iteration, current_pot,
+                                depth + 1, iteration, st['pot'],
                                 p0_invested + p0_this, p1_invested + p1_this,
                                 bet_pattern='',
-                                p0_stack=new_p0_stack, p1_stack=new_p1_stack)
+                                p0_stack=new_p0_stack, p1_stack=new_p1_stack, st=None)
             else:
-                return self.game.get_utility(p0_cards, p1_cards, community_cards,
-                                             history, street, starting_pot,
-                                             p0_invested, p1_invested)
+                return _terminal_value(street)
 
         # Build info set key
         position = 'ip' if current_player == 0 else 'oop'
@@ -184,14 +178,17 @@ class BlueprintTrainer:
 
         strategy = info_set.get_strategy(legal_actions)
 
-        def child_stacks(action):
-            """Return (new_p0_stack, new_p1_stack) after taking action."""
-            cost = self._action_stack_cost(
-                action, history, street, starting_pot, p0_invested, p1_invested, current_player)
+        p_inv = (p0_invested, p1_invested)
+
+        def child_step(action):
+            """(new_p0_stack, new_p1_stack, child_state) after taking `action` --
+            cost + state from the threaded state (no history replay)."""
+            cost = self.game.state_action_cost(action, street, st, current_player, stack_cp)
+            child_st = self.game.advance_node_state(
+                st, action, street, current_player, stack_cp, p_inv)
             if current_player == 0:
-                return p0_stack - cost, p1_stack
-            else:
-                return p0_stack, p1_stack - cost
+                return p0_stack - cost, p1_stack, child_st
+            return p0_stack, p1_stack - cost, child_st
 
         if current_player == updating_player:
             # --- Traverser node: explore every action, update regrets. ---
@@ -213,13 +210,13 @@ class BlueprintTrainer:
             for i, action in enumerate(legal_actions):
                 next_history = history + [action]
                 next_pattern = bet_pattern + _action_char(action)
-                new_p0_stack, new_p1_stack = child_stacks(action)
+                new_p0_stack, new_p1_stack, child_st = child_step(action)
                 action_values.append(self.cfr(
                     p0_cards, p1_cards, community_cards, next_history,
                     street, updating_player,
                     depth + 1, iteration, starting_pot,
                     p0_invested, p1_invested, next_pattern,
-                    new_p0_stack, new_p1_stack))
+                    new_p0_stack, new_p1_stack, st=child_st))
 
             # Convert to the acting player's own perspective for regret matching.
             sign = 1.0 if current_player == 0 else -1.0
@@ -257,13 +254,13 @@ class BlueprintTrainer:
             sampled_action = random.choices(legal_actions, weights=strategy)[0]
             next_history = history + [sampled_action]
             next_pattern = bet_pattern + _action_char(sampled_action)
-            new_p0_stack, new_p1_stack = child_stacks(sampled_action)
+            new_p0_stack, new_p1_stack, child_st = child_step(sampled_action)
             return self.cfr(
                 p0_cards, p1_cards, community_cards, next_history,
                 street, updating_player,
                 depth + 1, iteration, starting_pot,
                 p0_invested, p1_invested, next_pattern,
-                new_p0_stack, new_p1_stack)
+                new_p0_stack, new_p1_stack, st=child_st)
 
     def train_blueprint(self, iterations, db=None, start_iteration=0, checkpoint_every=10000):
         """Main training loop."""
