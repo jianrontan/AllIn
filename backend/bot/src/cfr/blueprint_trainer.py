@@ -31,6 +31,19 @@ class BlueprintTrainer:
         # O(all info sets) full-table rewrite into O(touched-since-last). The DB
         # always holds the latest row for every key, so resume is unaffected.
         self._dirty = set()
+        # Parallel/worker mode only (discount disabled): the regret update happens
+        # at traverser nodes, the average-strategy accumulation at opponent nodes.
+        # Tracking the two separately lets a worker export exactly the right delta
+        # and lets the master advance the correct discount clock per key. Populated
+        # only when discount_enabled is False (see cfr) so single-thread pays nothing.
+        self._dirty_regret = set()
+        self._dirty_strategy = set()
+        # When False, cfr() skips the per-iteration alpha/gamma decay and just
+        # accumulates raw (CFR+-floored) contributions. Parallel workers run with
+        # discount disabled; the master applies a block discount once per merge
+        # round (see parallel_trainer.merge_round). Single-thread keeps it True
+        # so its behaviour is unchanged / bit-identical.
+        self.discount_enabled = True
         self.game = PokerGame()
         self.game_adapter = GameAdapter()
         self.deck = self.create_deck()
@@ -192,11 +205,15 @@ class BlueprintTrainer:
 
         if current_player == updating_player:
             # --- Traverser node: explore every action, update regrets. ---
+            if not self.discount_enabled:
+                # Worker mode: record that this key got a regret update this round
+                # so it is exported and the master advances its regret clock.
+                self._dirty_regret.add(info_set_key)
             # First visit of this iteration: bump the discount clock and discount
             # the prior cumulative regret ONCE. An info set can be reached more
             # than once per traversal (different lines collapse onto the same
             # key), so decaying inside the per-action loop would over-discount.
-            if info_set.last_visited_iteration != iteration:
+            if self.discount_enabled and info_set.last_visited_iteration != iteration:
                 info_set.visit_count += 1
                 info_set.last_visited_iteration = iteration
                 t = info_set.visit_count
@@ -237,12 +254,16 @@ class BlueprintTrainer:
 
         else:
             # --- Opponent node: accumulate avg strategy, sample one action. ---
+            if not self.discount_enabled:
+                # Worker mode: record that this key got a strategy update this round
+                # so it is exported and the master advances its strategy clock.
+                self._dirty_strategy.add(info_set_key)
             # gamma discount: discount the prior average-strategy sum ONCE per
             # iteration (its own clock, separate from the regret clock) before
             # adding this visit's contribution, so later iterations dominate.
             # Same once-per-iteration guard as the regret discount above: an info
             # set can recur within a traversal via different lines.
-            if info_set.last_strategy_iteration != iteration:
+            if self.discount_enabled and info_set.last_strategy_iteration != iteration:
                 info_set.strategy_visit_count += 1
                 info_set.last_strategy_iteration = iteration
                 s = info_set.strategy_visit_count
@@ -261,6 +282,34 @@ class BlueprintTrainer:
                 depth + 1, iteration, starting_pot,
                 p0_invested, p1_invested, next_pattern,
                 new_p0_stack, new_p1_stack, st=child_st)
+
+    def _run_iteration(self, actual_iteration):
+        """One MCCFR+ iteration: deal a hand, set up the per-iteration bucket
+        cache, run a full traversal for this iteration's updating player, and
+        fold the sampled root value into the lifetime EV gauge. Returns the
+        sampled root utility. Shared by the single-thread loop and the parallel
+        worker chunk so both run identical per-iteration logic."""
+        p0_cards, p1_cards, community_cards = self.deal_random_hand()
+
+        ca = self.game_adapter.card_abstractions
+        # Preflop buckets are cheap (dict lookup) -- compute eagerly.
+        self._p0_preflop = ca.get_bucket(p0_cards, None)
+        self._p1_preflop = ca.get_bucket(p1_cards, None)
+        # Postflop buckets (esp. river, ~990-hand equity) are expensive and only
+        # the ACTING player's bucket at the CURRENT street is ever read for a key.
+        # Compute them lazily on first use inside cfr(), memoized per iteration.
+        self._p0_cards = p0_cards
+        self._p1_cards = p1_cards
+        self._postflop_memo = {}
+
+        updating_player = actual_iteration % 2
+        self.game._calc_cache.clear()
+        util = self.cfr(
+            p0_cards, p1_cards, community_cards, [],
+            0, updating_player, 0, actual_iteration, 3)
+        self.ev_sum += util
+        self.ev_count += 1
+        return util
 
     def train_blueprint(self, iterations, db=None, start_iteration=0, checkpoint_every=10000):
         """Main training loop."""
@@ -283,29 +332,8 @@ class BlueprintTrainer:
         for i in range(iterations):
             actual_iteration = start_iteration + i
             t_iter = time.time()
-            p0_cards, p1_cards, community_cards = self.deal_random_hand()
-
-            ca = self.game_adapter.card_abstractions
-            # Preflop buckets are cheap (dict lookup) -- compute eagerly.
-            self._p0_preflop = ca.get_bucket(p0_cards, None)
-            self._p1_preflop = ca.get_bucket(p1_cards, None)
-            # Postflop buckets (esp. river, ~990-hand equity) are expensive and
-            # only the ACTING player's bucket at the CURRENT street is ever read
-            # for a key. Compute them lazily on first use inside cfr(), memoized
-            # per iteration -- so a hand that ends preflop never pays for river
-            # bucketing, and each (player, street) is computed at most once.
-            self._p0_cards = p0_cards
-            self._p1_cards = p1_cards
-            self._postflop_memo = {}
-
-            updating_player = actual_iteration % 2
-            self.game._calc_cache.clear()
-            util = self.cfr(
-                p0_cards, p1_cards, community_cards, [],
-                0, updating_player, 0, actual_iteration, 3)
+            util = self._run_iteration(actual_iteration)
             session_ev_sum += util
-            self.ev_sum += util
-            self.ev_count += 1
 
             if (i + 1) % LOG_EVERY == 0:
                 iter_ms = (time.time() - t_iter) * 1000

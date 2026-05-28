@@ -13,6 +13,9 @@ const ACTION_LABELS = {
 
 const actionLabel = (a) => ACTION_LABELS[a] || a;
 
+// Bracket size chars (action translation) -> human label.
+const CHAR_LABEL = { s: '⅓ pot', m: '⅔ pot', l: 'pot', a: 'all-in' };
+
 const barColor = (a) => {
     if (a === 'fold') return 'bg-rose-500';
     if (a === 'call' || a === 'check') return 'bg-sky-500';
@@ -42,7 +45,8 @@ function StrategyResult({ result, loading, error }) {
         );
     }
 
-    const { key, found, strategy, visitCount, cardBucket, strengthBucket } = result;
+    const { key, found, strategy, visitCount, cardBucket, strengthBucket,
+        translated, brackets } = result;
 
     return (
         <div className={PANEL}>
@@ -78,6 +82,22 @@ function StrategyResult({ result, loading, error }) {
                 </div>
             )}
 
+            {translated && brackets && (
+                <div className="mb-4 rounded-lg border border-sky-800/50 bg-sky-950/30
+                                px-4 py-3 text-sm text-sky-200">
+                    <b>Off-grid bet → action translation.</b> Your size sits between two
+                    trained sizes, so the strategy below is the pseudo-harmonic blend of:
+                    <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-sky-300/90">
+                        {brackets.map((b) => (
+                            <span key={b.char}>
+                                {(b.weight * 100).toFixed(0)}% on <b>{CHAR_LABEL[b.char] || b.char}</b>
+                                {b.found ? '' : ' (untrained)'}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {found && strategy && (
                 <>
                     <h4 className="text-sm uppercase tracking-wider text-neutral-500 mb-3">
@@ -106,7 +126,9 @@ function StrategyResult({ result, loading, error }) {
                             ))}
                     </div>
                     <div className="mt-4 text-xs text-neutral-500">
-                        Trained on {visitCount.toLocaleString()} visits to this info set.
+                        {visitCount != null
+                            ? `Trained on ${visitCount.toLocaleString()} visits to this info set.`
+                            : 'Blended across the bracketing sizes (per-size visit counts omitted).'}
                     </div>
                 </>
             )}

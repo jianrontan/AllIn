@@ -8,18 +8,37 @@ import StrategyResult from './StrategyResult';
 const STREETS = ['preflop', 'flop', 'turn', 'river'];
 const BOARD_COUNT = { preflop: 0, flop: 3, turn: 4, river: 5 };
 
-const ACTION_BUTTONS = [
+// Sizeless actions. Fold is intentionally absent: a fold ends the hand, so it
+// never appears in a betting line you'd query a strategy for.
+const DISCRETE = [
     { label: 'Check', action: 'check' },
     { label: 'Call', action: 'call' },
-    { label: 'Fold', action: 'fold' },
-    { label: 'Bet S', action: 'bet', size: 'small' },
-    { label: 'Bet M', action: 'bet', size: 'medium' },
-    { label: 'Bet L', action: 'bet', size: 'large' },
-    { label: 'Raise S', action: 'raise', size: 'small' },
-    { label: 'Raise M', action: 'raise', size: 'medium' },
-    { label: 'Raise L', action: 'raise', size: 'large' },
     { label: 'All-in', action: 'allin' },
 ];
+
+// Preflop sizes are an absolute BB ladder (not pot fractions), so preflop sizing
+// is expressed as a raise-TO total in BB: the three trained opens, plus any
+// custom amount. Postflop uses free pot-fraction sizing.
+const PREFLOP_PRESETS = [2, 2.5, 3.5];               // raise-to totals in BB
+
+// Postflop quick sizes as pot fractions; any custom % is allowed too. With
+// pseudo-harmonic translation the backend maps an off-grid size onto the trained
+// grid (⅓ / ⅔ / pot) and blends the responses, so any size returns a strategy.
+const POSTFLOP_PRESETS = [0.33, 0.5, 0.66, 0.75, 1.0, 1.25];
+
+// A bet/raise is a "raise" once someone has already put money in this street.
+const verbFor = (line) =>
+    line.some((a) => ['bet', 'raise', 'allin'].includes(a.action)) ? 'raise' : 'bet';
+
+const chipLabel = (a) => {
+    if (a.action === 'check') return 'Check';
+    if (a.action === 'call') return 'Call';
+    if (a.action === 'allin') return 'All-in';
+    if (a.bb != null) return `${a.action === 'raise' ? 'Raise to' : 'Open to'} ${a.bb} BB`;
+    const verb = a.action === 'raise' ? 'Raise' : 'Bet';
+    if (a.fraction != null) return `${verb} ${Math.round(a.fraction * 100)}%`;
+    return `${verb} ${a.size}`;
+};
 
 const normalizeCard = (raw) => {
     const c = (raw || '').replace(/[^a-zA-Z0-9]/g, '').slice(0, 2);
@@ -46,6 +65,7 @@ function HandExplorer() {
     const [community, setCommunity] = useState(['', '', '', '', '']);
     const [position, setPosition] = useState('ip');
     const [actions, setActions] = useState([]);
+    const [sizeInput, setSizeInput] = useState('');   // custom size: BB (preflop) or % pot
 
     const [result, setResult] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -57,6 +77,17 @@ function HandExplorer() {
         setHole((p) => p.map((c, idx) => (idx === i ? normalizeCard(v) : c)));
     const setCommunityCard = (i, v) =>
         setCommunity((p) => p.map((c, idx) => (idx === i ? normalizeCard(v) : c)));
+
+    const addDiscrete = (action) => setActions((p) => [...p, { action }]);
+    const addBb = (bb) => setActions((p) => [...p, { action: verbFor(p), bb }]);
+    const addFraction = (fraction) =>
+        setActions((p) => [...p, { action: verbFor(p), fraction }]);
+    const addCustom = () => {
+        const v = parseFloat(sizeInput);
+        if (!isFinite(v) || v <= 0) return;
+        if (street === 'preflop') addBb(v); else addFraction(v / 100);
+        setSizeInput('');
+    };
 
     const lookup = async () => {
         setError(null);
@@ -140,13 +171,56 @@ function HandExplorer() {
             <div className="mb-6">
                 <label className={LABEL}>Betting line this street</label>
                 <div className="flex flex-wrap gap-2 mb-2">
-                    {ACTION_BUTTONS.map((b) => (
-                        <button key={b.label} className={chip}
-                            onClick={() => setActions((p) => [...p, b])}>
+                    {DISCRETE.map((b) => (
+                        <button key={b.action} className={chip}
+                            onClick={() => addDiscrete(b.action)}>
                             {b.label}
                         </button>
                     ))}
                 </div>
+
+                {street === 'preflop' ? (
+                    <div className="space-y-2 mb-2">
+                        <div className="flex flex-wrap gap-2 items-center">
+                            <span className="text-xs text-neutral-500 mr-1">Raise to</span>
+                            {PREFLOP_PRESETS.map((bb) => (
+                                <button key={bb} className={chip}
+                                    onClick={() => addBb(bb)}>{bb} BB</button>
+                            ))}
+                        </div>
+                        <div className="flex flex-wrap gap-2 items-center">
+                            <span className="text-xs text-neutral-500 mr-1">Custom</span>
+                            <input className={`${CARD_INPUT} w-16 h-9 text-base`}
+                                placeholder="2.7" value={sizeInput}
+                                onChange={(e) => setSizeInput(e.target.value.replace(/[^0-9.]/g, ''))}
+                                onKeyDown={(e) => e.key === 'Enter' && addCustom()} />
+                            <span className="text-sm text-neutral-400">BB</span>
+                            <button className={chip} onClick={addCustom}>Add</button>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="space-y-2 mb-2">
+                        <div className="flex flex-wrap gap-2 items-center">
+                            <span className="text-xs text-neutral-500 mr-1">Bet / raise</span>
+                            {POSTFLOP_PRESETS.map((f) => (
+                                <button key={f} className={chip}
+                                    onClick={() => addFraction(f)}>
+                                    {Math.round(f * 100)}%
+                                </button>
+                            ))}
+                        </div>
+                        <div className="flex flex-wrap gap-2 items-center">
+                            <span className="text-xs text-neutral-500 mr-1">Custom</span>
+                            <input className={`${CARD_INPUT} w-16 h-9 text-base`}
+                                placeholder="55" value={sizeInput}
+                                onChange={(e) => setSizeInput(e.target.value.replace(/[^0-9.]/g, ''))}
+                                onKeyDown={(e) => e.key === 'Enter' && addCustom()} />
+                            <span className="text-sm text-neutral-400">% pot</span>
+                            <button className={chip} onClick={addCustom}>Add</button>
+                        </div>
+                    </div>
+                )}
+
                 <div className="min-h-[2.5rem] p-2 rounded-lg bg-black/50
                                 flex flex-wrap gap-2 items-center">
                     {actions.length === 0 && (
@@ -157,7 +231,7 @@ function HandExplorer() {
                     {actions.map((a, i) => (
                         <span key={i} className="px-2.5 py-1 rounded-md bg-neutral-700
                                                   text-xs text-neutral-200">
-                            {a.action}{a.size ? ` ${a.size}` : ''}
+                            {chipLabel(a)}
                         </span>
                     ))}
                 </div>

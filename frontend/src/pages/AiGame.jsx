@@ -6,7 +6,7 @@
 // All amounts are shown in big blinds (the backend works in chips; 1 BB = 2).
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { newGame, sendGameAction, nextHand } from '../api';
+import { newGame, sendGameAction, sendBotAction, nextHand, getGameState } from '../api';
 import { fmtBB, fmtBBSigned } from '../format';
 import PlayingCard from '../components/PlayingCard';
 
@@ -42,6 +42,14 @@ const actionVerb = (action, street) => {
         return ACTION_VERB['raise_' + action.slice(4)] || action;
     }
     return ACTION_VERB[action] || action;
+};
+
+// Action-log verb: drops the small/medium/large size word (the exact size is
+// already shown as the BB amount), so the log reads "Raise 3 BB", "Bet 4.6 BB".
+const logVerb = (action, street) => {
+    if (action.startsWith('raise_')) return 'Raise';
+    if (action.startsWith('bet_')) return street === 'preflop' ? 'Raise' : 'Bet';
+    return ACTION_VERB[action] || action;     // fold / check / call / all-in
 };
 
 const actionClasses = (a) => {
@@ -104,7 +112,7 @@ function BotRead({ read }) {
                 {read.topHands.map((h, i) => (
                     <span key={i} className="px-2 py-1 rounded bg-black/30 text-xs
                                              tabular-nums text-neutral-300">
-                        {h.cards.join(' ')}{' '}
+                        {h.label}{' '}
                         <span className="text-neutral-500">{(h.prob * 100).toFixed(1)}%</span>
                     </span>
                 ))}
@@ -118,9 +126,17 @@ function AiGame() {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
     const [customAmt, setCustomAmt] = useState('');
+    // True while the bot's turn (incl. a slow river solve) is in flight, so the UI
+    // can show a "thinking" indicator after the new card has been revealed.
+    const [thinking, setThinking] = useState(false);
+    const [dots, setDots] = useState('');
     // Guards against React StrictMode invoking the mount effect twice in dev,
     // which would otherwise deal (and orphan) a second game session.
     const sessionStarted = useRef(false);
+    // Synchronous in-flight guard. `busy` re-renders asynchronously, so a fast
+    // double-click can fire two requests before the buttons disable; this blocks
+    // the second immediately (and avoids the server's spurious 409 banner).
+    const inFlight = useRef(false);
 
     const startSession = async () => {
         setBusy(true);
@@ -143,20 +159,61 @@ function AiGame() {
         startSession();
     }, []);
 
+    // Animated ellipsis for the "Bot is thinking" indicator: '' -> . -> .. -> ...
+    useEffect(() => {
+        if (!thinking) { setDots(''); return; }
+        const seq = ['', '.', '..', '...'];
+        let i = 0;
+        const id = setInterval(() => { i = (i + 1) % seq.length; setDots(seq[i]); }, 400);
+        return () => clearInterval(id);
+    }, [thinking]);
+
+    // Returns true on success, false if it bailed or errored (so callers can
+    // decide whether to clear input).
     const run = async (fn) => {
+        if (inFlight.current) return false;   // ignore overlapping submits
+        inFlight.current = true;
         setBusy(true);
         setError(null);
+        let ok = false;
         try {
-            setView(await fn());
+            let v = await fn();
+            setView(v);                       // reveal the new card immediately
+            // The bot's turn runs separately so the freshly-dealt card shows first;
+            // loop it (with a "thinking" indicator) until it's the human's turn or
+            // the hand ends. One bot action per call, so this is usually one pass.
+            let guard = 0;
+            while (v && v.status === 'in_hand' && v.toAct === 'bot' && guard < 8) {
+                setThinking(true);
+                v = await sendBotAction(v.sessionId);
+                setView(v);
+                guard += 1;
+            }
+            ok = true;
         } catch (e) {
             setError(e.message);
         } finally {
+            setThinking(false);
             setBusy(false);
+            inFlight.current = false;
         }
+        return ok;
     };
 
     const doAction = (action) => run(() => sendGameAction(view.sessionId, action));
     const dealNext = () => run(() => nextHand(view.sessionId));
+
+    // Recover from a transient network error mid-hand: re-fetch authoritative
+    // state instead of stranding the hand (a reload would start a new session).
+    const resync = async () => {
+        if (!view) return;
+        setError(null);
+        try {
+            setView(await getGameState(view.sessionId));
+        } catch (e) {
+            setError(e.message);
+        }
+    };
 
     // Unrestricted custom bet/raise: it's a raise when there's a bet to call,
     // otherwise a bet. amountBb is the raise-to TOTAL in big blinds.
@@ -165,11 +222,23 @@ function AiGame() {
     const customValid = !!(view && view.customBounds) && !isNaN(customAmtNum)
         && customAmtNum >= view.customBounds.minBb
         && customAmtNum <= view.customBounds.maxBb;
-    const doCustom = () => {
+    // Snap a typed/spun amount back into the legal range when the field loses
+    // focus, so the spinner arrows (step) can't strand it on an illegal value.
+    const clampCustom = () => {
+        if (customAmt === '' || !(view && view.customBounds)) return;
+        const n = parseFloat(customAmt);
+        if (isNaN(n)) { setCustomAmt(''); return; }
+        const { minBb, maxBb } = view.customBounds;
+        setCustomAmt(String(Math.min(maxBb, Math.max(minBb, n))));
+    };
+    const doCustom = async () => {
         if (!customValid) return;
         const action = facingBet ? 'raise_custom' : 'bet_custom';
-        setCustomAmt('');
-        run(() => sendGameAction(view.sessionId, action, { amountBb: customAmtNum }));
+        const amt = customAmtNum;
+        // Clear the input only after the bet is accepted, so a rejected bet keeps
+        // what was typed for an easy retry.
+        const ok = await run(() => sendGameAction(view.sessionId, action, { amountBb: amt }));
+        if (ok) setCustomAmt('');
     };
 
     if (!view) {
@@ -234,8 +303,10 @@ function AiGame() {
                         the bot's cards are revealed at showdown. */}
                     <div className="flex justify-center mt-1.5">
                         <span className="px-3 py-0.5 rounded-full bg-black/30 text-xs
-                                         tracking-wide text-amber-100/90">
-                            Bot has: <span className="font-semibold">{view.botHand || '???'}</span>
+                                         tracking-wide text-amber-100/90 tabular-nums">
+                            {thinking
+                                ? <>Bot is thinking<span className="font-semibold">{dots}</span></>
+                                : <>Bot has: <span className="font-semibold">{view.botHand || '???'}</span></>}
                         </span>
                     </div>
                     <div className="h-6 flex items-center justify-center mt-1.5">
@@ -276,7 +347,16 @@ function AiGame() {
                     <Seat name="You" stackChips={view.yourStack} active={yourTurn} />
                 </div>
 
-                {error && <p className="text-rose-400 text-sm mt-4">{error}</p>}
+                {error && (
+                    <div className="mt-4 flex items-center justify-center gap-3 text-sm">
+                        <span className="text-rose-400">{error}</span>
+                        <button onClick={resync} disabled={busy}
+                            className="px-3 py-1 rounded-lg bg-neutral-800 text-neutral-200
+                                       hover:bg-neutral-700 disabled:opacity-50">
+                            Reconnect
+                        </button>
+                    </div>
+                )}
 
                 {/* Result */}
                 {handOver && view.result && (
@@ -344,6 +424,7 @@ function AiGame() {
                             step="0.5"
                             value={customAmt}
                             onChange={(e) => setCustomAmt(e.target.value)}
+                            onBlur={clampCustom}
                             onKeyDown={(e) => { if (e.key === 'Enter') doCustom(); }}
                             placeholder={`${view.customBounds.minBb}–${view.customBounds.maxBb}`}
                             className="w-24 px-3 py-2 rounded-xl bg-neutral-800 text-white text-sm
@@ -380,7 +461,7 @@ function AiGame() {
                                         ? 'text-emerald-400' : 'text-amber-400'}>
                                         {e.seat}
                                     </span>
-                                    {' '}· {e.street} · {actionVerb(e.action, e.street)}
+                                    {' '}· {e.street} · {logVerb(e.action, e.street)}
                                     {e.chips > 0 ? ` ${fmtBB(e.chips)} BB` : ''}
                                 </div>
                             ))}

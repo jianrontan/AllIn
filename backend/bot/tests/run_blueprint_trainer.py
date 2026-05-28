@@ -31,7 +31,7 @@ ANALYSIS_DIR = Path(__file__).parent.parent / "analysis" / "blueprints"
 
 
 def run_training(iterations, resume=None, checkpoint_every=1000,
-                 seed=None, gamma=None):
+                 seed=None, gamma=None, workers=None, merge_every=2000):
     """
     Run CFR training.
 
@@ -49,6 +49,12 @@ def run_training(iterations, resume=None, checkpoint_every=1000,
         gamma:             Override the trainer's strategy-sum discount exponent
                            (e.g. 0.0 for the no-discount control, 2.0 default).
                            None keeps the trainer default.
+        workers:           If set (>1), use data-parallel MCCFR+ across this many
+                           worker processes (block Linear-CFR discount on the
+                           master; an approximation of single-thread validated by
+                           exploitability, NOT bit-identical). None / 1 = the
+                           reproducible single-thread path.
+        merge_every:       Parallel only: iterations PER WORKER between merges.
     """
     if seed is not None:
         import random
@@ -66,7 +72,11 @@ def run_training(iterations, resume=None, checkpoint_every=1000,
         print(f"Resuming from: {db_path.name}")
     else:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        db_path = ANALYSIS_DIR / f"blueprint_{timestamp}.db"
+        # Mark parallel-trained blueprints so they are distinguishable on disk
+        # (still matches the blueprint_*.db glob used by resolve_blueprint_path
+        # and the tracker, and the YYYYMMDD_HHMMSS stamp is still extractable).
+        prefix = "blueprint_par" if (workers and workers > 1) else "blueprint"
+        db_path = ANALYSIS_DIR / f"{prefix}_{timestamp}.db"
         print(f"New run: {db_path.name}")
 
     db = BlueprintDB(db_path)
@@ -82,14 +92,31 @@ def run_training(iterations, resume=None, checkpoint_every=1000,
         print(f"Continuing from iteration {start_iteration}")
 
     try:
-        expected_value = trainer.train_blueprint(
-            iterations,
-            db=db,
-            start_iteration=start_iteration,
-            checkpoint_every=checkpoint_every,
-        )
-        # Final checkpoint — only needed when the last iteration wasn't already a checkpoint boundary
-        if iterations % checkpoint_every != 0:
+        if workers and workers > 1:
+            from src.cfr.parallel_trainer import train_blueprint_parallel
+            expected_value = train_blueprint_parallel(
+                trainer,
+                iterations,
+                db=db,
+                start_iteration=start_iteration,
+                checkpoint_every=checkpoint_every,
+                workers=workers,
+                merge_every=merge_every,
+                seed=seed,
+            )
+        else:
+            expected_value = trainer.train_blueprint(
+                iterations,
+                db=db,
+                start_iteration=start_iteration,
+                checkpoint_every=checkpoint_every,
+            )
+        # Final checkpoint. The parallel path self-flushes its tail inside
+        # train_blueprint_parallel (its checkpoint cadence is round-based, not a
+        # clean multiple of checkpoint_every), so only the single-thread path
+        # needs this boundary check -- doing it for both would redundantly rewrite
+        # the final iteration with an empty dirty set.
+        if not (workers and workers > 1) and iterations % checkpoint_every != 0:
             trainer.checkpoint_to_db(db, start_iteration + iterations - 1)
 
         total = start_iteration + iterations

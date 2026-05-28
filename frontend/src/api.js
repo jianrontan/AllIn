@@ -41,4 +41,7 @@ export const getGameState = (id) =>
 // bet_custom / raise_custom action.
 export const sendGameAction = (id, action, extra = {}) =>
     jsonPost('/api/game/action', { id, action, ...extra });
+// Runs the bot's pending turn(s). Split from sendGameAction so the UI can reveal
+// the freshly-dealt board + a "thinking" indicator before the (slow) river solve.
+export const sendBotAction = (id) => jsonPost('/api/game/bot-action', { id });
 export const nextHand = (id) => jsonPost('/api/game/next-hand', { id });

@@ -11,6 +11,32 @@ const SELECT = 'px-3 py-2 rounded-lg bg-black/60 border border-neutral-700 ' +
 const chip = 'px-3 py-1.5 rounded-lg text-sm bg-neutral-800 text-neutral-200 ' +
     'hover:bg-neutral-700 transition-colors';
 
+// Parse a raw info-set key back into dropdown fields, so hand-editing the key
+// keeps the dropdowns in sync (otherwise the next dropdown change silently
+// rebuilds the key from stale state and clobbers the edit). Returns null for an
+// unparseable/free-form string (dropdowns are then left as-is).
+const parseKey = (text) => {
+    const m = text.trim().match(/^(pf_\d+)_(.*)$/);
+    if (!m) return null;
+    const bucket = m[1];
+    const rest = m[2].split('_');
+    if (rest[0] === 'ip' || rest[0] === 'oop') {
+        // preflop: {bucket}_{position}_{pattern}
+        return { street: 'preflop', bucket, position: rest[0],
+            pattern: rest.slice(1).join('_') };
+    }
+    if (rest.length >= 4 && (rest[1] === 'ip' || rest[1] === 'oop')
+        && ['flop', 'turn', 'river'].includes(rest[2])) {
+        // postflop: {bucket}_{strength}_{position}_{street}_{pattern}
+        const strength = Number(rest[0]);
+        if (Number.isInteger(strength)) {
+            return { street: rest[2], bucket, strength, position: rest[1],
+                pattern: rest.slice(3).join('_') };
+        }
+    }
+    return null;
+};
+
 function KeyExplorer() {
     const [abstractions, setAbstractions] = useState(null);
 
@@ -56,6 +82,24 @@ function KeyExplorer() {
         setKeyText(composeKey(s, b, st, pos, pat));
     };
 
+    // Editable key field: update the text, and if it parses, sync the dropdowns
+    // to match (without recomposing the text, so the user's edit is preserved).
+    const onKeyTextEdit = (text) => {
+        setKeyText(text);
+        const p = parseKey(text);
+        if (!p) return;
+        setStreet(p.street);
+        setBucket(p.bucket);
+        setPosition(p.position);
+        setPattern(p.pattern);
+        if (p.street !== 'preflop') {
+            const buckets = bucketsForStreet(p.street);
+            let st = p.strength ?? 0;
+            if (buckets.length && st > buckets.length - 1) st = buckets.length - 1;
+            setStrength(st);
+        }
+    };
+
     const lookup = async () => {
         const key = keyText.trim();
         if (!key) { setError('Key is empty'); return; }
@@ -79,7 +123,10 @@ function KeyExplorer() {
         );
     }
 
-    const patternChars = Object.entries(abstractions.patternChars);
+    // Exclude fold: a fold ends the hand, so 'f' never appears in a queryable
+    // info-set pattern (heads-up: no one acts after a fold).
+    const patternChars = Object.entries(abstractions.patternChars)
+        .filter(([ch]) => ch !== 'f');
 
     return (
         <div>
@@ -152,7 +199,7 @@ function KeyExplorer() {
                 <label className={LABEL}>Info-set key (editable)</label>
                 <input className={`${SELECT} w-full font-mono`}
                     value={keyText}
-                    onChange={(e) => setKeyText(e.target.value)} />
+                    onChange={(e) => onKeyTextEdit(e.target.value)} />
             </div>
 
             <button onClick={lookup} disabled={loading}
