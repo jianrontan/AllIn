@@ -13,8 +13,10 @@ game, identified by a session id. Games are stored as plain dicts
 A future RedisSessionStore / DynamoDBSessionStore would implement the same
 three methods and be a drop-in replacement — no other code changes.
 """
+import threading
 import time
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 
 
 class SessionStore(ABC):
@@ -30,6 +32,15 @@ class SessionStore(ABC):
     def delete(self, session_id):
         """Remove a session. No error if it does not exist."""
 
+    @contextmanager
+    def lock(self, session_id):
+        """Serialize the load-modify-put of one session so concurrent requests
+        for the same id can't clobber each other (lost update) or double-apply
+        the bot. Default: no-op. A Redis/DynamoDB store would override this with
+        a distributed lock; the InMemory store uses a per-session threading lock
+        (the Flask dev server is multi-threaded)."""
+        yield
+
 
 class InMemorySessionStore(SessionStore):
     """Process-local store with a simple TTL sweep to bound memory use."""
@@ -37,6 +48,8 @@ class InMemorySessionStore(SessionStore):
     def __init__(self, ttl_seconds=3600):
         self._ttl = ttl_seconds
         self._data = {}        # session_id -> (expiry_epoch, session_dict)
+        self._locks = {}       # session_id -> threading.RLock
+        self._locks_guard = threading.Lock()
 
     def get(self, session_id):
         entry = self._data.get(session_id)
@@ -54,9 +67,23 @@ class InMemorySessionStore(SessionStore):
 
     def delete(self, session_id):
         self._data.pop(session_id, None)
+        with self._locks_guard:
+            self._locks.pop(session_id, None)
+
+    @contextmanager
+    def lock(self, session_id):
+        with self._locks_guard:
+            lk = self._locks.get(session_id)
+            if lk is None:
+                lk = threading.RLock()
+                self._locks[session_id] = lk
+        with lk:
+            yield
 
     def _sweep(self):
         now = time.time()
         expired = [sid for sid, (exp, _) in self._data.items() if now > exp]
         for sid in expired:
             del self._data[sid]
+            with self._locks_guard:
+                self._locks.pop(sid, None)

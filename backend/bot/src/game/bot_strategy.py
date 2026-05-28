@@ -57,15 +57,32 @@ class BlueprintStrategy(BotStrategy):
         n = len(legal_actions)
         return {a: 1.0 / n for a in legal_actions}
 
+    def _blend_lookup(self, info_set_key, legal_actions):
+        """Restricted blueprint dist for a translation bracket, or {} when the key
+        is UNTRAINED. Unlike _distribution (which returns uniform for an unknown
+        key, the right default for a single lookup), this returns {} so blend()
+        can route an untrained bracket's weight to fold rather than uniform --
+        otherwise a too-big open's overflow bracket dilutes to a random response."""
+        if not legal_actions:
+            return {}
+        stored = self.db.get_average_strategy(info_set_key) if self.db else None
+        if stored:
+            weights = {a: max(0.0, stored.get(a, 0.0)) for a in legal_actions}
+            total = sum(weights.values())
+            if total > 1e-12:
+                return {a: w / total for a, w in weights.items()}
+        return {}
+
     def _state_distribution(self, info_set_key, legal_actions, public_state):
         """Distribution accounting for action translation. When the opponent
         just made an off-grid bet, `public_state['translation']` carries the
         bracketing blueprint keys + pseudo-harmonic weights; blend their
-        responses. Otherwise it is the plain single-key lookup."""
+        responses (untrained brackets fold, see translation.blend). Otherwise it
+        is the plain single-key lookup."""
         trans = (public_state or {}).get('translation')
         if trans:
             blended = translation.blend(
-                trans, lambda key: self._distribution(key, legal_actions))
+                trans, lambda key: self._blend_lookup(key, legal_actions))
             if blended:
                 return blended
         return self._distribution(info_set_key, legal_actions)
@@ -122,6 +139,13 @@ class ConfidenceAwareStrategy(BlueprintStrategy):
     # near-impossible actions drive confidence well under 0.1 in practice).
     CONFIDENCE_THRESHOLD = 0.15
 
+    # Runouts for the flop equity estimate on the fallback path. The tracker's
+    # default (120) is fine for the UI "bot's read" but too noisy/biased to base
+    # a fold/raise decision on (~1.5 equity-pts std + a ~1-pt low-n mean bias;
+    # measured). The fallback fires rarely (only when confidence has collapsed),
+    # so a high count here is cheap. River/turn are exact regardless of this.
+    EQUITY_RUNOUTS = 1000
+
     def decide(self, info_set_key, legal_actions, public_state):
         tracker = (public_state or {}).get('opp_range')
         hole = (public_state or {}).get('hole_cards')
@@ -129,7 +153,7 @@ class ConfidenceAwareStrategy(BlueprintStrategy):
             return super().decide(info_set_key, legal_actions, public_state)
 
         board = public_state.get('community', []) or []
-        eq = tracker.hero_equity(hole, board)
+        eq = tracker.hero_equity(hole, board, n_runouts=self.EQUITY_RUNOUTS)
         to_call = public_state.get('to_call', 0) or 0
         pot = public_state.get('pot', 0) or 0
         return self._equity_action(eq, to_call, pot, legal_actions)

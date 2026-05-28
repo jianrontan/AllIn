@@ -183,6 +183,7 @@ def test_gamesession_tracks_and_serializes():
     s = GameSession.new('s2', 'p2', strategy_fn=_stub_strategy_fn)
     assert s.data['opp_range'] is not None
     read0 = s.opponent_read()
+    assert read0 is not None
     assert read0['confidence'] == 1.0 and len(read0['topHands']) > 0
     assert s.is_human_turn(), "human is the button and acts first preflop"
 
@@ -198,6 +199,69 @@ def test_gamesession_tracks_and_serializes():
     s2 = GameSession.from_dict(d, strategy_fn=_stub_strategy_fn)
     assert np.allclose(s2.data['opp_range']['w'], s.data['opp_range']['w'])
     print("PASS test_gamesession_tracks_and_serializes")
+
+
+def test_read_group_label():
+    """The bot's-read grouping: suit-equivalent combos collapse, suits show only
+    when flush-relevant, suited/offsuit stays distinct, and the specific flush
+    card held (blocker) is distinguished."""
+    from src.game.game_session import _read_group_label
+    # Rainbow board (no flush-relevant suit): suits vanish, suited/offsuit kept.
+    assert _read_group_label(('HA', 'CA'), set()) == 'AA'
+    assert _read_group_label(('HA', 'SA'), set()) == 'AA'
+    assert _read_group_label(('HA', 'HK'), set()) == 'AKs'
+    assert _read_group_label(('HA', 'CK'), set()) == 'AKo'
+    assert _read_group_label(('H2', 'D2'), set()) == '22'
+    # Hearts flush-relevant: heart-holders split out; non-heart still collapses.
+    assert _read_group_label(('HA', 'CA'), {'H'}) == 'AhA'
+    assert _read_group_label(('CA', 'SA'), {'H'}) == 'AA'
+    assert _read_group_label(('HA', 'HK'), {'H'}) == 'AhKh'    # the flush draw
+    assert _read_group_label(('HA', 'CK'), {'H'}) == 'AhK'     # holds Ah (nut blocker)
+    assert _read_group_label(('CA', 'HK'), {'H'}) == 'AKh'     # holds Kh (diff blocker)
+    print("PASS test_read_group_label")
+
+
+def test_opponent_read_groups_combos():
+    """opponent_read returns grouped labels (not raw combos): e.g. preflop the six
+    pocket-ace combos collapse into a single 'AA' entry."""
+    s = GameSession.new('grp', 'p', strategy_fn=_stub_strategy_fn)
+    read = s.opponent_read(k=200)
+    assert read is not None
+    labels = [h['label'] for h in read['topHands']]
+    assert len(labels) == len(set(labels)), "labels must be unique groups"
+    assert 'AA' in labels and 'AKs' in labels and 'AKo' in labels
+    # Grouping must not lose mass: total over groups ~ 1.
+    assert abs(sum(h['prob'] for h in read['topHands']) - 1.0) < 0.02
+    print("PASS test_opponent_read_groups_combos")
+
+
+def test_public_view_json_serializable():
+    """public_view() is what the API actually returns (incl. botRead derived
+    from the live tracker); it must be JSON-clean -- no numpy scalars leaking
+    from confidence/top-hand probs. to_dict()'s round-trip is tested above; this
+    guards the DIFFERENT, untested API-response path."""
+    import json
+    s = GameSession.new('pv', 'pv', strategy_fn=_stub_strategy_fn)
+    # Play a few human/bot actions so the tracker has observed + (likely) a
+    # street has been revealed -> botRead.topHands is populated.
+    guard = 0
+    while s.data['status'] == 'in_hand' and guard < 8:
+        if s.is_human_turn():
+            legal = s.legal_actions()
+            a = 'call' if 'call' in legal else ('check' if 'check' in legal else legal[0])
+            s.apply_action(a)
+        else:
+            break
+        guard += 1
+
+    view = s.public_view()
+    # Must serialize without a "not JSON serializable" TypeError.
+    json.dumps(view)
+    if view['botRead'] is not None:
+        assert isinstance(view['botRead']['confidence'], float)
+        for th in view['botRead']['topHands']:
+            assert isinstance(th['prob'], float)
+    print("PASS test_public_view_json_serializable")
 
 
 def test_gamesession_reveal_removes_board_combos():
@@ -296,6 +360,9 @@ TESTS = [
     test_gamesession_tracking_disabled_without_model,
     test_gamesession_tracks_and_serializes,
     test_gamesession_reveal_removes_board_combos,
+    test_read_group_label,
+    test_opponent_read_groups_combos,
+    test_public_view_json_serializable,
     test_hero_equity_nuts_is_one,
     test_hero_equity_dominated_is_zero,
     test_equity_action_mapping,

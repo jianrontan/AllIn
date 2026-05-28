@@ -1,0 +1,94 @@
+# backend/bot/src/subgame/solve_control.py
+"""
+Solve control for the river subgame (Phase-4, step 5): convergence-based early
+stop, and the EV gate.
+
+  * solve_river(...) -- run CFR+ in increments, checking exploitability (the BR
+    gap) periodically, and stop as soon as it is small enough (or a max-iters /
+    time budget is hit). The Linear-CFR clock persists across the increments
+    (river_cfr.RiverCFR._iter), so incremental solving matches one big run. This
+    is both the quality guarantee (we solve until actually converged) and the
+    speed win (we stop early on easy spots instead of grinding a fixed count).
+
+  * ev_gate(...) -- after solving, deviate from the blueprint ONLY if the solved
+    strategy beats it by a margin under our own belief. The gate does NOT protect
+    against a wrong input range (a confidently-wrong belief yields a high solved
+    EV the gate happily passes -- only the confidence widening guards that); what
+    it catches is (a) a numerically-broken / under-converged solve that fails to
+    beat the blueprint even under its own belief, and (b) negligible-edge spots
+    where deviating just adds variance/churn for no real gain.
+
+The blueprint baseline (and the warm-start prior) are fed in at step-6 wiring,
+where the blueprint<->tree bridge is built; here the gate is a pure function over
+an explicit baseline distribution.
+"""
+import time
+
+import numpy as np
+
+from .river_cfr import RiverCFR
+from ..evaluation.showdown_kernel import compatible_mass
+
+
+def solve_river(tree, ba, reach0, reach1, *, max_iters=1000, check_every=50,
+                gap_threshold=None, time_budget=None,
+                warm_start=None, warm_weight=0.0):
+    """Solve the river subgame with convergence-based early stop.
+
+    gap_threshold is in chips per dealt hand-pair (default: 1% of the entry pot).
+    Returns (cfr, info) where info has iters / gap / seconds / converged.
+    """
+    cfr = RiverCFR(tree, ba)
+    if warm_start is not None and warm_weight > 0:
+        cfr.warm_start(warm_start, warm_weight)
+    if gap_threshold is None:
+        gap_threshold = 0.01 * tree.pot_entry
+
+    t0 = time.time()
+    done = 0
+    gap = float('inf')
+    while done < max_iters:
+        step = min(check_every, max_iters - done)
+        cfr.run(reach0, reach1, iters=step)
+        done += step
+        gap = cfr.exploitability(reach0, reach1)
+        if gap <= gap_threshold:
+            break
+        if time_budget is not None and (time.time() - t0) >= time_budget:
+            break
+    return cfr, {'iters': done, 'gap': float(gap),
+                 'seconds': time.time() - t0,
+                 'converged': bool(gap <= gap_threshold)}
+
+
+def hand_action_evs(cfr, node, hand_row, reach0, reach1):
+    """Per-action chip EV (length = #actions at `node`) for the hand at `hand_row`,
+    under the solved average strategy. Normalised by the hand's compatible villain
+    mass so the values are in chips per dealt matchup (makes the EV-gate margin an
+    interpretable chip amount)."""
+    p = node.player
+    villain = np.asarray(reach1 if p == 0 else reach0, float)
+    vals = cfr.node_action_values(node, reach0, reach1)        # [H, A] measures
+    z = compatible_mass(cfr.ba, villain)[hand_row]
+    row = vals[hand_row]
+    return row / z if z > 0 else row
+
+
+def ev_gate(actions, solved_dist, baseline_dist, action_evs, margin):
+    """Pick the solved strategy over the baseline only if it is materially better.
+
+    actions      : ordered action labels at the node.
+    solved_dist  : {action: prob} from the solve (the bot's actual-hand strategy).
+    baseline_dist: {action: prob} the blueprint would play here (mapped to the
+                   tree menu at step-6 wiring).
+    action_evs   : chip EV per action, aligned to `actions` (from hand_action_evs).
+    margin       : minimum chip EV advantage required to deviate from the baseline.
+
+    Returns (chosen_dist, info). info.used is 'solved' or 'baseline'.
+    """
+    ev_s = float(sum(solved_dist.get(a, 0.0) * v for a, v in zip(actions, action_evs)))
+    ev_b = float(sum(baseline_dist.get(a, 0.0) * v for a, v in zip(actions, action_evs)))
+    use_solved = (ev_s - ev_b) >= margin
+    chosen = solved_dist if use_solved else baseline_dist
+    return chosen, {'ev_solved': ev_s, 'ev_baseline': ev_b,
+                    'delta': ev_s - ev_b, 'used': 'solved' if use_solved else 'baseline'}

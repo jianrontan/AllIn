@@ -56,22 +56,16 @@ exploitability, not merely exploitability inside the abstraction.
 """
 import random
 import numpy as np
-from itertools import combinations
 
 from ..cfr.poker_game import PokerGame, STARTING_STACK
 from ..cfr.keys import action_char, make_info_set_key
 from ..abstractions.card_abstractions import CardAbstraction
 from ..abstractions.hand_evaluator import HandEvaluator
-
-_RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A']
-_SUITS = ['H', 'D', 'C', 'S']
-_FULL_DECK = [s + r for r in _RANKS for s in _SUITS]
-_CARD_ID = {c: i for i, c in enumerate(_FULL_DECK)}
-_NUM_CARDS = len(_FULL_DECK)  # 52
-
-# Every card appears in 46 of the C(47,2)=1081 hands; each hero hand is blocked
-# by 46 + 46 - 1 = 91 villain hands, leaving C(45,2) = 990 compatible.
-_COMPATIBLE = 990
+# Exact range-vs-range showdown + per-board precompute live in a shared kernel so
+# this evaluator and the Phase-4 river subgame solver use one validated core.
+from .showdown_kernel import (
+    build_board_arrays, showdown_measure, compatible_mass,
+    _FULL_DECK, _NUM_CARDS, _COMPATIBLE)
 
 
 class BestResponseEvaluator:
@@ -122,121 +116,16 @@ class BestResponseEvaluator:
     # ------------------------------------------------------------------
 
     def _board_arrays(self, board):
-        """
-        Precompute, for one board, everything that does not depend on the
-        betting line or which seat is hero:
-
-          hands : list of (cardA, cardB) for all H hands not using a board card
-          raw   : showdown rank per hand  (lower = stronger)
-          c1,c2 : integer card ids per hand (for card-removal at terminals)
-          g, G  : dense strength-group id per hand (0 = strongest) and group count
-          pf    : preflop bucket per hand   (object array, for villain keys)
-          strg  : {street: bucket-per-hand} for flop/turn/river villain keys
-        """
-        board_set = set(board)
-        pool = [c for c in _FULL_DECK if c not in board_set]
-        hands = list(combinations(pool, 2))
-        H = len(hands)
-
-        raw = np.empty(H)
-        c1 = np.empty(H, dtype=np.int64)
-        c2 = np.empty(H, dtype=np.int64)
-        pf = [None] * H
-        s1 = [None] * H
-        s2 = [None] * H
-        s3 = [None] * H
-        for i, (a, b) in enumerate(hands):
-            hl = [a, b]
-            raw[i] = self.evaluator.get_raw_hand_value(hl, board)
-            c1[i] = _CARD_ID[a]
-            c2[i] = _CARD_ID[b]
-            pf[i] = self.cards.get_bucket(hl, None)
-            s1[i] = self.cards.get_bucket(hl, board[:3])
-            s2[i] = self.cards.get_bucket(hl, board[:4])
-            s3[i] = self.cards.get_bucket(hl, board[:5])
-
-        # Dense strength groups: ascending raw -> group 0 is the strongest.
-        uniq = np.unique(raw)
-        g = np.searchsorted(uniq, raw)
-        G = len(uniq)
-
-        pf = np.array(pf, dtype=object)
-        strg = {1: np.array(s1, dtype=object),
-                2: np.array(s2, dtype=object),
-                3: np.array(s3, dtype=object)}
-
-        # Villain hands sharing the same blueprint key share a strategy row.
-        # The grouping (by preflop bucket, or (preflop, strength) postflop) is
-        # independent of position/pattern/legal-set, so precompute the masks and
-        # a representative hand per group ONCE -- reused at every villain node and
-        # for both seats. groups[street] = list of (mask, rep_idx).
-        def build_groups(labels):
-            out = []
-            for lab in set(labels.tolist()):
-                mask = labels == lab
-                out.append((mask, int(np.argmax(mask))))
-            return out
-
-        groups = {0: build_groups(pf)}
-        for s in (1, 2, 3):
-            labels = np.array([f"{pf[i]}|{strg[s][i]}" for i in range(H)], dtype=object)
-            groups[s] = build_groups(labels)
-
-        return {
-            'hands': hands, 'H': H, 'raw': raw, 'c1': c1, 'c2': c2,
-            'g': g, 'G': G, 'gNC': g.astype(np.int64) * _NUM_CARDS,
-            'pf': pf, 'strg': strg, 'groups': groups,
-        }
+        """Per-board precompute (delegates to the shared kernel)."""
+        return build_board_arrays(board, self.evaluator, self.cards)
 
     # ------------------------------------------------------------------
     # Best-response value vector for one (board, hero_seat)
     # ------------------------------------------------------------------
 
     def _showdown_measure(self, ba, rv, final_pot, hero_total):
-        """
-        Vectorized showdown value (measure, hero perspective) per hero hand, with
-        card removal. Lower raw = stronger; hero wins vs WEAKER villains (villain
-        raw > hero raw). O(H) via per-card running sums. Extracted so it can be
-        validated against a brute-force oracle.
-        """
-        c1 = ba['c1']
-        c2 = ba['c2']
-        g = ba['g']
-        G = ba['G']
-
-        total = float(rv.sum())
-        cardTot = (np.bincount(c1, weights=rv, minlength=_NUM_CARDS) +
-                   np.bincount(c2, weights=rv, minlength=_NUM_CARDS))
-        compatM = total - (cardTot[c1] + cardTot[c2] - rv)
-
-        groupSum = np.bincount(g, weights=rv, minlength=G)
-        cum = np.cumsum(groupSum)
-        strongerGroupCum = cum - groupSum            # reach of strictly stronger groups
-        gNC = ba['gNC']
-        flat = (np.bincount(gNC + c1, weights=rv, minlength=G * _NUM_CARDS) +
-                np.bincount(gNC + c2, weights=rv, minlength=G * _NUM_CARDS))
-        gc = flat.reshape(G, _NUM_CARDS)
-        gcum = np.cumsum(gc, axis=0)
-        strongerCardCum = gcum - gc                  # reach of stronger groups, per card
-
-        sg = strongerGroupCum[g]                     # stronger total (no removal)
-        grp = groupSum[g]                            # tie-group total
-        wk = total - sg - grp                        # weaker total (no removal)
-
-        scc1 = strongerCardCum[g, c1]
-        scc2 = strongerCardCum[g, c2]
-        gcc1 = gc[g, c1]
-        gcc2 = gc[g, c2]
-        wcc1 = cardTot[c1] - scc1 - gcc1
-        wcc2 = cardTot[c2] - scc2 - gcc2
-
-        loseM = sg - scc1 - scc2                     # stronger villains, compatible
-        tieM = grp - gcc1 - gcc2 + rv                # tied villains, compatible (drop self)
-        winM = wk - wcc1 - wcc2                      # weaker villains, compatible
-
-        # payoff = winnings - hero_total; winnings = final_pot (win),
-        # final_pot/2 (tie), 0 (lose). compatM == winM + tieM + loseM.
-        return final_pot * winM + (final_pot / 2.0) * tieM - hero_total * compatM
+        """Vectorized showdown measure (delegates to the shared kernel)."""
+        return showdown_measure(ba, rv, final_pot, hero_total)
 
     def _board_value(self, hero_seat, board, ba):
         """
@@ -248,12 +137,9 @@ class BestResponseEvaluator:
         villain_seat = 1 - hero_seat
         villain_pos = 'ip' if villain_seat == 0 else 'oop'
 
+        # The showdown/fold card-removal math now lives in the kernel; this
+        # method only needs H (reach length) and the bucket arrays for keys.
         H = ba['H']
-        raw = ba['raw']
-        c1 = ba['c1']
-        c2 = ba['c2']
-        g = ba['g']
-        G = ba['G']
         pf = ba['pf']
         strg = ba['strg']
 
@@ -278,10 +164,7 @@ class BestResponseEvaluator:
             hero_total = p0_total if hero_seat == 0 else (final_pot - p0_total)
 
             if 'fold' in history:
-                total = float(rv.sum())
-                cardTot = (np.bincount(c1, weights=rv, minlength=_NUM_CARDS) +
-                           np.bincount(c2, weights=rv, minlength=_NUM_CARDS))
-                compatM = total - (cardTot[c1] + cardTot[c2] - rv)
+                compatM = compatible_mass(ba, rv)
                 folder_idx = next(i for i, a in enumerate(history) if a == 'fold')
                 folder = self.game._acting_player(folder_idx, street)
                 val = (-hero_total) if folder == hero_seat else (final_pot - hero_total)

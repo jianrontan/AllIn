@@ -10,6 +10,302 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-007 — The new bot loses to the old one: a preflop action-grid coverage hole (not a training bug)
+
+| | |
+|---|---|
+| **Date** | 2026-05-28 |
+| **Area** | Action abstraction (preflop sizing), `cfr/translation.py`, measurement (`evaluation/cross_match.py`) |
+| **Severity** | High as a *finding* (~200 mbb/hand head-to-head); the code defect inside it is medium |
+| **Status** | Diagnosed; abstraction fix designed (rides next retrain); translation fold-fallback shipped as a stopgap |
+
+**Summary.** A faithful head-to-head showed the *new*, GTO-correct small-open blueprint
+**losing ~210–243 mbb/hand to the older big-open blueprint** — at near-equal iterations,
+so not a training-gap artifact. This looked like the preflop-sizing redesign was a
+regression. After a multi-round investigation (and one confidently-wrong hypothesis), the
+real cause was a **coverage hole in the preflop action grid**: the bot has *zero* trained
+response to a big open or any preflop all-in, so a specific opponent that opens off-grid
+walks into a hole. It is **not** a training bug, **not** a postflop problem, and the
+sizing redesign should **not** be reverted. The interesting part is *why* every
+in-distribution metric missed it.
+
+### Symptom
+`cross_match.py` (old-vs-new, AIVAT-free, paired seed): OLD beats NEW **+242.9 ±42.5**
+mbb/hand at the new run's 6.05M, **+212.1 ±42.7** at 7.5M. The gap barely closed with more
+NEW training (~31 mbb over 1.45M iters) and NEW had already hit its BR floor (~14,300 since
+~4M) — so the deficit was structural, not under-training.
+
+### The wrong hypothesis (overturned by a controlled experiment)
+First story: *small opens → ranges stay wider → more postflop volume → more exposure to the
+leaky postflop abstraction.* Plausible, and **wrong**. The **new-vs-new mirror match is
+~break-even OOP** — against an *equal-grid peer*, the OOP bleed vanishes. So the postflop
+play is fine vs a peer; the loss is specifically about the *opponent's* sizes. Decompose,
+don't theorize.
+
+### Root cause (verified)
+The blueprint has **0 `pf_*_*_a` keys** — no preflop info-set anywhere whose pattern
+contains an all-in. Mechanism: `poker_game.py` only offers `allin` preflop when a sized
+raise is *unaffordable*, and at 100 BB the 3-aggression cap (open/3-bet/4-bet) means even a
+1.5×-pot 4-bet only commits ~56 BB — sized raises never exhaust the stack, so a preflop jam
+is **never reachable in training**. The bot therefore never learns a response to a jam, and
+— because a self-play bot never *opens* big — never learns a response to a big open either
+(facing-large-3-bets *is* well trained: ~375 keys / 5.6M visits; the hole is specifically
+the top of the open ladder and the all-in level).
+
+The old bot opens up to 7 BB. The new BB facing a 6–7 BB open translates it onto its grid as
+a blend like `{l: 0.6, a: 0.4}` — but the `a` bracket has **no trained key**, so that weight
+is mishandled (see the code defect below) and the response collapses toward the pure `l`
+strategy, which is calibrated to a **3.5 BB** open. So the new BB calls/commits far too
+loosely into a 5–7 BB raise → that's where the chips go. (Separately, ~30% of the raw gap is
+**intrinsic button-vs-BB positional skew** shared by both bots and should be netted out, not
+charged to the redesign.)
+
+### The code defect inside it — `translation.blend` dropped the untrained bracket
+When a bracketing size has no trained strategy, the cross-match's `blend_dist` **dropped**
+that weight (renormalising onto the nearer, too-small bracket); the live
+`BlueprintStrategy._state_distribution` filled the unknown key with **uniform-over-legal**.
+Both are wrong: neither folds to a bet bigger than anything the bot understands, so the bot
+**under-folds to off-grid big opens** (and, live, to a human overbet). Fix: a
+**missing-bracket → fold fallback** in the shared `translation.blend` (route an untrained
+bracket's weight to `fold`, the conservative response to an off-grid bet), mirrored in
+`cross_match.blend_dist` and fed by a `_blend_lookup` that returns `{}` (not uniform) for
+untrained keys.
+
+**But the fold-fallback is net-neutral for the head-to-head** (500k: −243 → −249.7, within
+noise). It helped OOP big-open defense (−845 → −581) but the blunt "fold any untrained
+overflow" also over-folds when NEW is IP facing the old bot's big **3-bets** (+117 → −2);
+the two cancel. Lesson confirmed: **translation across a large grid gap is a stopgap, not a
+fix** — exactly the Libratus/DeepStack reason for moving from translation to subgame solving.
+
+### Why no in-distribution metric caught it
+BR/LBR exploitability — the convergence scoreboard — never exposed this. A self-play
+blueprint *never opens big*, so its own training and its self-referential metrics never
+visit the "facing a big open" nodes; the hole is **invisible to in-distribution evaluation**
+(you never face a size you never make). It only surfaced once we built a *deliberately
+out-of-distribution* opponent (the old big-open bot) in a faithful head-to-head harness.
+This is the general Libratus lesson: action-abstraction coverage holes are found by an
+adversary using off-grid sizes, not by self-play exploitability.
+
+### Fix / resolution
+- **Not** a training bug; the harness is sound (the per-seat skew reproduces in the
+  independent `match.py`; pattern/blend bookkeeping verified clean over 3000 hands).
+- **Real fix = abstraction change, retrain:** add `allin` as an always-available preflop
+  aggressive action at every node (open/3-bet/4-bet), and add a 4th open size (`x` = 5 BB,
+  alphabet `s/m/l/x`) to anchor the mid/large-open zone; keep the 3-bet/4-bet multipliers.
+  See [../../../docs/ROADMAP.md](../../../docs/ROADMAP.md) "Betting-abstraction redesign".
+- **Translation fold-fallback kept** as cheap live insurance (it hardens the live bot against
+  human overbets even though it doesn't move this head-to-head).
+- **Deep raises (non-jam 5-bets+) → subgame solving**, not abstraction: train shallow
+  (capped), play uncapped (relax the live `max_raises_per_street` gate), solve the deep tail.
+  Rare lines abstracted would train thinly — the *same* failure mode as this hole.
+
+### Retrain impact
+Abstraction change → existing blueprints incompatible, fresh run required (no resume). Bundle
+with the next **postflop-bucket** retrain (the real strength lever; BR floor ~14,300 is the
+buckets, not convergence) and read the BR/LBR delta as a *bundle*.
+
+### Lessons
+1. **Equilibrium-optimal ≠ robust to a specific opponent.** Small opens are GTO-correct, yet
+   the bot was fragile to off-grid opens because the abstraction had no response bracket
+   there. "It's optimal" and "it loses this matchup" were both true and not in conflict.
+2. **Action grids have coverage holes self-play can't see.** You never train a response to a
+   size you never produce; in-distribution metrics (BR/LBR/self-play) are blind to it. Test
+   with an out-of-distribution adversary.
+3. **Decompose before theorising.** The first root cause (postflop volume) was plausible and
+   wrong; the mirror-match control overturned it in one experiment.
+4. **Translation is the leaky stopgap; solving is the fix** — the net-neutral fold-fallback
+   re-derived the exact conclusion the Libratus/DeepStack literature reaches.
+5. **Net out shared/positional variance** before attributing a head-to-head gap to a change
+   (~30% here was button-vs-BB skew common to both bots).
+
+---
+
+## BUG-006 — River subgame solver build: three bugs across the layers (Phase 4)
+
+| | |
+|---|---|
+| **Date** | 2026-05-27 |
+| **Area** | River subgame solver (`src/subgame/river_tree.py`, `range_inputs.py`; design decisions) |
+| **Severity** | Mixed — one manifested logic bug, one latent trap, one degenerate spec |
+| **Status** | All three fixed/resolved during the build |
+
+**Summary.** Building the Phase-4 river solver surfaced seven instructively-different
+defects: (A) a betting-rule logic bug that a test caught immediately, (B) a latent
+chip-accounting trap that *only* a manual review caught (tests structurally couldn't),
+(C) a design decision that was internally degenerate (a no-op) once implemented,
+(D) a Linear-CFR clock that reset per call, latent until step 5 would have leaned on it,
+(E) a re-raise fraction that dropped a term -- and a regression test that was VACUOUS twice
+over until a discriminating node was constructed, (F) a hero ~zero-reach silent uniform
+read-off (the original uniform-fallback failure class, recurring on the hero side), and
+(G) a solver all-in silently downgraded to a check at deep-stack nodes -- the most
+consequential, since it would have biased the very scoring run meant to validate the solver.
+
+### (A) Raising into an all-in — manifested, test-caught
+
+**Symptom.** `test_facing_allin_only_fold_or_call` failed: facing an all-in, the other
+player still had `allin` as a legal action.
+
+**Root cause.** The tree's aggression generator added a shove whenever the actor's all-in
+exceeded the current call (`allin_new_sc > max(sc)`). When the opponent was already all-in,
+the actor's larger stack made that true — but there is nothing to raise into (the all-in
+player cannot call more), so the only legal responses are fold/call.
+
+**Fix.** Gate raises on the *opponent* still having chips behind:
+`opp_behind = stacks[other] - sc[other]; if agg < max and opp_behind > 0: add raises`.
+This also structurally blocks shoving over an all-in.
+
+### (B) All-in-for-less doesn't return the uncalled chips — latent, review-caught
+
+**Symptom.** None observed. Found by an independent review that probed showdown terminals
+with *unequal* stacks and found e.g. `final_pot=120, contrib=(40,80)`.
+
+**Root cause.** Showdown terminals feed the kernel `final_pot = c0 + c1` and
+`hero_total = c_hero` directly. That is correct only when contributions are *matched*. With
+unequal stacks a short call leaves the aggressor's excess uncalled; that excess is not
+returned, so the showdown pot and hero contribution are inflated → wrong EV.
+
+**Why tests couldn't catch it.** Chip-conservation asserts `final_pot == c0 + c1`, which holds
+*by construction* whether or not the uncalled portion was returned. The defect is invisible to
+the one invariant that looked closest. (Echoes BUG-003: a self-consistent-but-wrong quantity.)
+
+**Why it can't fire today.** Both players start each hand at `STARTING_STACK` and must match all
+prior-street action to reach a river betting node, so river-entry stacks are always equal — an
+all-in-for-less cannot arise. The trap is purely latent: it would bite a future caller passing
+unequal stacks to the standalone `build_river_tree`.
+
+**Fix.** Enforce the invariant loudly — assert equal river-entry stacks in `RiverTree.__init__`,
+documenting that unequal stacks need all-in-for-less handling (cap the aggressor's contribution to
+the matched amount) before the assert is lifted. Plus a `test_raise_sizing_matches_engine` that
+pins the tree's bet/raise-to chips against `PokerGame.calculate_bet/raise_amount` — the sizing
+drift check chip-conservation structurally cannot provide. (Fold terminals were verified fine
+unchanged: `final_pot − contrib` already returns the winner's own uncalled chips.)
+
+### (C) Confidence-widening target was a no-op — design degeneracy
+
+**Symptom.** A "locked" design decision said: when the range-tracker's confidence collapses, widen
+the villain range toward "blueprint-reach-given-the-line."
+
+**Root cause.** The range tracker *already* computes exactly that — its weights are
+`uniform × ∏(blueprint action-probabilities along the line)`, which *is* the blueprint reach given
+the line. So `blend(tracked, blueprint-reach-given-line, c) = tracked` for every confidence `c`. The
+widening would do nothing.
+
+**Fix.** Widen toward a genuinely *flatter* target: tempered reach `temper(tracked, β) ∝ tracked^β`
+over the line-consistent support, with `β` a flattening knob (β=1 → untouched belief, β=0 → uniform
+over the support = maximum flattening, the default). Guarded the `0**0` trap so card-removal /
+line-impossible zeros stay zero. Only the villain range is blended; the hero range is blueprint
+reach as-is.
+
+### (D) Linear-CFR clock reset per run() — latent, review-caught
+
+**Symptom.** None observed (steps 3/4 tests passed). Found by review reasoning about step 5.
+
+**Root cause.** `RiverCFR.run()` set the strategy-sum weight `_t_weight = t` over a *local* `range(1,
+iters+1)` each call. CFR+ averages the strategy weighted by the iteration number, so solving in
+increments — `run(100); run(100)` — would restart the clock at 1 the second time, under-weighting the
+later (more-converged, better) strategies relative to one `run(200)`. Harmless for a single `run()`,
+but step 5's convergence-based early-stop / warm-start solves in increments, so it would have silently
+skewed the average there.
+
+**Fix.** Persist a cumulative `self._iter` across `run()` calls; `_t_weight = self._iter`. Now
+`run(100)+run(100)` is bit-identical to `run(200)` (locked by `test_incremental_run_matches_single`).
+
+### (E) Re-raise fraction dropped the actor's committed chips — review-caught
+
+**Symptom.** None observed; found by a review probing a re-raise node.
+
+**Root cause.** `blueprint_to_tree_dist` (the EV-gate baseline) recovered a tree raise's pot-fraction as
+`(sized_chips - to_call)/(pot + to_call)`. A raise's true street total is `sc_actor + sized_chips`, so
+the formula is correct ONLY when the raiser has no chips in the street yet (`sc_actor = 0`). At a
+3rd-aggression node it skews low by `sc_actor/(pot+to_call)` — e.g. on sc=[30,10], pot=60, to_call=20
+the ½-pot raise was recovered as 0.375 instead of 0.5, so a blueprint `raise_medium` mapped to the
+wrong tree edge.
+
+**Why tests missed it.** The only mapping test used a FIRST-raise node (`sc=0`), where the bug is
+invisible. Impact is bounded: this feeds only the EV-gate baseline ("what would the blueprint do"), not
+the solved strategy or the emitted size.
+
+**Forward-insurance, not a live fix (verified, 2 review rounds).** A sweep of 332 sc>0 raise nodes ×
+48 pot/stack configs against the production blueprint menu (0.33/0.66/1.0) found the offset crosses a
+nearest-neighbour boundary at **0** nodes -- so the bug changed nothing observable today; it only
+matters for a denser / overbet menu (Phase-4 widening). Keep the fix as correct insurance.
+
+**Fix.** Include the actor's committed chips: `(node.sc[node.player] + sized_chips - to_call)/(pot +
+to_call)`.
+
+**Test-vacuity sub-lesson (the more important one).** The FIRST regression test added for this
+(`raise_medium`/`raise_large` on an sc=10 node) was itself VACUOUS -- it passed on the buggy formula
+too (the prior session made an arithmetic error claiming otherwise). A second review caught that. A
+discriminating test needs a node where the dropped offset (delta = sc_actor/(pot+to_call)) STRADDLES a
+nearest-neighbour boundary; the real test now uses sc=(54,34)/pot=80/to_call=20 (delta=0.34) where
+`raise_medium` maps to `raise:61` (fix) vs `raise:86` (bug). LESSON: "covers the general case" is not
+the same as "discriminates the fix" -- compute both branches on the test input and confirm they differ,
+or the regression test is false confidence (twice over here).
+
+### (F) Hero ~zero-reach -> silent uniform read-off — review-caught (same class as the original)
+
+**Symptom.** None observed; found by review.
+
+**Root cause.** The hero (bot) range was projected and used as-is with no positive-reach guard on the
+bot's ACTUAL hand. If that hand has ~0 hero reach (the blueprint assigns it ~0 chance of taking this
+line), its strategy-sum row never accumulates, so `average_strategy` returns uniform 1/A and the read-off
+emits a near-RANDOM action -- a silent quality collapse, not a crash. This is the SAME failure-mode class
+as the earlier seat/path uniform-fallback bug, now on the hero side; a board-collision guard existed but
+not a zero-reach one. (In the live GameSession path it ~can't fire -- the bot plays the blueprint
+pre-river, so its actual hand has positive through-turn reach -- but it's cheap, defensive, and matters
+for other callers / float edge cases.)
+
+**Fix.** In `solve_for_action`, after projecting hero, raise if `hero[actual_hand_row] <= 1e-12`, so
+`decide()` falls back to the blueprint cleanly instead of reading off uniform. Also reordered: all
+validation (board collision, hero reach, path navigation, seat) now happens BEFORE the costly solve.
+Test: `test_hero_zero_reach_falls_back`.
+
+**Also hardened (not bugs):** (i) `decide()`'s broad `except` (kept so a solve failure never crashes a
+live hand) now LOGS rate-limited with a traceback before falling back -- so a genuine defect surfaces in
+play instead of silently degrading to the blueprint (the failure mode that once hid the uniform-fallback
+bug). (ii) the EV-gate baseline's no-analog redirect changed from allin-first to PASSIVE-first
+(check>call>fold>allin) so it doesn't inflate the baseline EV. (iii) the final action sample uses a
+seedable RNG (reproducible scoring/tests). Visibility/robustness, not behavior changes.
+
+### (G) Solver all-in silently downgraded to a check at deep-stack nodes — review-caught, consequential
+
+**Symptom.** None observed in passing tests, but verified by tracing: a chosen `'allin'` becomes `'check'`.
+
+**Root cause.** The engine's `get_legal_actions` OMITS a discrete `'allin'` when every sized bet is
+affordable (deep stacks) -- the legal list is e.g. `['check','bet_small','bet_medium','bet_large']`. But
+the river tree ALWAYS offers `'allin'`. So when the solver chose to shove, `_pick_engine_action` found
+`'allin'` not in `legal_actions`, `is_sized('allin')` is False, and it fell through to the
+`('check','call','fold')` fallback -> emitted **check**. A GTO polarized shove silently became a check,
+precisely at deep-stack nodes where shoving matters most.
+
+**Consequence.** This is the worst of the six because it would have **biased the validation run itself**:
+the head-to-head / LBR scoring meant to prove the solver would understate it every time it correctly
+wanted to shove deep. (Also a live bug if/when the solver is ungated.)
+
+**Fix.** When `choice == 'allin'` and `'allin'` not in `legal_actions`, emit a full-stack custom shove
+`make_custom_action(is_raise=node.to_call>0, total=stacks[bot_seat])`. The engine's `custom_bet_bounds`
+hi == the behind stack, so `_validate_custom` normalises the at-stack custom to `'allin'` (verified).
+Test `test_allin_emits_shove_not_check_at_deep_stack` (deep-stack legal set without `'allin'`) asserts a
+shove, not a check, both checking and facing a bet.
+
+**Lesson.** The solver's action vocabulary (always-present all-in) and the engine's abstract legal set
+(all-in only when sized bets don't fit) DIVERGE; any mapping between two action vocabularies must handle
+every solver action that has no direct engine label, not just the sized ones. The earlier
+"check/fold/call/allin map directly when legal" looked total but silently dropped the not-legal-allin case.
+
+**Retrain impact.** None — all are inference/subgame-side (the trainer never builds a river tree,
+tracker, or subgame CFR). No abstraction or key change.
+
+**Lessons.**
+- A chip-conservation invariant that holds *by construction* validates almost nothing about the
+  quantities it sums; pin sizes against an independent oracle (here, the engine) too.
+- "Latent, can't fire today" is worth a loud assert, not a comment — a standalone reusable
+  component outlives the invariant its first caller happens to satisfy.
+- A design spec can be self-referentially degenerate; implementing it (not just agreeing to it) is
+  what exposed that "widen toward X" where the input already equals X is a no-op.
+
+---
+
 ## BUG-005 — Potential-aware abstraction: silent-divergence risk class (review + hardening)
 
 | | |

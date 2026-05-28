@@ -88,15 +88,29 @@ def nearest_char(eff_frac, grid):
     return min(grid, key=lambda cf: abs(cf[1] - eff_frac))[0]
 
 
-def blend(translated, strat_for_char):
+def blend(translated, strat_for_char, missing_action='fold'):
     """Blend per-bracket strategies. `translated` is translate_bet()'s output;
     `strat_for_char(char) -> {action: prob}` looks up the blueprint response for
-    a bracketing size. Returns the weight-mixed, renormalised {action: prob}."""
+    a bracketing size, or a FALSY value ({}/None) if that size has no trained
+    response. Returns the weight-mixed, renormalised {action: prob}.
+
+    Missing-bracket fallback: when a bracketing size is UNTRAINED (e.g. an opponent
+    open larger than the bot's open ladder maps partly onto an all-in-open bracket
+    the SB never trained), its weight routes to `missing_action` (default 'fold')
+    instead of being silently dropped. Dropping it collapses the response onto the
+    nearer, too-small bracket and makes the bot UNDER-fold to big off-grid bets;
+    folding that weight is the conservative response to a bet outside the trained
+    grid. (blend is only invoked facing a bet, so 'fold' is always legal there.)
+    Pass missing_action=None to keep the old drop-and-renormalise behaviour."""
     out = {}
     for char, w in translated:
         if w <= 0.0:
             continue
-        for a, p in strat_for_char(char).items():
-            out[a] = out.get(a, 0.0) + w * p
+        strat = strat_for_char(char)
+        if strat:
+            for a, p in strat.items():
+                out[a] = out.get(a, 0.0) + w * p
+        elif missing_action is not None:
+            out[missing_action] = out.get(missing_action, 0.0) + w
     s = sum(out.values())
     return {a: p / s for a, p in out.items()} if s > 1e-12 else out

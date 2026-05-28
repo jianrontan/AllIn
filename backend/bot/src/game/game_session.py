@@ -16,6 +16,9 @@ Design notes
 * Cards are stored in engine format (SuitRank); conversion to display format
   happens only in public_view().
 """
+import copy
+import math
+
 from ..cfr.poker_game import (
     PokerGame, STARTING_STACK, _is_custom, _custom_total, make_custom_action)
 from ..cfr.keys import action_char, make_info_set_key
@@ -51,6 +54,33 @@ _HAND_TYPE_LABEL = {
     'full_house': 'Full house', 'four_of_kind': 'Four of a kind',
     'straight_flush': 'Straight flush',
 }
+
+
+def _read_group_label(hand, relevant):
+    """Poker-shorthand label for a hole-card combo (two engine SuitRank cards,
+    e.g. ('HA','CK')), collapsing strategically-equivalent suits. `relevant` is
+    the set of flush-relevant board suits ('H'/'D'/'C'/'S'). A card's suit is
+    shown only if it's flush-relevant; suited/offsuit is always preserved.
+
+      rainbow board:  AhAc/AhAs/... -> 'AA'   AhKh -> 'AKs'   AhKc -> 'AKo'
+      two-heart board: Ah-anything-A -> 'AhA' (holds the heart ace, a blocker),
+                       AhKh -> 'AhKh' (the flush draw), AhKc -> 'AhK'.
+    """
+    (s1, r1), (s2, r2) = sorted(((c[0], c[1]) for c in hand),
+                                key=lambda sr: -RANK_MAP[sr[1]])
+
+    def disp(rank, suit):
+        return rank + suit.lower() if suit in relevant else rank
+
+    if r1 == r2:                                   # pair
+        toks = sorted([disp(r1, s1), disp(r2, s2)], key=len, reverse=True)
+        return ''.join(toks)                       # 'AA' or 'AhA' or 'AhAs'
+    if s1 == s2:                                   # suited
+        return f"{disp(r1, s1)}{disp(r2, s2)}" if s1 in relevant else f"{r1}{r2}s"
+    d1, d2 = disp(r1, s1), disp(r2, s2)            # offsuit
+    if len(d1) == 1 and len(d2) == 1:              # no flush-relevant suit shown
+        return f"{r1}{r2}o"
+    return f"{d1}{d2}"                              # which exact flush card(s) held
 
 
 class GameError(Exception):
@@ -90,7 +120,11 @@ class GameSession:
 
     @classmethod
     def from_dict(cls, data, strategy_fn=None):
-        return cls(dict(data), strategy_fn=strategy_fn)
+        # Deep-copy so the live session never aliases the stored dict's nested
+        # lists/dicts (history, action_log, community, opp_range, ...). Without
+        # this, in-place mutations would leak into the store before put() and a
+        # mid-apply failure could corrupt the persisted state.
+        return cls(copy.deepcopy(data), strategy_fn=strategy_fn)
 
     def to_dict(self):
         return self.data
@@ -130,8 +164,18 @@ class GameSession:
             bot_seat = 1 - human_seat
             bot_cards = d['p0_cards'] if bot_seat == 0 else d['p1_cards']
             d['opp_range'] = RangeTracker(bot_cards, self.cards).to_dict()
+            # The bot's OWN blueprint-reach range, for the Phase-4 river solver
+            # (hero range). hero_hole=() spans all hands -- the solver does not
+            # condition on the human's cards; pairwise removal is left to the
+            # showdown kernel. Built by observing the BOT's actions (below).
+            d['bot_range'] = RangeTracker((), self.cards).to_dict()
         else:
             d['opp_range'] = None
+            d['bot_range'] = None
+        # River-entry snapshots of both beliefs (frozen before river betting) that
+        # the subgame solver consumes; filled when the river is dealt.
+        d['river_entry_opp'] = None
+        d['river_entry_bot'] = None
         self._settle()
 
     # ------------------------------------------------------------------
@@ -142,20 +186,47 @@ class GameSession:
         rt = self.data.get('opp_range')
         return RangeTracker.from_dict(rt, self.cards) if rt is not None else None
 
+    def _load_bot_range(self):
+        rt = self.data.get('bot_range')
+        return RangeTracker.from_dict(rt, self.cards) if rt is not None else None
+
     def _opp_position(self):
         """The human's position string (the opponent the tracker models)."""
         return 'ip' if self.data['human_seat'] == 0 else 'oop'
 
+    def _bot_position(self):
+        """The bot's position string (opposite of the human)."""
+        return 'oop' if self.data['human_seat'] == 0 else 'ip'
+
     def opponent_read(self, k=8):
-        """Bot's current belief about the human's hand: confidence + top-k hands.
-        None when tracking is disabled (no opponent model)."""
+        """Bot's current belief about the human's hand: confidence + top-k hand
+        GROUPS. Strategically-equivalent combos are merged given the board: suits
+        are hidden unless flush-relevant, so e.g. all 6 pocket-aces collapse to
+        'AA' on a rainbow board, but on a two-heart board the heart aces split out
+        ('AhA'), and a heart flush draw shows 'AhKh'. None when tracking is off."""
         tracker = self._load_range()
         if tracker is None:
             return None
+        street = min(self.data['street'], 3)
+        board = self.data['community'][:_BOARD_COUNT[street]]
+        # A suit is flush-relevant when a hole card of it can still be part of a
+        # 5-card flush: >=2 on the board pre-river (draw), >=3 on the river (made).
+        thr = max(2, len(board) - 2)
+        bcount = {}
+        for c in board:
+            bcount[c[0]] = bcount.get(c[0], 0) + 1
+        relevant = {s for s, n in bcount.items() if n >= thr}
+
+        agg = {}
+        for h, p in zip(tracker.hands, tracker.normalized_weights()):
+            if p <= 0.0:
+                continue
+            label = _read_group_label(h, relevant)
+            agg[label] = agg.get(label, 0.0) + float(p)
+        top = sorted(agg.items(), key=lambda kv: -kv[1])[:k]
         return {
             'confidence': round(tracker.confidence, 4),
-            'topHands': [{'cards': to_display_list(list(h)), 'prob': round(p, 4)}
-                         for h, p in tracker.top_hands(k)],
+            'topHands': [{'label': lab, 'prob': round(pr, 4)} for lab, pr in top],
         }
 
     # ------------------------------------------------------------------
@@ -207,6 +278,25 @@ class GameSession:
                 frac = translation.eff_fraction(self._action_cost('allin'), to_call, pot)
                 grid['a'] = frac
         return sorted(grid.items(), key=lambda cf: cf[1])
+
+    def _river_path_specs(self):
+        """The realized river actions as RiverSubgameSolver navigation specs:
+        a plain label ('check'/'call'/'fold'/'allin') or ('bet'|'raise', chips)
+        for a sized action (chips = the additional cost when it was taken). Used
+        to walk the solver's tree to the bot's current decision node."""
+        d = self.data
+        if d['street'] != 3:
+            return []
+        specs, hist = [], d['history']
+        for i, a in enumerate(hist):
+            if a in ('check', 'call', 'fold', 'allin'):
+                specs.append(a)
+            else:
+                cost = self.game._action_cost(
+                    a, 3, hist[:i], d['starting_pot'],
+                    self.game._acting_player(i, 3), d['p0_invested'], d['p1_invested'])
+                specs.append(('raise' if a.startswith('raise') else 'bet', cost))
+        return specs
 
     def custom_bounds(self):
         """Min/max legal raise-to TOTAL (CHIPS) for a custom bet/raise by the
@@ -270,6 +360,19 @@ class GameSession:
             tracker.observe(self.strategy_fn, snapped_action, street, self._opp_position(),
                             d['bet_pattern'], legal, board)
             d['opp_range'] = tracker.to_dict()
+
+        # Symmetrically, build the BOT's own blueprint-reach range (the hero range
+        # the river solver consumes) by observing the bot's actions. Frozen at
+        # river entry via river_entry_bot, so observing the bot's river actions
+        # here is harmless (the solver uses the snapshot, not the live tracker).
+        if (player != d['human_seat'] and self.strategy_fn is not None
+                and d.get('bot_range') is not None):
+            bt = self._load_bot_range()
+            street = d['street']
+            board = d['community'][:_BOARD_COUNT[min(street, 3)]]
+            bt.observe(self.strategy_fn, snapped_action, street, self._bot_position(),
+                       d['bet_pattern'], legal, board)
+            d['bot_range'] = bt.to_dict()
 
         d['history'].append(action)
         d['bet_pattern'] += char
@@ -356,12 +459,24 @@ class GameSession:
         d['history'] = []
         d['bet_pattern'] = ''
 
-        # Newly-dealt board cards are now impossible for the opponent to hold.
+        # Newly-dealt board cards are now impossible for either player to hold.
         # reveal() is model-free, so it runs regardless of strategy_fn.
+        board_now = d['community'][:_BOARD_COUNT[min(d['street'], 3)]]
         if d.get('opp_range') is not None:
             tracker = self._load_range()
-            tracker.reveal(d['community'][:_BOARD_COUNT[min(d['street'], 3)]])
+            tracker.reveal(board_now)
             d['opp_range'] = tracker.to_dict()
+        if d.get('bot_range') is not None:
+            bt = self._load_bot_range()
+            bt.reveal(board_now)
+            d['bot_range'] = bt.to_dict()
+
+        # Entering the river: snapshot both beliefs (post card-removal, before any
+        # river betting) as the subgame solver's frozen inputs -- this is what
+        # avoids re-modelling river actions the live trackers will keep absorbing.
+        if d['street'] == 3:
+            d['river_entry_opp'] = d.get('opp_range')
+            d['river_entry_bot'] = d.get('bot_range')
 
     def _resolve(self):
         d = self.data
@@ -444,6 +559,22 @@ class GameSession:
             'to_call': to_call,
             'opp_range': self._load_range(),
         }
+        # On the RIVER, hand the subgame solver its inputs: the river-entry
+        # snapshots of both ranges (frozen before river betting), the river-entry
+        # pot + (equal) behind stacks, the bot's seat, and the realized river path.
+        # opp_range is overridden with the snapshot so the solver does not see the
+        # live tracker's river updates (which would double-model river actions).
+        # Absent these keys (off-river, or no model), the solver falls back.
+        if street == 3 and d.get('river_entry_bot') is not None:
+            state['botSeat'] = actor
+            state['riverEntryPot'] = d['starting_pot']
+            state['riverEntryStacks'] = (STARTING_STACK - d['p0_invested'],
+                                         STARTING_STACK - d['p1_invested'])
+            state['hero_range'] = RangeTracker.from_dict(d['river_entry_bot'], self.cards)
+            if d.get('river_entry_opp') is not None:
+                state['opp_range'] = RangeTracker.from_dict(d['river_entry_opp'], self.cards)
+            state['riverPath'] = self._river_path_specs()
+
         # If the opponent just made an off-grid bet, hand the bot the bracketing
         # blueprint keys + pseudo-harmonic weights so it blends the responses to
         # the two adjacent grid sizes instead of snapping to one (action
@@ -517,8 +648,12 @@ class GameSession:
                 cb = self.custom_bounds()
                 if cb is not None:
                     # Min/max raise-to TOTAL, in BB, for the custom-amount box.
-                    custom_bounds = {'minBb': round(cb[0] / BIG_BLIND, 2),
-                                     'maxBb': round(cb[1] / BIG_BLIND, 2)}
+                    # Round the min UP and the max DOWN to the cent so the shown
+                    # range stays strictly inside the engine's exact (unrounded)
+                    # bounds -- otherwise a value the UI thinks is valid can fall a
+                    # hair below the real min-raise and get rejected with a 400.
+                    custom_bounds = {'minBb': math.ceil(cb[0] / BIG_BLIND * 100) / 100,
+                                     'maxBb': math.floor(cb[1] / BIG_BLIND * 100) / 100}
                 for action in self.legal_actions():
                     cost = self.game._action_cost(
                         action, d['street'], d['history'], d['starting_pot'],
@@ -583,7 +718,19 @@ def advance_bot_turns(session, bot_strategy):
             session.info_set_key(bot),
             session.legal_actions(),
             session.bot_public_state())
-        session.apply_action(action)
+        try:
+            session.apply_action(action)
+        except GameError:
+            # A borderline solver custom size the engine rejected at the margin
+            # must never crash a hand -- fall back to a safe legal action.
+            legal = session.legal_actions()
+            if not legal:
+                break                       # nothing legal -> let _settle/guard end it
+            safe = next((a for a in ('check', 'call', 'fold') if a in legal), legal[0])
+            try:
+                session.apply_action(safe)
+            except GameError:
+                break                       # even the fallback is illegal -> bail safely
         guard += 1
         if guard > 64:
             raise GameError("Bot turn loop did not terminate.")

@@ -65,6 +65,7 @@ class LBREvaluator:
         self.actions = ActionAbstraction()
         self.evaluator = HandEvaluator()
         self.rng = random.Random(seed)
+        self._base_seed = seed
         self.flop_runout_samples = flop_runout_samples
 
         # Memoized blueprint lookups (same pattern as best_response.py).
@@ -404,22 +405,39 @@ class LBREvaluator:
             return -invested[lbr_seat]
         return pot / 2.0 - invested[lbr_seat]
 
-    def evaluate(self, num_hands=2000, progress_every=200):
+    def evaluate(self, num_hands=2000, progress_every=200, paired=False):
         """
-        Monte Carlo: play num_hands of LBR vs blueprint (alternating seats).
-        Returns LBR's win rate in mbb/hand -- a LOWER bound on exploitability.
+        Monte Carlo: play num_hands of LBR vs the victim (alternating seats).
+        Returns LBR's win rate in mbb/hand -- a LOWER bound on exploitability,
+        plus the per-hand chip results.
+
+        paired=True re-seeds the per-hand RNG to (seed, hand_index) so the DEAL
+        and the pre-river play are deterministic per hand and INDEPENDENT of how
+        many RNG draws the victim makes. This makes two evaluators (e.g. blueprint
+        vs blueprint+solver) play IDENTICAL deals + identical pre-river lines, so
+        the per-hand difference isolates the river change (a true paired
+        comparison) -- without it, a victim that draws the RNG differently
+        desynchronises the deal stream.
         """
         total = 0.0
+        per_hand = []
         for i in range(num_hands):
+            if paired:
+                # str seed -> deterministic & reproducible across processes (a tuple
+                # is not a valid Random seed; hash() of a tuple is per-process salted).
+                self.rng = random.Random(f"{self._base_seed}|{i}")
             c = self.rng.sample(_FULL_DECK, 9)
             lbr_hand = (c[0], c[1])
             bot_hand = (c[2], c[3])
             board = c[4:9]
-            total += self.play_hand(i % 2, lbr_hand, bot_hand, board)
+            r = self.play_hand(i % 2, lbr_hand, bot_hand, board)
+            per_hand.append(r)
+            total += r
             if progress_every and (i + 1) % progress_every == 0:
                 print(f"  hand {i + 1}/{num_hands}", flush=True)
         avg_chips = total / num_hands
-        return {'lbr_mbb': avg_chips * 1000.0 / 2.0, 'num_hands': num_hands}
+        return {'lbr_mbb': avg_chips * 1000.0 / 2.0, 'num_hands': num_hands,
+                'per_hand': per_hand}
 
 
 class BotRange:
@@ -507,10 +525,16 @@ class BotRange:
         legal = list(legal)
         ai = legal.index(action)
         mat = self.action_probs(lookup, street, position, bet_pattern, legal, board)
-        self.w = self.w * mat[:, ai]
-        s = self.w.sum()
+        new_w = self.w * mat[:, ai]
+        s = new_w.sum()
         if s > 1e-12:
-            self.w /= s    # renormalise to keep weights from underflowing
+            self.w = new_w / s    # renormalise to keep weights from underflowing
+        # else: the action has ~zero model-probability across every live hand.
+        # Applying it would zero the belief permanently; keep the prior instead.
+        # Matches RangeTracker.observe (the live sibling) so the two never
+        # diverge on off-model handling. In practice unreachable here (the bot
+        # samples its action FROM this blueprint, so the action always has
+        # positive mass for some live hand) -- the guard is defensive parity.
 
     # -- per-hand probability of one action (from the raw average strategy) ---
     def per_hand_action_prob(self, raw_lookup, action, street, position, pattern, board):

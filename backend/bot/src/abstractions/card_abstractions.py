@@ -351,6 +351,10 @@ _PREFLOP_BUCKET_MAP = {
     'TT': 'pf_14',
 }
 
+# Number of preflop buckets, derived from the map above so consumers (e.g. the
+# API's Key Explorer vocabulary) can't drift from the actual abstraction.
+NUM_PREFLOP_BUCKETS = len(set(_PREFLOP_BUCKET_MAP.values()))
+
 
 class CardAbstraction:
     """
