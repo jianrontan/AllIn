@@ -19,6 +19,7 @@ written) — no manual promotion step. Set ALLIN_BLUEPRINT_DB to pin a file.
 """
 import sys
 import os
+import argparse
 from pathlib import Path
 from datetime import datetime
 
@@ -139,4 +140,33 @@ def run_training(iterations, resume=None, checkpoint_every=1000,
 
 
 if __name__ == "__main__":
-    run_training(10000000, checkpoint_every=50000)
+    # CLI flags so you never need a quoted `python -c "..."` one-liner (which is
+    # easy to mangle when pasted into a shell). Example:
+    #   python tests/run_blueprint_trainer.py --resume blueprint_par_X.db --workers 6
+    p = argparse.ArgumentParser(description="Train / resume a blueprint.")
+    p.add_argument('--iterations', type=int, default=10_000_000,
+                   help="CFR iterations to run this session (default 10,000,000).")
+    p.add_argument('--resume', default=None,
+                   help="Filename of an existing DB in analysis/blueprints/ to "
+                        "continue (e.g. blueprint_par_20260529_233056.db). "
+                        "Omit to start a fresh run.")
+    p.add_argument('--workers', type=int, default=None,
+                   help="Parallel worker processes (>1 = parallel). Omit/1 = single-thread.")
+    p.add_argument('--merge-every', type=int, default=4000,
+                   help="Parallel only: iterations per worker between merges (default 4000).")
+    p.add_argument('--checkpoint-every', type=int, default=50_000,
+                   help="Save to the DB every N iterations (default 50,000).")
+    p.add_argument('--seed', type=int, default=None,
+                   help="Seed Python's RNG (single-thread reproducibility only).")
+    p.add_argument('--gamma', type=float, default=None,
+                   help="Override the strategy-sum discount exponent.")
+    args = p.parse_args()
+    run_training(
+        args.iterations,
+        resume=args.resume,
+        checkpoint_every=args.checkpoint_every,
+        seed=args.seed,
+        gamma=args.gamma,
+        workers=args.workers,
+        merge_every=args.merge_every,
+    )

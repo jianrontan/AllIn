@@ -164,7 +164,11 @@ def merge_round(info_sets, worker_results, alpha, gamma):
         # for which the worker always emits res['legal'], so the scan above must
         # succeed. Guard the contract: an empty legal_actions here would silently
         # seed an info set that later NaNs in get_average_strategy / regret matching.
-        assert info.legal_actions, f"merge_round: no legal_actions for key {key!r}"
+        # Use an explicit raise (not assert) so the guard survives `python -O`,
+        # which strips asserts -- a long training run launched with -O must still
+        # fail loud rather than corrupt the blueprint.
+        if not info.legal_actions:
+            raise RuntimeError(f"merge_round: no legal_actions for key {key!r}")
         return info
 
     # --- Regret merge ---

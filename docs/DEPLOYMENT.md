@@ -1,6 +1,6 @@
 # Deployment
 
-Last updated: 2026-05-27
+Last updated: 2026-05-30
 
 How AllIn goes from a local Flask + Vite dev setup to a public, online heads-up game
 with a live "+EV counter" — the planned LinkedIn launch. For how the system works see
@@ -8,6 +8,51 @@ with a live "+EV counter" — the planned LinkedIn launch. For how the system wo
 for not-yet-committed ideas (WASM client-offload) see [IDEAS.md](IDEAS.md).
 
 Status legend: ✅ done · 🚧 in progress · 📅 planned
+
+---
+
+## Stack glossary — what each layer is and does
+
+In the order a visitor's request travels through it. The one-sentence path: a visitor hits
+`allin.jianrontan.com` → **Cloudflare DNS** routes them → **Cloudflare Pages** serves the React
+app to their browser → the app calls the API → which lives in a **Docker container** (run by
+**gunicorn**) on a **Lightsail box** → that runs **Flask + the game engine + the blueprint** to
+decide the bot's move and reads/writes the **DynamoDB** leaderboard → and the whole AWS side is
+defined in **Terraform**.
+
+1. **Domain + DNS — Cloudflare Registrar + DNS.** The registrar is who you rent the name
+   `jianrontan.com` from; DNS is the phonebook that turns a name into a server address. A
+   subdomain (`allin.`) is just one more phonebook entry — free once you own the apex. Cloudflare
+   does both at cost (~$10/yr).
+2. **Frontend hosting — Cloudflare Pages.** Hosts the **static** files `npm run build` emits
+   (HTML/CSS/JS). Static = no compute; the browser downloads and runs them. Serves `AiGame.jsx`
+   etc. on a global CDN. Holds **no game logic and no blueprint** — it calls the API for those.
+   One Pages project **per portfolio project** (apex = landing page, each project on its own
+   subdomain), $0 each, unmetered bandwidth, auto-HTTPS, deploy-on-git-push.
+3. **The boundary — the API client.** `frontend/src/api.js` + `VITE_API_BASE`: the seam where the
+   static frontend stops and the live backend begins. Every `/api/...` call crosses from
+   Cloudflare to the backend box; `VITE_API_BASE` (set at build) names the backend URL.
+4. **Backend compute — Lightsail instance.** The always-on Linux box (CPU + RAM) — the **only**
+   piece that runs Python and *thinks*. Runs the Flask API, `GameSession`, `BlueprintStrategy`,
+   and (in the launch window) the Phase-4 river solver. Its size is what costs money, because the
+   solver is the only real compute.
+5. **The container — Docker + gunicorn.** **Docker** packages app + Python + numpy + the blueprint
+   `.db` + the baked tables into one reproducible **image** (fixes "works on my laptop"). **gunicorn**
+   is the production WSGI server that accepts public HTTP and runs Flask in multiple workers (the
+   `python strategy_api.py` dev server is single-threaded, dev-only). ⚠️ The git-ignored baked
+   postflop tables (turn ~126 MB) **must be inside the image**, or the bot falls back to slow lazy
+   bucketing (see D0).
+6. **Image registry — ECR.** A storage locker for built Docker images: build → push here → the
+   box pulls from here to run. The handoff between "I built a new version" and "the server runs it."
+7. **Datastore — DynamoDB (on-demand).** A managed NoSQL DB (no server to run; pay-per-request,
+   ≈free at this scale). Holds the **mutable** runtime data — game sessions (so a hand survives a
+   restart) and the leaderboard (`players` / `global` / `sessions`), behind the `SessionStore`
+   seam. Note the blueprint itself is **not** here — it's the read-only SQLite `.db` baked into the
+   image (layer 5); it never changes at runtime, so it needs no database service.
+8. **Infrastructure-as-Code — Terraform.** Describes the AWS resources (Lightsail service, ECR repo,
+   DynamoDB tables, IAM) in text; `terraform apply` builds them for real. Reproducible, self-
+   documenting, and the portfolio/IaC signal. DNS stays **out** of Terraform — it lives in the
+   Cloudflare dashboard (changed maybe twice ever).
 
 ---
 
@@ -40,18 +85,31 @@ rewrite**.
   picks it, or pin `ALLIN_BLUEPRINT_DB`.
 - **Real WSGI** (gunicorn), not the Flask dev server. In-memory sessions only survive one
   worker — another reason for the persistent session store (D2).
-- Set **`ALLIN_CORS_ORIGINS`** to the real frontend domain; terminate **HTTPS** at the load
-  balancer / App Runner / CloudFront.
+- Set **`ALLIN_CORS_ORIGINS`** to the real frontend domain; terminate **HTTPS** at the host
+  (Lightsail/Pages both bundle it).
 
 ### D1 — Frontend 📅
-Static Vite build → **AWS Amplify Hosting** (or S3 + CloudFront). Set `VITE_API_BASE` at
-build time. Scales on the free tier at this audience.
+Static Vite build → **Cloudflare Pages** ($0, unmetered bandwidth, auto-HTTPS, deploy-on-push).
+Set `VITE_API_BASE` at build time. This **consolidates with the Cloudflare registrar + DNS**
+(one vendor for domain + DNS + all frontend hosting) and is the right shape for a **multi-project
+portfolio**: apex `jianrontan.com` = a landing-page Pages project, each project on its own
+subdomain as a separate Pages deployment, $0 each. (All-AWS alternative: S3 + CloudFront folded
+into the same Terraform — more AWS IaC signal, slightly more setup.)
 
 ### D2 — Backend + session store (persistent, mandatory) 📅
-**AWS App Runner** (container, built-in HTTPS, autoscales) + a **`DynamoDBSessionStore`**
-behind the existing `SessionStore` interface → a stateless API that scales horizontally
-safely. In-memory single-box is **off the table** because the public counter must survive
-restarts. DynamoDB on-demand is ~free at this scale.
+> **App Runner is retired** — AWS put it in maintenance mode (no new customers after 2026-04-30,
+> no new features). Do **not** onboard. AWS's own successor is **ECS Express Mode** (Fargate +
+> ALB), but for this workload it's overkill (see Cost).
+
+**AWS Lightsail Containers/instance** (flat-rate, bundled HTTPS, no ALB/NAT cost traps) + a
+**`DynamoDBSessionStore`** behind the existing `SessionStore` interface → a stateless API that
+scales horizontally safely. In-memory single-box is **off the table** because the public counter
+must survive restarts. DynamoDB on-demand is ~free at this scale. **Why Lightsail over Fargate:**
+the box is kept always-warm (min-instance = 1) for the live counter + solver, and always-on
+favors flat-rate over pay-per-use — Lightsail is cheaper *and* simpler here, and is still
+Terraformable (`aws_lightsail_container_service`), so the IaC story is intact. Fargate's
+fine-grained autoscaling is its edge, and this human-paced workload doesn't need it. (Non-AWS
+value champion: a Hetzner CX22, 2 vCPU/4 GB ~$5/mo, runs the full solver too.)
 
 ### D3 — Polish 📅
 Health checks, request logging, a per-IP rate limit on new-session creation (anti-farm), a
@@ -124,37 +182,49 @@ So: anonymous play *feeds the counter*; accounts *compete on the board*.
 
 ## Cost
 
-Researched 2026-05-27 (AWS App Runner, us-east; [pricing](https://aws.amazon.com/apprunner/pricing/)).
+Researched 2026-05-30. (Supersedes the earlier App Runner pricing — App Runner is retired,
+see D2.)
 
 **What actually costs money.** In the Phase-4 v1 design, **only river decisions invoke the
 solver** — flop/turn/preflop fall back to the cheap blueprint lookup. So a hand has ~0–2
 solves, each bounded by the 10s ceiling (realistically 1–several seconds). The workload is
 **human-paced** (players act every ~10–30s), so even with 10–20 people "online" the number of
 *simultaneous* solves stays tiny. It's a mostly-idle box that occasionally spikes one core —
-**not** flat-out 24/7.
+**not** flat-out 24/7. Because the box is kept **always-warm**, flat-rate pricing beats
+pay-per-use, which is why Lightsail wins over Fargate here.
 
-App Runner rates: **$0.064 / vCPU-hour** (active) + **$0.007 / GB-hour** (memory, charged even
-when idle if kept warm), billed per second; compute drops to ~0 when not processing.
+### Two-phase cost model
 
-| Scenario | Pays for | Cost |
-|---|---|---|
-| Idle-warm (no traffic) | 4 GB memory only | **~$0.028/hr ≈ $0.67/day ≈ $20/mo floor** |
-| Active solving (2 cores busy) | 2 vCPU + 4 GB | ~$0.156/hr |
-| **Realistic launch week** (10–20 users, bursty) | mostly memory + occasional compute | **~$1–3/day → ~$10–25 total** |
-| Unlikely 100–200 burst day | scale to 4 vCPU / 8 GB during spike | a few $/day while it lasts |
+The key decoupling: the solver is the *only* expensive part — blueprint inference is just
+SQLite lookups. So you don't pay launch prices forever. Run a cheap **residency** indefinitely
+and bump to a bigger box only during the **launch window**.
 
-Caveats:
-- App Runner **caps at 4 vCPU / 12 GB per instance**. If a single solve ever needs >4 cores to
-  hit 10s, move to ECS/Fargate or EC2 — a Phase-5 (turn/flop, bigger trees) concern, not river v1.
-- Run with **min-instances = 1 (warm)**: a cold solver mid-hand is bad UX, and the live counter
-  wants an always-on box — hence the ~$20/mo floor. `min = 0` drops idle cost to ~$0 but adds
-  cold starts.
-- The rest of the stack is ~free at this scale: **Amplify** frontend (free tier), **DynamoDB**
+| Phase | What's live | Box | Cost |
+|---|---|---|---|
+| **Long-term residency** (recruiters, indefinite) | Blueprint bot only | tiny always-on | **~$5–10/mo** |
+| **Launch window** (LinkedIn push, ~1–2 wks) | + Phase-4 solver behind the +EV counter | bump to 2 vCPU | **~$40/mo**, then scale back |
+
+Backend options at the residency tier:
+
+| Option | Specs | Cost | Runs full solver? |
+|---|---|---|---|
+| **AWS Lightsail instance** (Docker) | 2 vCPU burstable / 1 GB | **$7/mo** | Blueprint yes; solver via CPU-burst, slower |
+| AWS Lightsail Containers Micro | 0.5 vCPU / 1 GB | $10/mo (free 3 mo) | Blueprint yes; solver no |
+| **Hetzner CX22** (non-AWS) | 2 vCPU / 4 GB | **~$5/mo** | **Yes — solver too**, no two-phase split needed |
+| Oracle Cloud always-free | 4 vCPU / 24 GB ARM | $0 | Yes, but flaky availability |
+
+Notes:
+- For the launch window, Lightsail Containers **Medium** (2 vCPU / 4 GB, ~$40/mo flat) is the
+  pick; scale back to the residency box after. Lightsail scales by **adding nodes** for the
+  unlikely 100–200 burst (the API is stateless behind DynamoDB, so horizontal scaling is safe).
+- The rest of the stack is ~free at this scale: **Cloudflare Pages** frontend ($0), **DynamoDB**
   on-demand (~$0 at thousands of hands).
+- **All-in:** ~$5–10/mo residency + a ~$40 launch month + ~$10/yr domain.
 
 This **confirms the server-side launch over WASM client-offload**: offloading saves only
 single-digit dollars while costing leaderboard integrity (a tampered client could farm the +EV
-counter). WASM stays a portfolio flex / load pressure-valve, not day-one. See [IDEAS.md §1](IDEAS.md).
+counter). WASM stays a portfolio flex / load pressure-valve, not day-one (see the WASM section
+below and [IDEAS.md §1](IDEAS.md)).
 
 ### Domain
 
@@ -167,10 +237,39 @@ free for a portfolio landing page (`jianrontan.com` = you, `allin.jianrontan.com
   ~$13.98 renewal. Avoid GoDaddy (~$22/yr renewal).
 - **DNS** — Cloudflare DNS is free (pairs with the registrar); Route 53 is $0.50/mo per hosted
   zone (only worth it if going all-in on AWS).
-- **Recommended:** register + DNS at **Cloudflare (~$10/yr flat)**, CNAME `allin.jianrontan.com`
-  → the App Runner URL (App Runner's custom-domain feature gives auto HTTPS).
+- **Recommended:** register + DNS at **Cloudflare (~$10/yr flat)**. Point `allin.jianrontan.com`
+  at the **Lightsail** backend (custom-domain → bundled HTTPS); the frontend is a **Cloudflare
+  Pages** project on its own subdomain (auto-HTTPS). Apex `jianrontan.com` = a portfolio landing
+  Pages project; **add future projects as more subdomains**, $0 each.
 
-**All-in:** ~$10–30 for the active launch week + ~$10/yr domain.
+**All-in:** ~$5–10/mo residency + a ~$40 launch month + ~$10/yr domain.
+
+---
+
+## If you later add WebAssembly — does the stack change?
+
+**Mostly no — WASM is additive, not a different stack.** It doesn't replace any layer; it
+**shifts the solver's compute from the backend (layer 4) into the user's browser** (layer 2). The
+recommended hybrid (IDEAS §1, option D): the server still builds the two ~1225-combo range vectors
+(cheap, but needs the baked tables), and the browser runs **only** the table-free river CFR+ in a
+Rust→WASM module. What each layer does differently:
+
+- **Frontend (Cloudflare Pages)** — *gains weight*: ships an extra **Rust→WASM** artifact, runs the
+  solve in a **Web Worker** (so the UI doesn't freeze), and needs **COOP/COEP headers** for WASM
+  threads (set via a Pages `_headers` file — Pages supports this). Still $0, still Pages.
+- **Backend (Lightsail)** — *shrinks permanently*: the expensive solve leaves the server, so it only
+  builds range vectors + serves blueprint lookups + the leaderboard. **No launch-window 2-vCPU bump
+  needed** — the residency box handles everything, indefinitely. This is the real payoff.
+- **DynamoDB, ECR, Docker, Terraform, domain/DNS** — **unchanged**.
+
+So the stack's *shape* is identical; one box gets lighter and one gets a new artifact + headers.
+Two caveats that are design constraints, not stack changes:
+- **The 126 MB turn table can't ship to the browser** — which is exactly why it's the *hybrid*
+  (server builds ranges using the tables; client does only the table-free river solve).
+- **Leaderboard integrity:** client-computed bot decisions can be tampered to farm the +EV counter.
+  Mitigate by **load-adaptive offload** (solve server-side by default, offload only under real
+  burst) or by **excluding client-solved hands** from the leaderboard. Re-evaluate only **after
+  Phase 4 ships** and real solve-time/concurrency is measured.
 
 ---
 

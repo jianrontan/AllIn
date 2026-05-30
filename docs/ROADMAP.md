@@ -344,6 +344,56 @@ run_training(20000000, checkpoint_every=50000, workers=8, merge_every=4000)"
   postflop card-space, so per-info-set convergence is faster — expect the knee in the low tens of
   millions. At ~5× parallel speedup, 20M ≈ **~13–14 h**.
 
+### Where training time actually goes (2026-05-30 profiling) + the river-board cache
+
+After the redesign retrain, a `cProfile` pass (`scripts/profile_evaluator.py`) over real training
+turned up a surprising distribution that re-ordered the remaining speed levers:
+
+| Finding | Number |
+|---|---|
+| Hand evaluator (`rank7`/phevaluator `_evaluate_cards`/`hash_quinary`) share of training | **only ~17%** |
+| Share of all evals coming from **river bucketing** (`board_winrates`, 1081 hands/board) vs showdown | **~99% vs ~1%** (~930 evals/iter, ~2 of them showdown) |
+| Pure-Python CFR loop (`cfr` walk + `get_strategy` + threaded state engine) | **the dominant cost** |
+| Parallel speedup on the 8-core laptop | **~3.7×** (312 vs 84 it/s) — capped by thermal throttle, the serial master merge, and hyperthreads not helping pure-Python |
+
+**Consequence for "Lever B" (swap pure-Python phevaluator for a compiled evaluator like eval7).**
+Because the evaluator is only ~17% of training, a compiled evaluator buys **only ~1.14× on
+training** — it was *re-scoped from a training lever to an inference/solver lever* (the river solver
+and range tracker are eval-dominated, so eval7 helps live latency / the solver's time budget there).
+The genuine 5–10× training lever is **compiling the CFR inner loop itself** (Cython / Rust `nogil`),
+not the evaluator — that's the P3 follow-up. (Lever B, if ever done, still needs an
+ordinal-equivalence proof so it does *not* force a re-bake/retrain.)
+
+**The win actually taken: a canonical river-board equity cache.** Since ~99% of training evals are
+`board_winrates` ranking every hand on a river board, and equity is suit-invariant, we cache that
+pass on the **canonical (suit-isomorphic) board** instead of the concrete one:
+
+| | |
+|---|---|
+| Concrete 5-card boards | 2,598,960 |
+| **Canonical** 5-card boards (the cache key space) | **134,459** → **19.3× fewer** |
+| `board_winrates` calls over a 30M-iter run, canonical key | ~134k **total** → **99.7% hit rate** after a ~1.5% warmup |
+| **Measured training speedup** (warm vs no-cross-iter-reuse, single-thread) | **1.63×** (`scripts/measure_river_speedup.py`) |
+
+Implementation notes (`abstractions/postflop_v2.py`, `abstractions/canonical.py:canonical_board_perm`):
+- **Resume-safe, NOT an abstraction change.** Equity is stored as a `uint16` numerator
+  (`2·990·equity` is an exact integer in `[0,1980]`; `s/1980.0` reconstructs the *bit-identical*
+  float64 the pre-cache path produced), so every river **bucket is unchanged** — `keys.py`,
+  centroids, and `sizing.py` are untouched. An in-progress blueprint can just **resume** under the
+  new code; no retrain. (An earlier `float32` store flipped ~1/5000 bin-edge buckets — caught by the
+  3-agent audit and replaced with the exact `uint16`.)
+- **Module-global, on purpose.** The parallel trainer builds a fresh `BlueprintTrainer`/`PostflopV2`
+  every merge round, so an *instance* cache would go cold every ~4000 iters (concrete≈canonical in a
+  short window → ~1.0×). A module global lives for the worker process's lifetime, so each persistent
+  worker warms it across rounds. **LRU eviction** (`OrderedDict`, default cap
+  `ALLIN_RIVER_CACHE_BOARDS=100_000` ≈ 0.26 GB/process → ~2.1 GB at 8 workers, ~1.6 GB at 6) — a cap
+  below the 134,459 canonical boards degrades gracefully (keeps the hottest boards) instead of
+  thrashing; raise toward 134,459 on a roomy box to cache them all. Tests:
+  `tests/test_river_board_cache.py`.
+- **Open follow-up:** the inference API serves one shared `PostflopV2`/cache across Flask threads
+  (`threaded=True`); the cache is a pure memo so it can never return a *wrong* value, but the
+  check/clear/insert is non-atomic — add a lock or a per-session instance before go-live.
+
 ---
 
 ## Phase 4 — Subgame solving 🚧 IN PROGRESS

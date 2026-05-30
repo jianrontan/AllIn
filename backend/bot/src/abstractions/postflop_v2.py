@@ -25,23 +25,64 @@ Bucket counts follow the centroids (12 flop / 12 turn / 10 river by default).
 import os
 import random
 import warnings
+from collections import OrderedDict
 
 import numpy as np
 
-from .canonical import canonical_key
+from .canonical import canonical_key, canonical_board_perm
 from .postflop_features import (
     load_centroids, encode_situation, equity_distribution, assign,
     board_winrates, centroid_hash, _CARD_IDX, _ABSTRACTIONS_DIR)
 
 _STREET = {3: 'flop', 4: 'turn', 5: 'river'}
 
+# Per-board river equities, keyed on the CANONICAL (suit-isomorphic) board so all
+# 19.3 concrete boards in a suit-orbit share one board_winrates() pass. There are
+# only 134,459 canonical 5-card boards (vs 2,598,960 concrete), so a long run does
+# board_winrates ~134k times TOTAL instead of ~once per concrete board.
+#
+# This is a MODULE-LEVEL cache on purpose: it must survive across PostflopV2
+# instances. The parallel trainer builds a fresh BlueprintTrainer (hence a fresh
+# PostflopV2) every merge round, so an instance-level cache would go cold every
+# round and never warm up. A module global lives for the worker PROCESS's
+# lifetime, so each persistent worker warms it across rounds. Equity is a pure
+# function of the board, so sharing across instances is always sound.
+#
+# Eviction is LRU (OrderedDict): on overflow the least-recently-used board is
+# dropped, NOT the whole cache -- so a cap BELOW the 134,459 canonical boards
+# degrades gracefully (keeps the hottest boards) instead of thrashing on a
+# wholesale clear.
+#
+# Memory: each entry is ~2.6 KB effective (a 52-slot int8 position map + a
+# 1081-uint16 equity array + numpy/dict overhead). The default 100k cap is
+# ~0.26 GB per process; in parallel that is x(workers) -- ~2.1 GB at 8 workers,
+# ~1.6 GB at 6. Lower ALLIN_RIVER_CACHE_BOARDS to fit a tighter RAM budget (LRU
+# keeps it effective even when small); raise toward 134,459 to cache every
+# canonical board on a roomy box. board_winrates is suit-blind, so a cap >=
+# 134,459 never evicts.
+_RIVER_BOARD_CACHE = OrderedDict()
+_RIVER_BOARD_CACHE_CAP = int(os.environ.get('ALLIN_RIVER_CACHE_BOARDS', 100_000))
+# Combination-index constants for the 47 live cards on a complete (river) board.
+_RIVER_LIVE = 47
+_RIVER_2NM1 = 2 * _RIVER_LIVE - 1            # = 93, used in the pair->slot formula
+# Equity on a complete board is (win + 0.5*tie)/990 over a CONSTANT 990 disjoint
+# opponents, so 2*990*equity is an exact integer in [0, 1980] -- the scale we
+# store equities at (uint16) for exactness + compactness.
+_RIVER_EQ_SCALE = 1980.0
+
+
+def clear_river_board_cache():
+    """Drop the shared per-board river-equity cache (for tests / memory control)."""
+    _RIVER_BOARD_CACHE.clear()
+
 
 class PostflopV2:
-    # Cap the caches: canonical river situations number ~90M, so over a long
-    # training run dealt hands rarely repeat and an uncapped cache would grow
-    # without bound for little benefit. Cleared wholesale on overflow.
+    # Cap the per-instance river-BUCKET cache: canonical river situations number
+    # ~90M, so over a long run dealt hands rarely repeat and an uncapped cache
+    # would grow without bound. Cleared wholesale on overflow. (The expensive
+    # per-board equity pass is cached separately and shared -- see
+    # _RIVER_BOARD_CACHE above -- so a bucket-cache miss is now cheap.)
     _RIVER_CACHE_CAP = 500_000
-    _BOARD_EQ_CACHE_CAP = 20_000
 
     def __init__(self, seed=0, lazy_runouts=120, lazy_opp=150):
         self.rng = random.Random(seed)
@@ -50,7 +91,6 @@ class PostflopV2:
         self._tables = {}        # street -> (ids_sorted, buckets) or None
         self._centroids = {}     # street -> (centroids, bins)
         self._river_cache = {}   # canonical_key -> bucket
-        self._board_eq_cache = {}  # frozenset(board) -> {sorted card-idx pair: equity}
         self._warned = set()
 
     def _centroid(self, street):
@@ -140,27 +180,59 @@ class PostflopV2:
     def _river_equity(self, hole, board):
         """Equity (win + 0.5*tie) vs a uniform range on a complete 5-card board.
 
-        Computed via board_winrates, which ranks EVERY hand on the board in one
-        vectorized pass and is cached per board -- so both players on the same
-        river board (the common training case) share a single ranking pass
-        instead of each running its own ~990-hand loop."""
-        eqs = self._board_equities(board)
-        a, b = _CARD_IDX[hole[0]], _CARD_IDX[hole[1]]
-        return eqs[(a, b) if a < b else (b, a)]
+        board_winrates ranks EVERY hand on the board in one vectorized pass. We
+        run it once per CANONICAL board and share the result across the whole
+        suit-orbit (19.3 concrete boards each): the concrete board is mapped to
+        its canonical representative, the hero's hole cards are relabeled by the
+        SAME suit permutation, and the cached equity is looked up. Equity is
+        suit-invariant, so this is exact."""
+        canon_board, smap = canonical_board_perm(board)
+        entry = _RIVER_BOARD_CACHE.get(canon_board)
+        if entry is None:
+            entry = self._compute_board_entry(canon_board)
+            _RIVER_BOARD_CACHE[canon_board] = entry              # most-recently-used
+            if len(_RIVER_BOARD_CACHE) > _RIVER_BOARD_CACHE_CAP:
+                _RIVER_BOARD_CACHE.popitem(last=False)           # evict least-recently-used
+        else:
+            _RIVER_BOARD_CACHE.move_to_end(canon_board)          # mark recently used
+        pos, eq = entry
+        # Relabel the hero hand by the board's suit permutation, then index the
+        # canonical board's equity array.
+        ca = _CARD_IDX[smap[hole[0][0]] + hole[0][1]]
+        cb = _CARD_IDX[smap[hole[1][0]] + hole[1][1]]
+        i, j = int(pos[ca]), int(pos[cb])
+        if i < 0 or j < 0:
+            # A hero card sits on the board -- an invalid (hole, board). Fail loud
+            # instead of negative-indexing the equity array and returning garbage.
+            raise ValueError(f"river hole {tuple(hole)} overlaps board {tuple(board)}")
+        if i > j:
+            i, j = j, i
+        slot = i * (_RIVER_2NM1 - i) // 2 + (j - i - 1)
+        return float(eq[slot]) / _RIVER_EQ_SCALE
 
-    def _board_equities(self, board):
-        """{sorted (card_idx, card_idx) -> equity} for every hand on `board`."""
-        key = frozenset(board)
-        cached = self._board_eq_cache.get(key)
-        if cached is None:
-            c1, c2, wr = board_winrates(list(board))
-            cached = {}
-            for a, b, w in zip(c1.tolist(), c2.tolist(), wr.tolist()):
-                cached[(a, b) if a < b else (b, a)] = w
-            if len(self._board_eq_cache) >= self._BOARD_EQ_CACHE_CAP:
-                self._board_eq_cache.clear()
-            self._board_eq_cache[key] = cached
-        return cached
+    @staticmethod
+    def _compute_board_entry(canon_board):
+        """Build the compact cache entry for one canonical river board:
+          pos : int8[52], global card-idx -> position in the 47 live cards (-1 if
+                on the board); used to address the packed equity array.
+          eq  : uint16[1081], the EXACT per-hand equity numerator in combination
+                (i<j over live cards) order -- the order the pos/slot formula
+                reproduces. On a complete (5-card) board every hand faces a
+                CONSTANT 990 disjoint opponents, so equity = (win + 0.5*tie)/990
+                and 2*990*equity = 2*win + tie is an integer in [0, 1980]. Storing
+                that integer is EXACT (no float rounding that could flip a bin-edge
+                river bucket) and uses half the memory of float32.
+        board_winrates returns hands in combinations(live cards, 2) order with the
+        live cards already in ascending card-idx order, so wr is already in slot
+        order and needs no reordering."""
+        c1, c2, wr = board_winrates(list(canon_board))
+        on_board = {_CARD_IDX[c] for c in canon_board}
+        live = [idx for idx in range(52) if idx not in on_board]   # ascending
+        pos = np.full(52, -1, dtype=np.int8)
+        for p, idx in enumerate(live):
+            pos[idx] = p
+        eq = np.rint(wr.astype(np.float64) * _RIVER_EQ_SCALE).astype(np.uint16)
+        return pos, eq
 
     def _warn_once(self, street):
         if street not in self._warned:

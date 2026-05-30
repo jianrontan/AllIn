@@ -3,114 +3,186 @@
 skinparam classAttributeIconSize 0
 skinparam defaultFontSize 12
 
-class InformationSet {
-  + cumulative_regrets : dict
-  + cumulative_strategy : dict
-  + legal_actions : list
-  + visit_count : int
-  + last_visited_iteration : int
-  --
-  + get_strategy(legal_actions, reach_prob) : ndarray
-  + get_average_strategy(legal_actions) : ndarray
+' Current class structure. Signatures abbreviated for readability.
+' Single sources of truth: cfr/keys.py (key + action char), abstractions/sizing.py (bet sizes).
+
+package "cfr — training and keys" {
+  class BlueprintTrainer {
+    + game : PokerGame
+    + game_adapter : GameAdapter
+    --
+    + train_blueprint(iterations, db, start_iteration, checkpoint_every) : float
+    + cfr(p0, p1, community, history, street, updating_player, more) : float
+    + deal_random_hand() : tuple
+    + checkpoint_to_db(db, iteration)
+    + resume_from_db(db, mode) : int
+  }
+
+  class PokerGame {
+    + streets : list
+    + max_raises_per_street : int
+    --
+    + get_legal_actions(street, history, pot, player) : list
+    + is_terminal(history, street) : bool
+    + calculate_current_pot(args) : float
+    + get_utility(args) : float
+  }
+
+  class InformationSet {
+    + cumulative_regrets : dict
+    + cumulative_strategy : dict
+    + visit_count : int
+    --
+    + get_strategy(legal_actions) : ndarray
+    + accumulate_strategy(legal_actions, strategy)
+    + get_average_strategy(legal_actions) : ndarray
+  }
+
+  class "keys (module)" as keys {
+    + make_info_set_key(street, position, preflop_bucket, postflop_strength, bet_pattern) : str
+    + action_char(action) : str
+    - _coarse_class(fine_bucket) : str
+  }
 }
 
-class HandEvaluator {
-  + HAND_TYPES : dict
-  --
-  + convert_card_format(card) : str
-  + evaluate_hand_strength(hole, community) : tuple
-  + get_hand_type_from_value(value) : str
-  + get_relative_strength(value) : int
-  + has_draw_potential(hole, community) : bool
-  + has_flush_draw(cards) : bool
-  + has_straight_draw(cards) : bool
+package "abstractions" {
+  class CardAbstraction {
+    + get_bucket(hole, community) : (bucket, strength)
+    + preflop_bucket(hole) : str
+    + preflop_class(hole) : str
+    + postflop_bucket(hole, community) : str
+    + cards_to_string(hole) : str
+  }
+  class "sizing (module)" as sizing {
+    + SIZES, OPEN_SIZES, POSTFLOP_SIZES
+    -- single source of truth for bet sizes --
+  }
 }
 
-class CardAbstraction {
-  + preflop_buckets : dict
-  + hand_evaluator : HandEvaluator
-  --
-  + get_bucket(hole_cards, community) : str
-  + preflop_bucket(hole_cards) : str
-  + postflop_bucket(hole_cards, community) : str
-  + cards_to_string(hole_cards) : str
-  - parse_string_cards(hole_cards) : str
-  - parse_card_objects(hole_cards) : str
-  - format_hand_string(r1, r2, s1, s2) : str
+package "bot — inference adapters" {
+  class GameAdapter {
+    + create_info_set_key(hole_card, round_state, position) : str
+    + cfr_action_to_char(cfr_action) : str
+  }
+  class Player {
+    + load_trained_strategy()
+    + declare_action(valid_actions, hole_card, round_state) : tuple
+  }
 }
 
-class ActionAbstraction {
-  + bet_sizes : dict
-  --
-  + is_legal_bet_size(game_state, multiplier) : bool
-  + abstract_action_history(actions, game_state, street) : str
-  + categorize_bet_size(action, game_state, history, street) : str
-  + pypoker_to_cfr_actions(valid_actions, game_state) : list
-  + cfr_to_pypoker_action(cfr_action, valid_actions, round_state, game_state) : tuple
-  - _calculate_target_amount(size, type, game_state, round_state) : float
+package "game — transport-agnostic core (no Flask)" {
+  class GameSession {
+    + data : dict
+    --
+    + {static} new(session_id, player_id, strategy_fn) : GameSession
+    + {static} from_dict(data, strategy_fn) : GameSession
+    + apply_action(action) : dict
+    + legal_actions() : list
+    + custom_bounds() : dict
+    + advance_bot_turns()
+    + bot_public_state() : dict
+    + opponent_read(k) : dict
+    + info_set_key(player, pattern) : str
+    + public_view() : dict
+  }
+
+  abstract class BotStrategy {
+    + {abstract} decide(info_set_key, legal_actions, public_state) : str
+    + explain(info_set_key, legal_actions, public_state) : dict
+  }
+  class BlueprintStrategy {
+    + decide(info_set_key, legal_actions, public_state) : str
+    + range_model_fn() : callable
+    - _state_distribution(key, legal, public_state) : dict
+  }
+  class ConfidenceAwareStrategy {
+    + decide(info_set_key, legal_actions, public_state) : str
+  }
+
+  class RangeTracker {
+    + reveal(board)
+    + observe(strategy_fn, action, street, position, bet_pattern, legal, board)
+    + hero_equity(hero_hand, board, n_runouts) : float
+    + top_hands(k) : list
+    + to_dict() : dict
+    + {static} from_dict(d, abstraction) : RangeTracker
+  }
+
+  abstract class SessionStore {
+    + {abstract} get(session_id)
+    + {abstract} put(session_id, data)
+    + {abstract} delete(session_id)
+    + {abstract} lock(session_id)
+  }
+  class InMemorySessionStore
 }
 
-class GameAdapter {
-  + card_abstractions : CardAbstraction
-  + action_abstractions : ActionAbstraction
-  --
-  + create_info_set_key(hole_card, round_state) : str
-  + cfr_action_to_char(cfr_action) : str
+package "subgame — Phase 4 river solver" {
+  class RiverSubgameSolver {
+    + decide(info_set_key, legal_actions, public_state) : str
+    + solve_for_action(board, pot_entry, stacks, bot_seat, hole, args) : str
+  }
+  class RiverTree
+  class RiverCFR {
+    + run(reach0, reach1, iters)
+    + average_strategy(nid) : ndarray
+    + exploitability(reach0, reach1, strat_fn) : float
+  }
 }
 
-class Player {
-  + info_sets : dict
-  + game_adapter : GameAdapter
-  + my_uuid : str
-  + total_training_iterations : int
-  --
-  + load_trained_strategy()
-  + declare_action(valid_actions, hole_card, round_state) : tuple
-  - _get_blueprint_action(valid_actions, hole_card, round_state) : tuple
-  + extract_game_state(round_state) : dict
-  + extract_big_blind(round_state) : int
-  + extract_current_bet(round_state) : int
-  + extract_player_stack(round_state, uuid) : int
-  + extract_player_contribution(round_state, uuid) : int
+package "storage" {
+  class BlueprintDB {
+    + __init__(db_path, read_only)
+    + save_batch(info_sets_dict)
+    + save_checkpoint(info_sets_dict, metadata)
+    + get_average_strategy(key) : dict
+    + get_record(key) : dict
+    + load_all_to_memory() : dict
+    + get_metadata(key, default) : any
+    + set_metadata(key, value)
+  }
 }
 
-class BlueprintTrainer {
-  + info_sets : dict
-  + game : PokerGame
-  + game_adapter : GameAdapter
-  + deck : list
-  + BET_MULTIPLIERS : dict
-  --
-  + train_blueprint(iterations) : float
-  + cfr(...) : float
-  + deal_random_hand() : tuple
-  + export_blueprint_with_visit_stats(filename)
-  - create_round_state_for_info_set(...) : dict
+package "evaluation" {
+  class BestResponseEvaluator {
+    + evaluate(num_samples, progress_every) : float
+  }
 }
 
-class PokerGame {
-  + streets : list
-  + max_raises_per_street : int
-  + hand_evaluator : HandEvaluator
-  + BET_MULTIPLIERS : dict
-  --
-  + get_legal_actions(street, history, pot, player) : list
-  + is_terminal(history, street) : bool
-  + is_round_complete(history) : bool
-  + calculate_current_pot(starting_pot, history, street) : float
-  + get_utility(p0, p1, community, history, street, pot) : float
-  + get_preflop_action_type(history) : str
-  + get_preflop_bet_amounts(action_type, pot) : dict
-}
-
-Player --> GameAdapter : uses
-Player "1" o-- "many" InformationSet : loads from JSON
-GameAdapter --> CardAbstraction : owns
-GameAdapter --> ActionAbstraction : owns
-CardAbstraction --> HandEvaluator : owns
+' ---- relationships ----
 BlueprintTrainer --> PokerGame : owns
 BlueprintTrainer --> GameAdapter : owns
 BlueprintTrainer "1" o-- "many" InformationSet : builds during training
-PokerGame --> HandEvaluator : owns
+BlueprintTrainer --> BlueprintDB : checkpoints into
+BlueprintTrainer ..> keys : builds keys
+InformationSet ..> keys
+
+GameAdapter --> CardAbstraction : owns
+GameAdapter ..> keys : builds keys
+CardAbstraction ..> sizing
+PokerGame ..> sizing
+Player --> GameAdapter : uses
+Player ..> BlueprintDB : load on init (read_only)
+
+GameSession --> PokerGame : drives a hand
+GameSession --> BotStrategy : decide()
+GameSession --> RangeTracker : observe / reveal
+GameSession --> SessionStore : persist self.data
+GameSession ..> keys : info_set_key()
+
+BotStrategy <|-- BlueprintStrategy
+BlueprintStrategy <|-- ConfidenceAwareStrategy
+BlueprintStrategy <|-- RiverSubgameSolver
+BlueprintStrategy --> BlueprintDB : get_average_strategy (ro)
+ConfidenceAwareStrategy --> RangeTracker : confidence + equity
+RangeTracker --> CardAbstraction : buckets / equity
+
+RiverSubgameSolver --> RiverTree : builds
+RiverSubgameSolver --> RiverCFR : runs vectorized CFR+
+RiverSubgameSolver ..> RangeTracker : consumes both ranges
+
+SessionStore <|-- InMemorySessionStore
+BestResponseEvaluator --> BlueprintDB : scores (ro)
+BestResponseEvaluator ..> keys : lookup keys
 
 @enduml

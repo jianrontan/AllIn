@@ -21,6 +21,7 @@ from itertools import permutations
 
 _RANKS = '23456789TJQKA'
 _RANK_ORD = {r: i for i, r in enumerate(_RANKS)}
+_INV_RANK = {i: r for r, i in _RANK_ORD.items()}
 _SUITS = ['H', 'D', 'C', 'S']
 _SUIT_PERMS = [dict(zip(_SUITS, p)) for p in permutations(_SUITS)]   # all 24
 
@@ -44,6 +45,37 @@ def canonical_key(hole, board=()):
         if best is None or rep < best:
             best = rep
     return best
+
+
+def canonical_board_perm(board):
+    """
+    Board-only suit canonicalisation, returning BOTH the canonical board and the
+    suit relabeling that produced it -- so a caller can apply the SAME relabeling
+    to hole cards and reuse a per-board computation (e.g. board_winrates) across
+    every suit-isomorphic board.
+
+    Returns (canon_board, smap):
+      * canon_board : a sorted tuple of SuitRank strings ('HA' = Ace of hearts)
+                      for the board under the chosen suit permutation. Two
+                      suit-isomorphic boards yield the SAME canon_board, so it is
+                      a valid shared cache key.
+      * smap        : the suit->suit dict applied. Equity is invariant under a
+                      *joint* relabeling, so equity(hole, board) ==
+                      equity(relabel(hole, smap), canon_board); apply smap to a
+                      hole card via  smap[card[0]] + card[1].
+
+    board: SuitRank strings, no hole cards.
+    """
+    board = tuple(board)
+    best = None
+    best_smap = None
+    for smap in _SUIT_PERMS:
+        rep = _rep(board, smap)
+        if best is None or rep < best:
+            best = rep
+            best_smap = smap
+    canon_board = tuple(sorted(s + _INV_RANK[r] for r, s in best))
+    return canon_board, best_smap
 
 
 def canonical_str(hole, board=()):

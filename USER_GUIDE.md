@@ -59,25 +59,30 @@ parallel runs. Its arguments:
 
 ### 3.1 Single-threaded (default, reproducible)
 
+The training script takes plain command-line flags — **prefer these over a
+`python -c "..."` one-liner**, which is easy to corrupt when pasted into a shell
+(a dropped closing quote leaves you stuck at a `>` prompt). Flag commands have no
+quotes or line-continuations, so paste can't break them.
+
 ```bash
 cd backend/bot
 
 # Quick smoke run (seconds) — verifies the pipeline end to end
-python -c "from tests.run_blueprint_trainer import run_training; run_training(100)"
+python tests/run_blueprint_trainer.py --iterations 100
 
-# A real run — this takes a long time; it checkpoints as it goes
-python -c "from tests.run_blueprint_trainer import run_training; run_training(5000000)"
+# A real run — takes a long time; it checkpoints as it goes
+python tests/run_blueprint_trainer.py --iterations 5000000
 
-# Resume a run that was interrupted (pass the DB filename)
-python -c "from tests.run_blueprint_trainer import run_training; run_training(50000, resume='blueprint_20260522_160906.db')"
+# Resume an interrupted run (just the DB filename, no path)
+python tests/run_blueprint_trainer.py --iterations 50000 --resume blueprint_20260522_160906.db
 ```
 
-Training checkpoints every 1000 iterations by default, so you can stop
-(Ctrl+C) and `resume=` later without losing progress.
+`python tests/run_blueprint_trainer.py --help` lists every flag. Ctrl+C is safe
+— it checkpoints as it goes, so `--resume` later picks up where it left off.
 
-> **Tip:** you can also just run `python tests/run_blueprint_trainer.py`, which
-> kicks off a large default run. Use the `run_training(...)` one-liners when you
-> want to control the iteration count.
+> **Equivalent `python -c` form** (if you prefer the function API — make sure it
+> stays on **one line with the closing `"`**):
+> `python -c "from tests.run_blueprint_trainer import run_training; run_training(5000000)"`
 
 ### 3.2 Parallel training (recommended for real runs)
 
@@ -89,11 +94,11 @@ tag distinguishes it on disk; it still auto-resolves like any other blueprint).
 ```bash
 cd backend/bot
 
-# Parallel run: 30M iterations across 8 workers.
-python -c "from tests.run_blueprint_trainer import run_training; run_training(30000000, checkpoint_every=50000, workers=8, merge_every=4000)"
+# Parallel run: 30M iterations across 8 workers
+python tests/run_blueprint_trainer.py --iterations 30000000 --workers 8 --merge-every 4000 --checkpoint-every 50000
 
 # Resume a parallel run (worker count MAY differ from the original run)
-python -c "from tests.run_blueprint_trainer import run_training; run_training(10000000, resume='blueprint_par_20260529_002511.db', workers=8, merge_every=4000)"
+python tests/run_blueprint_trainer.py --iterations 10000000 --resume blueprint_par_20260529_002511.db --workers 6 --merge-every 4000
 ```
 
 **Choosing the settings:**
@@ -113,6 +118,19 @@ python -c "from tests.run_blueprint_trainer import run_training; run_training(10
   the final partial round automatically, so `total_iterations` is always exact and
   a later resume never replays lost work.
 
+**Memory (RAM).** Each worker is a separate process holding its own copy of the
+blueprint **plus** a river-equity cache that speeds training ~1.6×. The cache is
+capped by `ALLIN_RIVER_CACHE_BOARDS` (default 100,000 boards ≈ **0.26 GB per
+worker** → ~2.1 GB at 8 workers, ~1.6 GB at 6). Total training RAM also grows with
+the blueprint itself as it fills out. If you're tight on RAM (e.g. running a
+browser alongside):
+- **Use fewer workers** (e.g. `workers=6`) — the biggest saver, since it drops a
+  whole blueprint copy *and* a cache per worker, and frees cores for other apps.
+- **Lower the cache cap**, e.g. `ALLIN_RIVER_CACHE_BOARDS=60000` (~0.16 GB/worker).
+  The cache is **LRU**, so a smaller cap just keeps the hottest boards — it
+  degrades gracefully instead of slowing down sharply. Set it before launching
+  training: `export ALLIN_RIVER_CACHE_BOARDS=60000`.
+
 **Important caveats:**
 
 - **Parallel is an *approximation* of single-threaded CFR** ("block Linear-CFR":
@@ -128,34 +146,111 @@ python -c "from tests.run_blueprint_trainer import run_training; run_training(10
 
 ### 3.3 Track convergence while training
 
-Run the tracker in a **separate terminal** to watch a live training run converge.
-At each iteration milestone it takes a consistent snapshot of the live DB (safe
-while training is still writing), scores its exploitability (best-response, and
-optionally LBR), appends a row to a CSV, and reprints the curve so far.
+`scripts/track_training.py` builds a convergence curve (best-response, and
+optionally LBR, vs iterations) from a running or finished training run. Each data
+point is a **frozen snapshot** of the live DB (taken with SQLite online-backup, so
+it's consistent even while training is still writing), so the measurement is valid
+whenever it's computed.
+
+Because BR/LBR are **far slower than training** (BR is ~2 min/sample → tens of
+minutes to hours per milestone), measuring inline would fall behind and miss
+milestones. So the tracker has **three modes** (`--mode`):
+
+| Mode | What it does | Speed |
+|---|---|---|
+| `snapshot` | At each milestone, freeze the live DB to `snapshots/` and append a row to a manifest. **Never measures.** | seconds/milestone — keeps cadence with training |
+| `measure` | Read the manifest and score BR (+ optional LBR) for any snapshot not yet in the curve CSV. | slow — run later / on another core |
+| `watch` | Legacy all-in-one: snapshot **and** measure at each milestone (only keeps up for small runs). | as slow as `measure` |
+
+**Recommended workflow — snapshot fast now, measure later** (each in its own terminal):
 
 ```bash
 cd backend/bot
 
-# Auto-detect the active run; measure every 1M iterations (BR only)
-python scripts/track_training.py
+# 1) SNAPSHOT: freeze the live DB at 500k, then every 2M iterations. Fast; runs
+#    alongside training and never blocks on a measurement.
+python scripts/track_training.py --mode snapshot --first 500000 --every 2000000
 
-# Measure every 2M iterations, and also run the (slower) LBR lower bound
-python scripts/track_training.py --every 2000000 --lbr
-
-# Watch a specific DB instead of auto-detect
-python scripts/track_training.py --db analysis/blueprints/blueprint_par_20260529_002511.db
+# 2) MEASURE: score the snapshots whenever (concurrently, or after training ends).
+#    --follow keeps waiting for new snapshots; drop it to drain the backlog once
+#    and exit. 60 BR board samples + the (slower) LBR lower bound.
+python scripts/track_training.py --mode measure --samples 60 --lbr --follow
 ```
 
-- It auto-detects the **most-recently-modified** `blueprint_*.db` (your active
-  run — works for both `blueprint_*` and `blueprint_par_*`).
-- Curve CSV → `analysis/training_curve/training_curve_<run-timestamp>.csv`;
-  frozen snapshots → `analysis/blueprints/snapshots/`. Snapshots live in a
-  **subfolder**, so they are never mistaken for the active blueprint.
-- BR is saved and printed **before** LBR runs, so a slow LBR never costs you the
-  BR point. Watch the numbers fall and stop training when they flatten.
-- BR is CPU-heavy, so each milestone briefly competes with training for a core.
-  Spacing milestones out (`--every 2000000`) and/or using `workers=7` keeps the
-  impact small. Run the tracker from the **same code/abstraction** as the training.
+Legacy single-terminal form (small runs only):
+
+```bash
+# Snapshot AND measure at each milestone, every 1M iterations, BR only
+python scripts/track_training.py --mode watch --every 1000000
+```
+
+**Flags:** `--first` (first milestone, default = `--every`), `--every` (milestone
+spacing), `--samples` (BR board samples), `--lbr` / `--lbr-hands`, `--follow`
+(measure mode: keep waiting), `--db` (watch a specific DB instead of auto-detect),
+`--stamp` (measure mode: target a specific run's timestamp), `--seed`, `--poll`
+(seconds between DB/manifest polls). `--help` lists them all.
+
+**Notes:**
+
+- Both modes **auto-detect** the most-recently-modified `blueprint_*.db` (works for
+  `blueprint_*` and `blueprint_par_*`) to derive the run timestamp; `measure` can
+  instead target a finished run with `--stamp <YYYYMMDD_HHMMSS>`.
+- Outputs are tied to the run timestamp under `analysis/training_curve/`: the
+  manifest (`snapshots_<stamp>.csv`, written only by `snapshot`) and the curve
+  (`training_curve_<stamp>.csv`, written only by `measure`) — single-writer per
+  file, so the two processes never race. Frozen snapshots go to
+  `analysis/blueprints/snapshots/` (a **subfolder**, so they're never mistaken for
+  the active blueprint).
+- **Snapshots land only on checkpoint boundaries** (the DB's iteration counter is
+  written at checkpoints), so make `--first`/`--every` reachable given your
+  `--checkpoint-every` — e.g. for a 500k first milestone, train with
+  `--checkpoint-every 500000` (a divisor of your milestone spacing).
+- `measure` writes BR first, then LBR, so a slow/failed LBR never costs you the BR
+  point. Both modes are **resumable** — they skip milestones already recorded.
+- BR is CPU-heavy; if measuring on the training machine, use `workers=7` for
+  training to leave it a core. Run the tracker from the **same code/abstraction**
+  as the training.
+
+### 3.4 Regenerate the card abstraction (only when it changes)
+
+The blueprint's buckets come from precomputed files. You only run these when the
+**abstraction itself changes** (or on a fresh clone that's missing the baked
+tables) — **not** for an ordinary training run. Changing any of them is an
+**abstraction change: existing blueprints become incompatible and must be
+retrained from scratch** (don't `--resume` an old DB across an abstraction change).
+
+The pipeline has three stages, run from `backend/bot/`:
+
+```bash
+cd backend/bot
+
+# 1) Preflop equity table (rarely needed — only to re-roll the Monte Carlo equities).
+#    The 30 fine / 10 coarse bucket maps are DERIVED from this table at import, so
+#    you normally never touch it. Prints a table to paste into card_abstractions.py.
+python scripts/compute_preflop_equity.py
+
+# 2) Fit the postflop cluster centroids (current scheme: 20 flop / 16 turn / 10 river).
+#    Writes analysis/abstractions/postflop_centroids_<street>.npz (commit these).
+python scripts/compute_postflop_buckets.py --street flop  --buckets 20 --situations 3000
+python scripts/compute_postflop_buckets.py --street turn  --buckets 16 --situations 3000
+python scripts/compute_postflop_buckets.py --street river --buckets 10 --situations 5000
+
+# 3) Bake the canonical-situation → bucket lookup tables from the centroids.
+#    Flop + turn only; river is computed at runtime (no table). The turn bake is
+#    the long one (~90 min). Tables are git-ignored and stamped with a centroid
+#    hash, so a stale table is a hard error — re-bake after any re-fit.
+python scripts/bake_postflop_table.py --street flop
+python scripts/bake_postflop_table.py --street turn
+```
+
+- **Fresh clone:** the centroids are committed but the baked tables are not, so run
+  stage 3 once before training/inference. (Without the tables, `PostflopV2` falls
+  back to slow per-situation bucketing and warns.)
+- **Smoke-test the bake** before the 90-min turn run:
+  `python scripts/bake_postflop_table.py --street flop --limit-boards 20` (runs
+  without saving — confirms the centroids load and the pipeline is healthy).
+- After regenerating, you **must** train a fresh blueprint (no resume) and
+  re-measure (§3.3 / §6) — old blueprints key on the old buckets.
 
 ---
 
@@ -214,12 +309,21 @@ for that exact abstracted situation.
 
 ---
 
-## 6. Evaluate blueprint quality (exploitability)
+## 6. Evaluate blueprint quality
 
-Exploitability measures how badly a perfect counter-strategy could beat the
-blueprint — **lower is better**, reported in milli-big-blinds per hand
-(mbb/hand). A true Nash equilibrium would score 0. Run it before and after a
-training change to confirm the strategy is actually improving.
+There are five evaluation tools, each answering a different question. Most run from
+`backend/bot/` and take `--db <path>` (default: the active blueprint); the
+blueprint-vs-blueprint ones take `--db-a`/`--db-b`. `--help` lists every flag.
+**BR and LBR are the GTO scoreboards; the match/maniac tools are quick
+strength/sanity checks, not equilibrium measures.**
+
+### 6.1 Best-response exploitability (`run_evaluation.py`)
+
+The convergence scoreboard. Measures how badly a perfect counter-strategy could
+beat the blueprint **within the betting abstraction** — **lower is better**, in
+milli-big-blinds per hand (mbb/hand); a Nash equilibrium scores 0. It's exact on
+cards but restricted to the grid bet sizes, so it's a **lower bound** on true
+exploitability. Run it before/after a change to confirm the strategy improved.
 
 ```bash
 cd backend/bot
@@ -227,6 +331,68 @@ python tests/run_evaluation.py                  # active blueprint, 400 board sa
 python tests/run_evaluation.py --samples 1000   # more samples = lower variance
 python tests/run_evaluation.py --db analysis/blueprints/blueprint_20260522_160906.db
 ```
+
+> **It's slow** — BR is ~2 min per board sample, so 400 samples is hours. For a
+> long run, prefer the snapshot/measure tracker (§3.3) over a one-off invocation.
+
+### 6.2 LBR — local best response (`run_lbr.py`)
+
+The **off-tree** complement to BR: LBR is allowed to make *any* bet size (not just
+the grid), so it catches exploitability that BR misses — how much an opponent who
+"size-cheats" off the abstraction can win. Also mbb/hand, lower is better.
+
+```bash
+python tests/run_lbr.py --hands 3000
+python tests/run_lbr.py --hands 5000 --db analysis/blueprints/blueprint_par_20260529_002511.db
+```
+
+### 6.3 Head-to-head match + AIVAT (`run_match.py`)
+
+Plays **two blueprints** against each other (seats swapped for fairness) and
+reports A's win rate both **raw and AIVAT-corrected** (variance-reduced — always
+on, no flag). With no `--db-a`/`--db-b` it's the active blueprint vs itself (expect
+~0, a sanity check). Use it to compare two runs of the **same** abstraction; for
+different abstractions use §6.4 instead (it loads each side under its own snapshot).
+
+```bash
+python tests/run_match.py --hands 20000 \
+    --db-a analysis/blueprints/blueprint_A.db \
+    --db-b analysis/blueprints/blueprint_B.db
+python tests/run_match.py --hands 10000        # self-play (active vs itself) sanity
+```
+
+### 6.4 Cross-abstraction blueprint comparison (`run_cross_match.py`)
+
+The faithful way to ask "is run B actually better than run A?" when they were
+trained under **different abstractions** — it loads each side under **its own**
+abstraction snapshot, so neither side mis-keys.
+
+```bash
+python tests/run_cross_match.py --hands 40000
+```
+
+> **Heads-up:** a cross-match between different abstractions measures real playing
+> strength, but the weaker side can lose to a **coverage hole** rather than to worse
+> strategy (see BUG-007 in the bug log). Read it alongside BR/LBR, not alone.
+
+### 6.5 Quick sanity vs an all-in maniac (`run_maniac.py`)
+
+The fastest "is something obviously broken?" check: the blueprint vs a naive
+maniac that **never folds** and spams aggression (`--profile jam` = always all-in,
+`medium` = always bet/raise medium, `mixed` = 50/50; `all` runs every profile). A
+correct blueprint must *profit* hugely off a maniac — if it doesn't, there's an
+exploitable hole that BR/LBR can miss (this is the class of leak behind BUG-007).
+Reports the blueprint's win rate in mbb/hand (raw, high-variance — use many hands).
+
+```bash
+python tests/run_maniac.py --profile jam --hands 40000
+python tests/run_maniac.py --hands 40000   # --profile all (default): every profile
+```
+
+> **Phase-4 (river solver) has its own scoreboards**, run from `scripts/` (slow,
+> offline): `run_solver_lbr.py` (LBR exploitability of the solver vs the blueprint
+> on the same deals — the go/no-go win) and `measure_river_exploitability.py`
+> (blueprint river-exploitability baseline). See each script's `--help`.
 
 ---
 
@@ -330,6 +496,7 @@ python tests/run_evaluation.py --db analysis/blueprints/blueprint_par_20260529_0
 | Variable | Used by | Purpose |
 |---|---|---|
 | `ALLIN_BLUEPRINT_DB` | API / bot | Pin an explicit blueprint DB path (overrides auto-resolution). |
+| `ALLIN_RIVER_CACHE_BOARDS` | training / bot | Max boards in the per-process river-equity cache (default `100000` ≈ 0.26 GB/process; LRU). Lower it to save RAM (see §3.2). |
 | `ALLIN_CORS_ORIGINS` | API | Comma-separated allowed CORS origins (default `localhost:5173`/`5174`). |
 | `VITE_API_BASE` | frontend | API base URL (default `http://localhost:5000`). |
 

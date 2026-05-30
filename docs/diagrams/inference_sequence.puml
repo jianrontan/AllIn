@@ -1,43 +1,56 @@
 @startuml inference_sequence
 !theme plain
 skinparam defaultFontSize 12
-skinparam ParticipantPadding 50
+skinparam ParticipantPadding 40
 skinparam BoxPadding 20
 
-participant "PyPokerEngine" as PPE
-participant "Player" as P
-participant "GameAdapter" as GA
-participant "CardAbstraction" as CA
-participant "ActionAbstraction" as AA
-participant "InformationSet" as IS
+' The DEPLOYED play-vs-bot path: a human action arrives over the Flask game
+' API, GameSession applies it, then advances the bot until it is the human's
+' turn again. (The old PyPokerEngine Player path still exists for offline
+' bot-vs-bot games but is not the web flow shown here.)
 
-PPE -> P: declare_action(valid_actions, hole_card, round_state)
-P -> P: extract_game_state(round_state)\n→ {pot, stack, current_bet, big_blind}
+actor "Human (AiGame.jsx)" as UI
+participant "Flask\n/api/game/action" as API
+participant "GameSession" as GS
+participant "RangeTracker" as RT
+participant "BlueprintStrategy\n(or RiverSubgameSolver)" as BS
+participant "keys.make_info_set_key" as KEYS
+participant "cfr/translation\n(pseudo-harmonic)" as TR
+participant "BlueprintDB (ro)" as DB
 
-P -> GA: create_info_set_key(hole_card, round_state)
-note over GA #Pink: BUG: round_state has no 'cfr_history' key\nbetting history = "" always\nkey = "{card_bucket}_" only
-GA -> CA: get_bucket(hole_cards, community_cards)
-CA --> GA: card bucket string
-GA --> P: info_set_key (history component missing)
+UI -> API: {action, amountBb}\n(e.g. raise_custom)
+API -> GS: from_dict(stored) + apply_action(action)
+GS -> GS: validate vs legal_actions / custom_bounds\nupdate pot, history, stacks
 
-alt key found in self.info_sets
-  P -> IS: lookup existing InformationSet
-else key not found
-  P -> IS: create new InformationSet (uniform strategy)
+opt range tracking enabled
+  GS -> RT: observe(strategy_fn, human action,\nstreet, position, bet_pattern, legal, board)
+  note over RT #LightCyan: Bayesian update of the hand-level\nbelief over villain's hole cards;\nconfidence decays on off-model actions
 end
 
-P -> AA: pypoker_to_cfr_actions(valid_actions, game_state)
-AA --> P: ["fold", "call", "bet_small", "bet_medium", "bet_large"]
+GS -> GS: advance_bot_turns()
+loop while current_player == bot and hand not over
+  GS -> GS: bot_public_state()\n→ {hole_cards, board, pot, to_call, tracker, ...}
+  GS -> KEYS: make_info_set_key(street, position,\nfine bucket, postflop strength, bet_pattern)
+  note over KEYS: postflop collapses fine→coarse (imperfect recall)\ne.g. "pf_9_5_ip_turn_m"
+  KEYS --> GS: info_set_key
+  GS -> BS: decide(info_set_key, legal_actions, public_state)
+  BS -> DB: get_average_strategy(info_set_key)
+  alt key found
+    DB --> BS: stored average strategy
+  else untrained key
+    DB --> BS: not found → uniform / fold-routed
+  end
+  BS -> TR: blend bracketing grid sizes for any\noff-grid legal size (state_distribution)
+  TR --> BS: action distribution over legal actions
+  alt river & solver enabled
+    note over BS #LightYellow: RiverSubgameSolver builds the river tree,\ntakes both ranges from RangeTracker,\nruns vectorized CFR+, reads off the action
+  end
+  BS --> GS: chosen action
+  GS -> GS: apply bot action (same engine path)
+end
 
-P -> IS: get_average_strategy(cfr_actions)
-note over IS #Yellow: Uses regrets directly, not cumulative_strategy\n(design issue — inconsistent with training)
-IS --> P: [0.05, 0.45, 0.20, 0.20, 0.10]
-
-P -> P: random.choices(cfr_actions, weights=strategy)\n→ "call"
-
-P -> AA: cfr_to_pypoker_action("call", valid_actions, round_state, game_state)
-AA --> P: ("call", 10)
-
-P --> PPE: ("call", 10)
+GS -> GS: _settle / _advance_street / _resolve as needed
+GS -> API: public_view() (redacted; includes botRead)
+API --> UI: state JSON (board, pot, legal actions,\nbotRead confidence + top hands)
 
 @enduml

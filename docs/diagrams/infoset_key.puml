@@ -2,50 +2,51 @@
 !theme plain
 skinparam defaultFontSize 12
 
+' How a poker situation becomes the canonical info-set key.
+' Single source of truth: cfr/keys.py:make_info_set_key + action_char.
+' Format includes POSITION so IP and OOP play are learned separately.
+
 start
 
-:hole_cards = ['AH', 'KS']
-community_cards = ['CT', 'DT', 'S3']
-cfr_history = ['bet_small', 'call'];
+:hole_cards = [HA, SK] (engine SuitRank);
+:community = [CT, DT, S3];
+:position = ip (button/SB) or oop (BB);
+:street = 0 preflop, 1 flop, 2 turn, 3 river;
+:bet_pattern = current-street actions only (resets each street);
 
-partition "Card Abstraction" {
-  if (community_cards empty?) then (yes — preflop)
-    :cards_to_string(hole_cards) → "AKo" or "AKs";
-    :lookup preflop_buckets → "ace_king";
+partition "Card Abstraction (card_abstractions.py)" {
+  if (community empty?) then (yes - preflop)
+    :preflop_bucket(hole) returns FINE id pf_0..pf_29 (equal-freq quantiling of MC equity);
+    :postflop_strength = None;
   else (postflop)
-    :convert cards to phevaluator format;
-    :evaluate_cards(*all_cards) → hand_value;
-    :get_hand_type_from_value(hand_value) → "two_pair";
-    :strength = 2 → "medium";
+    :PostflopV2 = distribution of equity-vs-range over runouts, EMD-clustered to a centroid;
+    :postflop_strength = bucket id (20 flop, 16 turn, 10 river);
+    :preflop_bucket(hole) still computed, carried in as the FINE id;
   endif
 }
 
-partition "Action History" {
-  :for each action in cfr_history:;
+partition "Action to pattern char (keys.action_char)" {
   note right
-    check  → k
-    call   → c
-    fold   → f
-    *small → s
-    *med   → m
-    *large → l
+    check    -> k     bet/raise small  -> s
+    call     -> c     bet/raise medium -> m
+    fold     -> f     bet/raise large  -> l
+    overbet  -> o     xlarge open (5BB) -> x
+    all-in   -> a
+    (RAISES on an unmapped action; never defaults)
   end note
-  :'bet_small' → 's', 'call' → 'c';
-  :betting_pattern = "sc";
+  :e.g. [bet_medium] gives bet_pattern = "m";
 }
 
-partition "Key Assembly" {
-  if (preflop?) then (yes)
-    :"ace_king_sc";
+partition "Key Assembly (keys.make_info_set_key)" {
+  if (street == 0 preflop?) then (yes)
+    :preflop key = fineBucket _ position _ betPattern  (e.g. pf_27_ip_);
   else (postflop)
-    :starting_hand  = preflop bucket = "ace_king";
-    :current_strength = "medium";
-    :street = "flop";
-    :"ace_king_medium_flop_sc";
+    :coarse = FINE_TO_COARSE[fine]  (3x10 exact collapse = imperfect recall);
+    :postflop key = coarse _ strength _ position _ street _ betPattern  (e.g. pf_9_5_ip_turn_m);
   endif
 }
 
-:return info_set_key;
+:return info_set_key (looked up in BlueprintDB by trainer, API, eval, solver);
 
 stop
 

@@ -4,53 +4,116 @@ skinparam componentStyle rectangle
 skinparam defaultFontSize 13
 skinparam ArrowColor #555555
 
+' AllIn — heads-up Texas Hold'em CFR+ poker AI.
+' Blueprint lives in SQLite; Flask API serves a strategy explorer and a
+' play-vs-bot game; training is a separate offline process.
+
 package "Frontend (React + Vite :5173)" {
-  [StrategyLookup]
+  [HandExplorer]
+  [KeyExplorer]
   [AiGame]
+  [api.js client]
 }
 
-package "Backend API (Flask :5000)" {
-  [POST /api/evaluate-hand]
-  [POST /api/get-legal-actions]
+package "Backend API (Flask :5000, run from backend/api/)" {
+  package "Strategy endpoints" {
+    [GET /api/strategy]
+    [POST /api/strategy/from-hand]
+    [GET /api/abstractions]
+  }
+  package "Game endpoints" {
+    [POST /api/game/new]
+    [POST /api/game/action]
+    [POST /api/game/bot-action]
+    [POST /api/game/next-hand]
+  }
 }
 
-package "Backend Bot (Python)" {
-
-  package "Training" {
-    [BlueprintTrainer]
-    [PokerGame]
-    [InformationSet]
-  }
-
-  package "Abstractions" {
-    [CardAbstraction]
-    [ActionAbstraction]
-    [HandEvaluator]
-  }
-
-  package "Bot" {
-    [Player]
-    [GameAdapter]
-  }
-
-  database "blueprint.json" as BP #LightYellow
+package "Game core (game/, no Flask imports — transport-agnostic)" {
+  [GameSession]
+  [BotStrategy\nBlueprintStrategy\nConfidenceAwareStrategy]
+  [RangeTracker]
+  [SessionStore\nInMemorySessionStore]
 }
 
-cloud "PyPokerEngine" as PPE
+package "Inference / Bot (bot/)" {
+  [GameAdapter]
+  [Player\n(PyPokerEngine path)]
+}
 
-[StrategyLookup] --> [POST /api/evaluate-hand] : REST
-[AiGame] --> PPE : game loop
-PPE --> [Player] : declare_action()
-[Player] --> [GameAdapter]
-[Player] --> BP : load on init
-[GameAdapter] --> [CardAbstraction]
-[GameAdapter] --> [ActionAbstraction]
-[CardAbstraction] --> [HandEvaluator]
+package "Training (cfr/)  — offline" {
+  [BlueprintTrainer]
+  [ParallelTrainer]
+  [PokerGame]
+  [InformationSet]
+  [keys.make_info_set_key\naction_char]
+}
+
+package "Abstractions (abstractions/)" {
+  [CardAbstraction\npreflop pf_0..29 / PostflopV2]
+  [sizing.py\n(single source of truth)]
+}
+
+package "Phase-4 Subgame (subgame/)" {
+  [RiverSubgameSolver]
+  [RiverTree]
+  [RiverCFR]
+}
+
+package "Evaluation (evaluation/)" {
+  [BestResponseEvaluator]
+  [LBR / match / cross_match]
+}
+
+database "blueprint_<ts>.db\n(SQLite, WAL)" as BP #LightYellow
+[BlueprintDB] as DB
+[config.resolve_blueprint_path()] as CFG
+
+' ---- Frontend → API ----
+[HandExplorer] --> [api.js client]
+[KeyExplorer] --> [api.js client]
+[AiGame] --> [api.js client]
+[api.js client] --> [GET /api/strategy] : REST (VITE_API_BASE)
+[api.js client] --> [POST /api/strategy/from-hand]
+[api.js client] --> [POST /api/game/action]
+
+' ---- Strategy explorer read path ----
+[POST /api/strategy/from-hand] --> [GameAdapter] : build key
+[GET /api/strategy] --> DB : get_record(key)
+
+' ---- Play-vs-bot path ----
+[POST /api/game/new] --> [GameSession]
+[POST /api/game/action] --> [GameSession]
+[POST /api/game/next-hand] --> [GameSession]
+[GameSession] --> [BotStrategy\nBlueprintStrategy\nConfidenceAwareStrategy] : decide()
+[GameSession] --> [RangeTracker] : observe / reveal
+[GameSession] --> [SessionStore\nInMemorySessionStore] : persist self.data
+[GameSession] --> [PokerGame] : drive a hand
+[BotStrategy\nBlueprintStrategy\nConfidenceAwareStrategy] --> DB : get_average_strategy(key)
+[BotStrategy\nBlueprintStrategy\nConfidenceAwareStrategy] --> [keys.make_info_set_key\naction_char]
+[RiverSubgameSolver] ..|> [BotStrategy\nBlueprintStrategy\nConfidenceAwareStrategy] : drop-in (river)
+[RiverSubgameSolver] --> [RiverTree]
+[RiverSubgameSolver] --> [RiverCFR]
+[RangeTracker] --> [CardAbstraction\npreflop pf_0..29 / PostflopV2]
+
+' ---- Shared abstractions / keys ----
+[GameAdapter] --> [CardAbstraction\npreflop pf_0..29 / PostflopV2]
+[GameAdapter] --> [keys.make_info_set_key\naction_char]
+[PokerGame] --> [sizing.py\n(single source of truth)]
+[CardAbstraction\npreflop pf_0..29 / PostflopV2] --> [sizing.py\n(single source of truth)]
+
+' ---- Training write path ----
 [BlueprintTrainer] --> [PokerGame] : simulate hands
-[BlueprintTrainer] --> [InformationSet] : update regrets
-[BlueprintTrainer] --> [GameAdapter] : create keys
-[BlueprintTrainer] --> BP : export
-[POST /api/evaluate-hand] --> [GameAdapter] : create key
-[PokerGame] --> [HandEvaluator] : evaluate showdowns
+[BlueprintTrainer] --> [InformationSet] : update regrets (CFR+)
+[BlueprintTrainer] --> [keys.make_info_set_key\naction_char]
+[BlueprintTrainer] --> [CardAbstraction\npreflop pf_0..29 / PostflopV2]
+[ParallelTrainer] --> [BlueprintTrainer] : worker pool + regret merge
+[BlueprintTrainer] --> DB : save_checkpoint() (incremental, resumable)
+
+' ---- Storage resolution ----
+DB --> BP : read/write (training) / mode=ro (inference)
+CFG --> BP : pick highest total_iterations\n(or ALLIN_BLUEPRINT_DB)
+[Player\n(PyPokerEngine path)] --> CFG : load on init
+[BestResponseEvaluator] --> DB : score exploitability (mbb/hand)
 
 @enduml

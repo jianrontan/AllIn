@@ -2,50 +2,53 @@
 !theme plain
 skinparam defaultFontSize 12
 
-participant "BlueprintTrainer" as BT
+' Blueprint training: external-sampling Monte Carlo CFR+ with Linear-CFR-style
+' regret discounting. Checkpoints incrementally into a timestamped SQLite DB
+' (resumable). ParallelTrainer wraps this with a worker pool + regret merge.
+
+participant "BlueprintTrainer\n.train_blueprint(iters)" as BT
 participant "PokerGame" as PG
-participant "GameAdapter" as GA
-participant "CardAbstraction" as CA
-participant "HandEvaluator" as HE
+participant "keys\n.make_info_set_key" as KEYS
+participant "CardAbstraction\n(pf_0..29 / PostflopV2)" as CA
 participant "InformationSet" as IS
+participant "BlueprintDB" as DB
 
 BT -> BT: deal_random_hand()\n→ p0_cards, p1_cards, community
 
-loop N iterations, alternating updating_player
-  BT -> BT: cfr(p0, p1, community, history=[], reach=1.0, updating_player)
+loop N iterations (alternating updating_player = i % 2)
+  BT -> BT: _run_iteration(i) → cfr(p0, p1, community, history=[],\nstreet, updating_player, bet_pattern='', ...)
 
-  group recursive CFR exploration
+  group recursive external-sampling CFR+
     BT -> PG: get_legal_actions(street, history, pot, player)
-    PG --> BT: [fold, call, bet_small, ...]
+    PG --> BT: [fold, call, bet_small, bet_medium,\nbet_large, bet_overbet, ... allin]
 
-    BT -> GA: create_info_set_key(player_cards, round_state)
-    GA -> GA: read cfr_history from round_state
-    GA -> CA: get_bucket(hole_cards, community_cards)C:\Ron\AllIn\docs\diagrams\images
-    alt postflop
-      CA -> HE: evaluate_hand_strength(hole, community)
-      HE --> CA: (hand_type, 0-8 strength)
-      CA --> GA: "strong"
-    else preflop
-      CA --> GA: "ace_king"
-    end
-    GA --> BT: "ace_king_strong_flop_k"
+    BT -> CA: get_bucket(hole, community)\n(preflop_bucket fine; postflop V2 strength)
+    note right of CA: preflop → fine pf_0..pf_29\npostflop → distribution-aware bucket\n(20 flop / 16 turn / 10 river, EMD-clustered)
+    CA --> BT: fine bucket + postflop strength
 
-    BT -> IS: get_strategy(legal_actions, reach_prob)
-    note right of IS: CFR+ regret matching:\nclamp regrets at 0,\nnormalise to probabilities,\naccumulate cumulative_strategy
-    IS --> BT: [0.1, 0.4, 0.5] per action
+    BT -> KEYS: make_info_set_key(street, position,\nfine bucket, strength, bet_pattern)
+    note right of KEYS: preflop  {fine}_{pos}_{pattern}\npostflop {coarse}_{strength}_{pos}_{street}_{pattern}\n(fine→coarse collapse = imperfect recall)
+    KEYS --> BT: e.g. "pf_9_5_ip_turn_m"
 
-    alt updating player — explore all actions
+    BT -> IS: get_strategy(legal_actions)
+    note right of IS: CFR+ regret matching:\nfloor regrets at 0, normalise,\naccumulate_strategy (gamma-discounted)
+    IS --> BT: strategy over legal actions
+
+    alt updating player — explore ALL actions
       loop each legal action
-        BT -> BT: cfr(..., history + [action])  [recurse]
-        BT -> IS: update cumulative_regrets\n(CFR+ floor at 0)
+        BT -> BT: cfr(..., history+[action])  [recurse]
       end
-    else opponent — sample one action
+      BT -> IS: update cumulative_regrets\n(CFR+ floor; ((t-1)/t)^alpha discount)
+    else opponent — SAMPLE one action
       BT -> BT: random.choices(actions, weights=strategy)
-      BT -> BT: cfr(..., history + [sampled])  [recurse]
+      BT -> BT: cfr(..., history+[sampled])  [recurse]
     end
   end
-end
 
-BT -> BT: export_blueprint_with_visit_stats("blueprint.json")
+  alt every checkpoint_every iterations
+    BT -> DB: checkpoint_to_db(db, iteration)\n→ save_checkpoint(dirty info_sets, metadata)
+    note right of DB: incremental upsert into\nanalysis/blueprints/blueprint_<ts>.db\n(WAL; resume via resume_from_db)
+  end
+end
 
 @enduml
