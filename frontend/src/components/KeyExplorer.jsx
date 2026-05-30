@@ -60,8 +60,9 @@ function KeyExplorer() {
             ? `${b}_${pos}_${pat}`
             : `${b}_${st}_${pos}_${s}_${pat}`;
 
-    // Postflop bucket count is per-street (12 flop / 12 turn / 10 river), so a
-    // bucket valid on the flop may be out of range on the river — clamp it.
+    // Postflop bucket count is per-street (20 flop / 16 turn / 10 river, served by
+    // /api/abstractions from the live centroids), so a bucket valid on the flop may
+    // be out of range on the river — clamp it.
     const bucketsForStreet = (s) =>
         (s === 'preflop' ? [] : (abstractions?.postflopBuckets?.[s] || []));
 
@@ -147,7 +148,15 @@ function KeyExplorer() {
                     <label className={LABEL}>Starting-hand bucket</label>
                     <select className={SELECT} value={bucket}
                         onChange={(e) => sync({ bucket: e.target.value })}>
-                        {abstractions.preflopBuckets.map((b) => <option key={b}>{b}</option>)}
+                        {/* Preflop keys use the FINE bucket list; postflop keys carry
+                            the COARSE class as startBucket. Offering the fine list
+                            postflop would build a key the coarse-keyed blueprint never
+                            wrote. Fall back to preflopBuckets if the API predates the
+                            split. */}
+                        {(street === 'preflop'
+                            ? abstractions.preflopBuckets
+                            : (abstractions.preflopStartBuckets || abstractions.preflopBuckets)
+                         ).map((b) => <option key={b}>{b}</option>)}
                     </select>
                 </div>
 

@@ -90,14 +90,15 @@ def _potrel(vals, after_call=True):
     return ('potrel', d)
 
 
-# NEW sizing (snap_6050000 was trained on this): open 2/2.5/3.5 BB; 3bet AND
-# 4bet+ unified pot-relative 0.66/1.0/1.5 of pot-after-call.
+# NEW sizing (the 2026-05-29 redesign): open 2/2.5/3.5/5 BB (4th = xlarge);
+# 3bet AND 4bet+ unified pot-relative 0.66/1.0/1.5 of pot-after-call; postflop
+# 0.33/0.66/1.0/1.5x pot (4th = overbet); voluntary all-in everywhere.
 NEW_SIZING = Sizing(
     'new',
-    open_to_bb={'small': 2.0, 'medium': 2.5, 'large': 3.5},
+    open_to_bb={'small': 2.0, 'medium': 2.5, 'large': 3.5, 'xlarge': 5.0},
     three_bet=_potrel({'small': 0.66, 'medium': 1.0, 'large': 1.5}, after_call=True),
     four_bet=_potrel({'small': 0.66, 'medium': 1.0, 'large': 1.5}, after_call=True),
-    postflop_mult={'small': 0.33, 'medium': 0.66, 'large': 1.0})
+    postflop_mult={'small': 0.33, 'medium': 0.66, 'large': 1.0, 'overbet': 1.5})
 
 # OLD sizing (blueprint_20260525_062044_9150000it): open 3/5/7 BB; 3bet absolute
 # 9/12/16 BB; 4bet+ pot-relative 0.66/1.33/2.0 of pot BEFORE call.
@@ -109,16 +110,26 @@ OLD_SIZING = Sizing(
     postflop_mult={'small': 0.33, 'medium': 0.66, 'large': 1.0})
 
 
-def _legal_actions(to_call, num_aggr, stack):
+def _legal_actions(street, to_call, num_aggr, stack, open_sizes, postflop_sizes):
+    """Legal abstract actions for a bot, using its OWN size sets and engine action
+    NAMES (opens are bet_*, not raise_*; 3-bet/4-bet are raise_* with 3 sizes).
+    `open_sizes`/`postflop_sizes` are the acting bot's Sizing size-name lists (NEW
+    has 4 each incl. xlarge/overbet; OLD has 3). Voluntary all-in always available."""
     can_aggr = num_aggr < MAX_AGGR_PER_STREET and stack > max(0.0, to_call)
     if to_call > 0:
         legal = ['fold', 'call']
-        if can_aggr:
-            legal += ['raise_small', 'raise_medium', 'raise_large', 'allin']
+        if street == 0 and num_aggr == 0:
+            sized = [f'bet_{s}' for s in open_sizes]
+        elif street == 0:
+            sized = ['raise_small', 'raise_medium', 'raise_large']
+        else:
+            sized = [f'raise_{s}' for s in postflop_sizes]
     else:
         legal = ['check']
-        if can_aggr:
-            legal += ['bet_small', 'bet_medium', 'bet_large', 'allin']
+        sized = ([f'bet_{s}' for s in open_sizes] if street == 0
+                 else [f'bet_{s}' for s in postflop_sizes])
+    if can_aggr:
+        legal += sized + ['allin']
     return legal
 
 
@@ -162,13 +173,23 @@ class CrossBot:
         eff_fraction axis (bet / pot-after-call) -- mirrors GameSession._node_grid.
         Used to perceive the OPPONENT's bet (built in the bettor's node context)."""
         g = {}
-        sizes = ('small', 'medium', 'large')
-        kinds = ('raise_' if to_call > 0 else 'bet_')
-        for size in sizes:
+        # This bot's own size set + engine action-name kind so the pattern char is
+        # right. Opens MUST use bet_ (the 4th open xlarge only has a bet_ form;
+        # action_char('raise_xlarge') is now an error); 3-bet/4-bet & postflop-facing
+        # use raise_ (bet_X / raise_X share a char for the others).
+        if street == 0:
+            if num_aggr == 0:
+                size_names, kind = list(self.sizing.open_to_bb), 'bet_'
+            else:
+                size_names, kind = ['small', 'medium', 'large'], 'raise_'
+        else:
+            size_names = list(self.sizing.postflop_mult)
+            kind = 'raise_' if to_call > 0 else 'bet_'
+        for size in size_names:
             add = self.sizing.add_chips(size, street, pot, to_call, committed, num_aggr)
             if add >= stack:
                 continue                              # collapses to all-in
-            g[action_char(kinds + size)] = translation.eff_fraction(add, to_call, pot)
+            g[action_char(kind + size)] = translation.eff_fraction(add, to_call, pot)
         g['a'] = translation.eff_fraction(stack, to_call, pot)
         return sorted(g.items(), key=lambda cf: cf[1])
 
@@ -251,7 +272,9 @@ class CrossMatch:
                 to_call = max(0.0, committed[other] - committed[actor])
                 pot = sum(invested)
                 bot = players[actor]
-                legal = _legal_actions(to_call, num_aggr, stack[actor])
+                legal = _legal_actions(
+                    street, to_call, num_aggr, stack[actor],
+                    list(bot.sizing.open_to_bb), list(bot.sizing.postflop_mult))
 
                 # Decide: blend the bracketing keys if facing an off-grid bet,
                 # else a single key from this bot's own perceived pattern.

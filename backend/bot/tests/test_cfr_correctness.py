@@ -438,18 +438,23 @@ def test_utility_showdown_p1_wins():
 # ===========================================================================
 
 def test_preflop_bucket_AA():
-    """AA maps to pf_14 (strongest bucket)."""
+    """AA maps to the strongest FINE bucket (pf_{NUM_PREFLOP_BUCKETS-1}). Derived
+    from the count so it tracks the scheme (30 today) instead of a hardcoded index."""
+    from src.abstractions.card_abstractions import NUM_PREFLOP_BUCKETS
     ca = CardAbstraction()
     bucket = ca.preflop_bucket(['HA', 'DA'])
-    assert bucket == 'pf_14', f"AA should be pf_14, got {bucket}"
+    top = f"pf_{NUM_PREFLOP_BUCKETS - 1}"
+    assert bucket == top, f"AA should be {top}, got {bucket}"
     print(f"PASS test_preflop_bucket_AA: {bucket}")
 
 
 def test_preflop_bucket_KK():
-    """KK maps to pf_14."""
+    """KK shares the strongest fine bucket with AA (top bucket = JJ/QQ/KK/AA)."""
+    from src.abstractions.card_abstractions import NUM_PREFLOP_BUCKETS
     ca = CardAbstraction()
     bucket = ca.preflop_bucket(['HK', 'DK'])
-    assert bucket == 'pf_14', f"KK should be pf_14, got {bucket}"
+    top = f"pf_{NUM_PREFLOP_BUCKETS - 1}"
+    assert bucket == top, f"KK should be {top}, got {bucket}"
     print(f"PASS test_preflop_bucket_KK: {bucket}")
 
 
@@ -462,7 +467,7 @@ def test_preflop_bucket_32o():
 
 
 def test_preflop_bucket_72o():
-    """72o maps to pf_0 (weakest)."""
+    """72o is in the weakest tier (pf_0 at 30-bucket resolution)."""
     ca = CardAbstraction()
     bucket = ca.preflop_bucket(['H7', 'D2'])
     assert bucket == 'pf_0', f"72o should be pf_0, got {bucket}"
@@ -528,34 +533,43 @@ def test_no_fallback_pf_7_bucket_for_mapped_hands():
 
     assert len(fallback_hits) == 0, (
         f"{len(fallback_hits)} canonical hands are missing from the bucket map "
-        f"and will return fallback 'pf_6': {fallback_hits[:10]}"
+        f"and will return the mid-bucket fallback: {fallback_hits[:10]}"
     )
-    print(f"PASS test_no_fallback_pf_6_bucket_for_mapped_hands")
+    print(f"PASS test_no_fallback_bucket_for_mapped_hands")
 
 
 def test_preflop_bucket_valid_format():
-    """Every bucket in the map must match the pattern pf_N where N is 0-14."""
+    """Every bucket matches pf_N with 0 <= N < NUM_PREFLOP_BUCKETS (auto-derived
+    so the bound can't drift from the actual abstraction). The map must also be
+    contiguous (every bucket 0..N-1 used) and span the full range."""
+    n = len(set(_PREFLOP_BUCKET_MAP.values()))
     bad = [(k, v) for k, v in _PREFLOP_BUCKET_MAP.items()
-           if not re.match(r'^pf_\d+$', v) or int(v.split('_')[1]) > 14]
+           if not re.match(r'^pf_\d+$', v) or not (0 <= int(v.split('_')[1]) < n)]
     assert len(bad) == 0, f"Invalid bucket values: {bad[:5]}"
-    print("PASS test_preflop_bucket_valid_format")
+    used = {int(v.split('_')[1]) for v in _PREFLOP_BUCKET_MAP.values()}
+    assert used == set(range(n)), f"Buckets not contiguous 0..{n-1}: {sorted(used)}"
+    print(f"PASS test_preflop_bucket_valid_format ({n} buckets)")
 
 
 def test_postflop_bucket_is_integer():
-    """Postflop bucket is an integer within the v2 range per street:
-    flop/turn 0-11 (12 buckets), river 0-9 (10 buckets)."""
+    """Postflop bucket is an integer within the per-street range. The bound is
+    DERIVED from the loaded centroid count (load_centroids) so it tracks the actual
+    abstraction (20/16/10 after the re-bake; whatever the committed centroids say)
+    and can't drift from a hardcoded number."""
+    from src.abstractions.postflop_features import load_centroids
     ca = CardAbstraction()
     hole_cards = ['HA', 'DA']
     cases = [
-        (['HK', 'SQ', 'DJ'], 11, 'flop'),
-        (['HK', 'SQ', 'DJ', 'C9'], 11, 'turn'),
-        (['HK', 'SQ', 'DJ', 'C9', 'S7'], 9, 'river'),
+        (['HK', 'SQ', 'DJ'], 'flop'),
+        (['HK', 'SQ', 'DJ', 'C9'], 'turn'),
+        (['HK', 'SQ', 'DJ', 'C9', 'S7'], 'river'),
     ]
-    for community, hi, street in cases:
+    for community, street in cases:
+        k = len(load_centroids(street)[0])
         bucket = ca.postflop_bucket(hole_cards, community)
         assert isinstance(bucket, int), f"{street}: expected int, got {type(bucket)}: {bucket}"
-        assert 0 <= bucket <= hi, f"{street} bucket out of range [0,{hi}]: {bucket}"
-    print("PASS test_postflop_bucket_is_integer: flop/turn 0-11, river 0-9")
+        assert 0 <= bucket < k, f"{street} bucket out of range [0,{k - 1}]: {bucket}"
+    print("PASS test_postflop_bucket_is_integer: per-street range from centroids")
 
 
 # ===========================================================================
@@ -611,6 +625,59 @@ def test_info_set_key_deterministic():
     print(f"PASS test_info_set_key_deterministic: key = '{key1}'")
 
 
+def test_fine_coarse_key_contract():
+    """The decoupled-bucket contract: PREFLOP keys carry the FINE bucket (0..29);
+    POSTFLOP keys carry the COARSE class (0..9). A postflop startBucket must never
+    be a fine index >= NUM_PREFLOP_COARSE -- that would mean a consumer leaked the
+    fine id postflop (the failure this whole redesign guards against). Checked over
+    EVERY fine bucket, both directly via make_info_set_key and end-to-end via the
+    live GameSession key path."""
+    from src.cfr.keys import make_info_set_key
+    from src.abstractions.card_abstractions import (
+        NUM_PREFLOP_BUCKETS, NUM_PREFLOP_COARSE, FINE_TO_COARSE)
+
+    # Independent properties of the mapping itself (do NOT re-derive from the same
+    # object the builder uses -- a consistent-but-wrong divisor would otherwise slip
+    # through). A correct fine->coarse collapse of two nested equal-frequency
+    # quantilings MUST be monotonic non-decreasing and span the full coarse range
+    # 0..NUM_PREFLOP_COARSE-1. This catches e.g. fine//4 (wrong divisor: not onto
+    # 0..9) or any non-monotonic map.
+    assert len(FINE_TO_COARSE) == NUM_PREFLOP_BUCKETS, FINE_TO_COARSE
+    assert all(FINE_TO_COARSE[i] <= FINE_TO_COARSE[i + 1]
+               for i in range(NUM_PREFLOP_BUCKETS - 1)), \
+        f"FINE_TO_COARSE not monotonic: {FINE_TO_COARSE}"
+    assert set(FINE_TO_COARSE) == set(range(NUM_PREFLOP_COARSE)), \
+        f"FINE_TO_COARSE must span 0..{NUM_PREFLOP_COARSE - 1}, got {sorted(set(FINE_TO_COARSE))}"
+    assert FINE_TO_COARSE[0] == 0 and FINE_TO_COARSE[-1] == NUM_PREFLOP_COARSE - 1
+
+    # Direct: every fine bucket collapses correctly per street.
+    for fb in range(NUM_PREFLOP_BUCKETS):
+        pf = f"pf_{fb}"
+        pre = make_info_set_key(0, 'ip', pf, None, '')
+        assert pre == f"{pf}_ip_", f"preflop key dropped the fine id: {pre}"
+        for street in (1, 2, 3):
+            post = make_info_set_key(street, 'oop', pf, 3, 'm')
+            # postflop key: pf_{coarse}_{strength}_{pos}_{street}_{pattern}
+            assert post.startswith('pf_'), post
+            start = int(post.split('_')[1])
+            assert start == FINE_TO_COARSE[fb], (
+                f"street {street}: fine pf_{fb} should collapse to "
+                f"pf_{FINE_TO_COARSE[fb]}, got startBucket {start} in {post}")
+            assert start < NUM_PREFLOP_COARSE, (
+                f"postflop key leaked a fine-range bucket: {post}")
+
+    # End-to-end through the live path (GameSession.info_set_key), which feeds the
+    # fine bucket from CardAbstraction.get_bucket -> must still land coarse postflop.
+    from src.game.game_session import GameSession
+    s = GameSession.new('contract', 'p')
+    pre = s.info_set_key(0)
+    assert re.match(r'^pf_\d+_(ip|oop)_\w*$', pre), pre
+    fine_n = int(pre.split('_')[1])
+    assert 0 <= fine_n < NUM_PREFLOP_BUCKETS, f"preflop fine out of range: {pre}"
+    print(f"PASS test_fine_coarse_key_contract: {NUM_PREFLOP_BUCKETS} fine / "
+          f"{NUM_PREFLOP_COARSE} coarse, postflop never leaks a fine id")
+
+
 def test_info_set_key_different_cards_different_key():
     """Different hole cards -> different info set key (at least for strong vs weak hands)."""
     adapter = GameAdapter()
@@ -623,7 +690,7 @@ def test_info_set_key_different_cards_different_key():
     }
     key_aa = adapter.create_info_set_key(['HA', 'DA'], round_state, 'ip')
     key_72 = adapter.create_info_set_key(['H7', 'D2'], round_state, 'ip')
-    # AA is pf_14, 72o is pf_0 — these must be different keys
+    # AA is the top fine bucket, 72o the weakest — these must be different keys
     assert key_aa != key_72, f"AA and 72o should produce different keys, both gave '{key_aa}'"
     print(f"PASS test_info_set_key_different_cards_different_key")
 
@@ -1022,8 +1089,14 @@ def test_action_char_mapping():
     assert _action_char('raise_small') == 's'
     assert _action_char('raise_medium') == 'm'
     assert _action_char('raise_large') == 'l'
+    assert _action_char('bet_xlarge') == 'x'      # 4th preflop open
+    assert _action_char('bet_overbet') == 'o'     # postflop overbet
+    assert _action_char('raise_overbet') == 'o'
     assert _action_char('allin') == 'a'
-    assert _action_char('unknown') == 'x'
+    # Unmapped actions must RAISE (no silent 'x' default — it would alias bet_xlarge).
+    import pytest
+    with pytest.raises(ValueError):
+        _action_char('unknown')
     print("PASS test_action_char_mapping")
 
 
@@ -1155,9 +1228,8 @@ def test_get_community_cards_count():
 
 
 def test_preflop_bucket_vs_equity_ordering():
-    """Higher-equity hands should have higher or equal bucket numbers."""
-    # AA (0.8562) > KK (0.8133) > 22 (0.5088) > 32o (0.3208)
-    # All should be pf_14, pf_14, pf_7, pf_0
+    """Higher-equity hands should have higher or equal (fine) bucket numbers."""
+    # AA (0.8562) > KK (0.8133) > 22 (0.5088) > 32o (0.3208) -> monotonic fine buckets.
     ca = CardAbstraction()
     aa_bucket = int(ca.preflop_bucket(['HA', 'DA']).split('_')[1])
     kk_bucket = int(ca.preflop_bucket(['HK', 'DK']).split('_')[1])
@@ -1223,6 +1295,7 @@ ALL_TESTS = [
     test_preflop_key_format,
     test_postflop_key_format,
     test_info_set_key_deterministic,
+    test_fine_coarse_key_contract,
     test_info_set_key_different_cards_different_key,
     test_position_in_key,
     # Street transition

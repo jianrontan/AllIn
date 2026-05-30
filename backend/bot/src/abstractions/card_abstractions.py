@@ -3,7 +3,9 @@ from .hand_evaluator import HandEvaluator
 from .postflop_v2 import PostflopV2
 
 # Precomputed via scripts/compute_preflop_equity.py
-# 10,000 Monte Carlo simulations vs random opponent, seed=42, 15 equal-quantile buckets
+# 10,000 Monte Carlo simulations vs random opponent, seed=42. This is the raw equity
+# table; the fine (30) and coarse (10) bucket MAPS are derived from it below by
+# _quantile_buckets (no pasted bucket literal).
 _PREFLOP_EQUITY = {
     '22': 0.5088,
     '32o': 0.3208,
@@ -176,191 +178,81 @@ _PREFLOP_EQUITY = {
     'TT': 0.7534,
 }
 
-# Custom bucket assignment: 169 hands → 15 buckets (pf_0 weakest, pf_14 strongest)
-# pf_14: hands with equity >= 0.75 (TT+). Remaining 164 hands: equal-quantile pf_0–pf_13.
-# This ensures 77/88/99 (equity 0.658–0.717) are separated from TT+ (0.753–0.856).
-_PREFLOP_BUCKET_MAP = {
-    '22': 'pf_7',
-    '32o': 'pf_0',
-    '32s': 'pf_0',
-    '33': 'pf_8',
-    '42o': 'pf_0',
-    '42s': 'pf_0',
-    '43o': 'pf_0',
-    '43s': 'pf_1',
-    '44': 'pf_10',
-    '52o': 'pf_0',
-    '52s': 'pf_0',
-    '53o': 'pf_0',
-    '53s': 'pf_2',
-    '54o': 'pf_1',
-    '54s': 'pf_2',
-    '55': 'pf_11',
-    '62o': 'pf_0',
-    '62s': 'pf_1',
-    '63o': 'pf_0',
-    '63s': 'pf_2',
-    '64o': 'pf_1',
-    '64s': 'pf_2',
-    '65o': 'pf_2',
-    '65s': 'pf_3',
-    '66': 'pf_13',
-    '72o': 'pf_0',
-    '72s': 'pf_1',
-    '73o': 'pf_1',
-    '73s': 'pf_1',
-    '74o': 'pf_1',
-    '74s': 'pf_2',
-    '75o': 'pf_2',
-    '75s': 'pf_3',
-    '76o': 'pf_3',
-    '76s': 'pf_4',
-    '77': 'pf_13',
-    '82o': 'pf_0',
-    '82s': 'pf_2',
-    '83o': 'pf_1',
-    '83s': 'pf_2',
-    '84o': 'pf_1',
-    '84s': 'pf_3',
-    '85o': 'pf_2',
-    '85s': 'pf_3',
-    '86o': 'pf_3',
-    '86s': 'pf_5',
-    '87o': 'pf_4',
-    '87s': 'pf_5',
-    '88': 'pf_13',
-    '92o': 'pf_2',
-    '92s': 'pf_3',
-    '93o': 'pf_1',
-    '93s': 'pf_3',
-    '94o': 'pf_1',
-    '94s': 'pf_4',
-    '95o': 'pf_3',
-    '95s': 'pf_4',
-    '96o': 'pf_4',
-    '96s': 'pf_5',
-    '97o': 'pf_4',
-    '97s': 'pf_6',
-    '98o': 'pf_5',
-    '98s': 'pf_7',
-    '99': 'pf_13',
-    'A2o': 'pf_9',
-    'A2s': 'pf_10',
-    'A3o': 'pf_9',
-    'A3s': 'pf_10',
-    'A4o': 'pf_10',
-    'A4s': 'pf_11',
-    'A5o': 'pf_11',
-    'A5s': 'pf_12',
-    'A6o': 'pf_10',
-    'A6s': 'pf_11',
-    'A7o': 'pf_11',
-    'A7s': 'pf_12',
-    'A8o': 'pf_11',
-    'A8s': 'pf_12',
-    'A9o': 'pf_12',
-    'A9s': 'pf_13',
-    'AA': 'pf_14',
-    'AJo': 'pf_12',
-    'AJs': 'pf_13',
-    'AKo': 'pf_13',
-    'AKs': 'pf_13',
-    'AQo': 'pf_13',
-    'AQs': 'pf_13',
-    'ATo': 'pf_12',
-    'ATs': 'pf_13',
-    'J2o': 'pf_4',
-    'J2s': 'pf_5',
-    'J3o': 'pf_4',
-    'J3s': 'pf_6',
-    'J4o': 'pf_5',
-    'J4s': 'pf_6',
-    'J5o': 'pf_5',
-    'J5s': 'pf_6',
-    'J6o': 'pf_6',
-    'J6s': 'pf_7',
-    'J7o': 'pf_6',
-    'J7s': 'pf_7',
-    'J8o': 'pf_7',
-    'J8s': 'pf_8',
-    'J9o': 'pf_8',
-    'J9s': 'pf_9',
-    'JJ': 'pf_14',
-    'JTo': 'pf_9',
-    'JTs': 'pf_11',
-    'K2o': 'pf_7',
-    'K2s': 'pf_8',
-    'K3o': 'pf_7',
-    'K3s': 'pf_8',
-    'K4o': 'pf_8',
-    'K4s': 'pf_9',
-    'K5o': 'pf_8',
-    'K5s': 'pf_9',
-    'K6o': 'pf_9',
-    'K6s': 'pf_10',
-    'K7o': 'pf_9',
-    'K7s': 'pf_10',
-    'K8o': 'pf_10',
-    'K8s': 'pf_11',
-    'K9o': 'pf_10',
-    'K9s': 'pf_12',
-    'KJo': 'pf_12',
-    'KJs': 'pf_12',
-    'KK': 'pf_14',
-    'KQo': 'pf_12',
-    'KQs': 'pf_12',
-    'KTo': 'pf_11',
-    'KTs': 'pf_12',
-    'Q2o': 'pf_5',
-    'Q2s': 'pf_6',
-    'Q3o': 'pf_5',
-    'Q3s': 'pf_7',
-    'Q4o': 'pf_6',
-    'Q4s': 'pf_7',
-    'Q5o': 'pf_6',
-    'Q5s': 'pf_8',
-    'Q6o': 'pf_7',
-    'Q6s': 'pf_8',
-    'Q7o': 'pf_7',
-    'Q7s': 'pf_9',
-    'Q8o': 'pf_8',
-    'Q8s': 'pf_9',
-    'Q9o': 'pf_9',
-    'Q9s': 'pf_11',
-    'QJo': 'pf_10',
-    'QJs': 'pf_11',
-    'QQ': 'pf_14',
-    'QTo': 'pf_10',
-    'QTs': 'pf_11',
-    'T2o': 'pf_2',
-    'T2s': 'pf_4',
-    'T3o': 'pf_3',
-    'T3s': 'pf_4',
-    'T4o': 'pf_3',
-    'T4s': 'pf_4',
-    'T5o': 'pf_4',
-    'T5s': 'pf_5',
-    'T6o': 'pf_5',
-    'T6s': 'pf_6',
-    'T7o': 'pf_5',
-    'T7s': 'pf_7',
-    'T8o': 'pf_6',
-    'T8s': 'pf_8',
-    'T9o': 'pf_8',
-    'T9s': 'pf_9',
-    'TT': 'pf_14',
-}
+# --- Preflop bucketing: DECOUPLED fine (preflop) vs coarse (postflop) ------------
+# Two independent equal-frequency quantilings of the SAME equity table above:
+#   * FINE  (30): identifies the hand for PREFLOP keys -- sharp preflop play. Preflop
+#                 is only 169 distinct hands, so fine resolution is cheap.
+#   * COARSE (10): the preflop-hand summary carried into POSTFLOP keys as `startBucket`
+#                 -- imperfect recall (Libratus/Pluribus structure). The postflop key
+#                 still knows roughly which range you came in with; it just doesn't
+#                 distinguish all 30 fine buckets, which collapses the postflop
+#                 info-set count (startBucket x strength) far below carrying the fine id.
+# The fine->coarse collapse happens in cfr/keys.make_info_set_key for postflop streets
+# (FINE_TO_COARSE below), so callers keep passing the fine bucket and the contract
+# (postflop keys carry coarse) is impossible to violate at a call site.
+#
+# Both maps are DERIVED here from _PREFLOP_EQUITY by the same method as
+# scripts/compute_preflop_equity.py:assign_buckets -- the script remains the equity
+# GENERATOR, but the bucket maps are derived from the committed equity table so the
+# two can never drift (and there is no 169-line literal to maintain per scheme).
+NUM_PREFLOP_BUCKETS = 30   # fine  (preflop keys: pf_0 weakest .. pf_29 strongest)
+NUM_PREFLOP_COARSE = 10    # coarse (postflop startBucket: 0 weakest .. 9 strongest)
 
-# Number of preflop buckets, derived from the map above so consumers (e.g. the
-# API's Key Explorer vocabulary) can't drift from the actual abstraction.
-NUM_PREFLOP_BUCKETS = len(set(_PREFLOP_BUCKET_MAP.values()))
+
+def _quantile_buckets(equity_map, n_buckets):
+    """Equal-frequency quantile bucketing of the 169 hands by equity (ascending):
+    0 = weakest .. n_buckets-1 = strongest, ~169/n_buckets hands each. Identical
+    formula to scripts/compute_preflop_equity.py:assign_buckets. Stable sort over the
+    committed equity dict -> deterministic across runs (dict insertion order breaks ties)."""
+    ranked = sorted(equity_map.items(), key=lambda kv: kv[1])
+    total = len(ranked)
+    return {hand: min(int(i * n_buckets / total), n_buckets - 1)
+            for i, (hand, _eq) in enumerate(ranked)}
+
+
+_FINE_IDX = _quantile_buckets(_PREFLOP_EQUITY, NUM_PREFLOP_BUCKETS)      # hand -> 0..29
+_COARSE_IDX = _quantile_buckets(_PREFLOP_EQUITY, NUM_PREFLOP_COARSE)     # hand -> 0..9
+_PREFLOP_BUCKET_MAP = {h: f"pf_{b}" for h, b in _FINE_IDX.items()}      # hand -> 'pf_<n>'
+
+
+def _build_fine_to_coarse():
+    """Fine bucket int -> coarse class int, via each fine bucket's representative
+    (median-equity) hand. Because FINE (30) and COARSE (10) are equal-frequency
+    quantiles of the SAME table and 30 = 3*10, no fine bucket straddles a coarse
+    boundary, so the collapse is exact (a fine bucket -> exactly one coarse class);
+    the assertion below enforces that invariant (it would fire if the bucket counts
+    ever change to a non-dividing pair, flagging that the collapse became lossy)."""
+    from collections import defaultdict
+    by_fine = defaultdict(list)
+    for hand, fb in _FINE_IDX.items():
+        by_fine[fb].append(hand)
+    out = [0] * NUM_PREFLOP_BUCKETS
+    for fb, hands in by_fine.items():
+        coarse_classes = {_COARSE_IDX[h] for h in hands}
+        assert len(coarse_classes) == 1, (
+            f"fine bucket pf_{fb} straddles coarse classes {sorted(coarse_classes)} "
+            f"-- the fine->coarse collapse is no longer exact (check NUM_PREFLOP_BUCKETS "
+            f"/ NUM_PREFLOP_COARSE divisibility)")
+        out[fb] = coarse_classes.pop()
+    return tuple(out)
+
+
+# Indexed by fine bucket int; consumed by cfr/keys.make_info_set_key for postflop keys.
+FINE_TO_COARSE = _build_fine_to_coarse()
+
+assert len(set(_PREFLOP_BUCKET_MAP.values())) == NUM_PREFLOP_BUCKETS
+assert len(set(_COARSE_IDX.values())) == NUM_PREFLOP_COARSE
 
 
 class CardAbstraction:
     """
-    15 equity-based preflop buckets (pf_0 weakest → pf_14 strongest).
+    Preflop: DECOUPLED buckets -- 30 FINE equity buckets (pf_0 weakest → pf_29
+    strongest) for preflop keys, collapsed to 10 COARSE classes (0..9) for the
+    postflop `startBucket` (imperfect recall; see _build_fine_to_coarse). The
+    collapse lives in cfr/keys.make_info_set_key, so preflop_bucket() always returns
+    the fine id and callers never choose.
     Postflop: distribution-aware (potential-aware) buckets via PostflopV2 --
-    12 flop / 12 turn / 10 river, from precomputed equity-distribution centroids
+    20 flop / 16 turn / 10 river, from precomputed equity-distribution centroids
     + baked lookup tables (see scripts/compute_postflop_buckets.py and
     scripts/bake_postflop_table.py). This replaced the old 8-bucket
     BoardTextureEvaluator heuristic; blueprints must be (re)trained under it.
@@ -390,16 +282,29 @@ class CardAbstraction:
         return result
 
     def preflop_bucket(self, hole_cards):
+        """FINE preflop bucket 'pf_0'..'pf_29' (for PREFLOP keys). Postflop keys
+        collapse this to the coarse class inside make_info_set_key -- callers always
+        pass this fine id."""
         hand_str = self.cards_to_string(hole_cards)
         bucket = _PREFLOP_BUCKET_MAP.get(hand_str)
         if bucket is None:
             import warnings
-            warnings.warn(f"Unrecognized hand string '{hand_str}' — falling back to pf_7")
-            return 'pf_7'
+            mid = f"pf_{NUM_PREFLOP_BUCKETS // 2}"
+            warnings.warn(f"Unrecognized hand string '{hand_str}' — falling back to {mid}")
+            return mid
         return bucket
 
+    def preflop_class(self, hole_cards):
+        """COARSE preflop class 0..9 (the postflop `startBucket`). Rarely needed
+        directly -- make_info_set_key collapses the fine bucket for postflop keys --
+        but exposed for diagnostics / the API vocabulary."""
+        hand_str = self.cards_to_string(hole_cards)
+        cls = _COARSE_IDX.get(hand_str)
+        return cls if cls is not None else NUM_PREFLOP_COARSE // 2
+
     def postflop_bucket(self, hole_cards, community_cards):
-        """Distribution-aware postflop bucket (12 flop / 12 turn / 10 river)."""
+        """Distribution-aware postflop bucket (20 flop / 16 turn / 10 river; the
+        per-street K is whatever the loaded centroids define)."""
         return self.postflop.bucket(list(hole_cards), list(community_cards))
 
     def cards_to_string(self, hole_cards):

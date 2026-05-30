@@ -30,12 +30,6 @@ from .range_tracker import RangeTracker
 
 _STREET_NAMES = ['preflop', 'flop', 'turn', 'river']
 _BOARD_COUNT = [0, 3, 4, 5]              # community cards visible per street
-_ACTION_CHARS = {
-    'check': 'k', 'call': 'c', 'fold': 'f',
-    'bet_small': 's', 'bet_medium': 'm', 'bet_large': 'l',
-    'raise_small': 's', 'raise_medium': 'm', 'raise_large': 'l',
-    'allin': 'a',
-}
 BIG_BLIND = 2
 
 _RANK_NAMES = {
@@ -85,10 +79,6 @@ def _read_group_label(hand, relevant):
 
 class GameError(Exception):
     """Raised on an illegal request (bad action, wrong turn, ...)."""
-
-
-def _action_char(action):
-    return _ACTION_CHARS.get(action, 'x')
 
 
 class GameSession:
@@ -334,16 +324,25 @@ class GameSession:
         base_pattern = d['bet_pattern']
         if custom:
             action = self._validate_custom(action, legal)
-            grid = self._node_grid(legal)
-            pot, to_call = self._current_pot(), (self._action_cost('call') if 'call' in legal else 0.0)
-            eff = translation.eff_fraction(self._action_cost(action), to_call, pot)
-            translated = translation.translate_bet(eff, grid)
-            char = translation.nearest_char(eff, grid)
-            snapped_action = self._grid_action_for_char(char, legal)
+            if action == 'allin':
+                # A custom raise-to that meets/exceeds the stack normalizes to an
+                # all-in. Its char is 'a' directly -- do NOT snap via nearest_char,
+                # which (when the grid omits an 'a' edge) would mis-record the shove
+                # as the nearest SIZED char ('l'/'o') and corrupt the info-set key
+                # and the range-tracker observe.
+                char = action_char('allin')
+                snapped_action = 'allin'
+            else:
+                grid = self._node_grid(legal)
+                pot, to_call = self._current_pot(), (self._action_cost('call') if 'call' in legal else 0.0)
+                eff = translation.eff_fraction(self._action_cost(action), to_call, pot)
+                translated = translation.translate_bet(eff, grid)
+                char = translation.nearest_char(eff, grid)
+                snapped_action = self._grid_action_for_char(char, legal)
         elif action not in legal:
             raise GameError(f"Illegal action {action!r}; legal: {legal}")
         else:
-            char = _action_char(action)
+            char = action_char(action)
 
         cost = self._action_cost(action)
 
@@ -389,7 +388,7 @@ class GameSession:
 
         # An off-grid human bet leaves a blended response for the bot to consume
         # on its immediate next decision; any other action clears it.
-        if custom and len(translated) > 1:
+        if custom and translated is not None and len(translated) > 1:
             d['pending_translation'] = {'base_pattern': base_pattern,
                                         'weights': [[c, w] for c, w in translated]}
         else:

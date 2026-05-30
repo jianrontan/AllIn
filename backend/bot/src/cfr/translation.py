@@ -23,7 +23,7 @@ never drift.
 # node's grid must come from that node's real legal sizes. A grid is a list of
 # (char, frac) sorted ascending by frac, where frac is the size on the same axis
 # as eff_fraction() (bet / pot-after-call).
-POSTFLOP_GRID = [('s', 0.33), ('m', 0.66), ('l', 1.0)]
+POSTFLOP_GRID = [('s', 0.33), ('m', 0.66), ('l', 1.0), ('o', 1.5)]
 
 
 def eff_fraction(total_add, to_call, pot):
@@ -37,6 +37,31 @@ def eff_fraction(total_add, to_call, pot):
         pot_after_call = pot + to_call
         return (total_add - to_call) / pot_after_call if pot_after_call > 0 else 0.0
     return total_add / pot if pot > 0 else 0.0       # a bet
+
+
+def preflop_grid(num_aggr, committed_actor, to_call, pot, open_chips, raise_mult, size_char):
+    """The trained preflop bet-size grid at a node, as a sorted [(char, eff_frac), ...]
+    on the eff_fraction axis -- the preflop analogue of POSTFLOP_GRID, built per node
+    because preflop sizes are absolute ladders (open = BB ladder) or pot-relative
+    (3-bet/4-bet), not plain pot fractions.
+
+    Kept dependency-free (the module's contract): the caller passes the size data
+    so translation.py doesn't import sizing --
+      open_chips : {size_name: raise-to chips}   (e.g. sizing.preflop_open_chips())
+      raise_mult : {size_name: pot-after-call multiplier}  (sizing.PREFLOP_RAISE_MULT)
+      size_char  : {size_name: char}              (e.g. {'small':'s',...})
+    num_aggr == 0 -> first-in open (absolute ladder, scored on the eff_fraction
+    axis); else 3-bet/4-bet (eff_frac == the multiplier). This is the single
+    definition the live API (_preflop_grid) and the LBR victim model share so they
+    can't drift -- same discipline as keys.py / sizing.py."""
+    grid = {}
+    if num_aggr == 0:
+        for size, total in open_chips.items():
+            grid[size_char[size]] = eff_fraction(total - committed_actor, to_call, pot)
+    else:
+        for size, mult in raise_mult.items():
+            grid[size_char[size]] = mult
+    return sorted(grid.items(), key=lambda cf: cf[1])
 
 
 def pseudo_harmonic_weight(x, a, b):
@@ -84,7 +109,7 @@ def nearest_char(eff_frac, grid):
     range-tracker's observe). The principled blend (translate_bet) is reserved
     for the actual decision."""
     if not grid:
-        return 'x'
+        return ''
     return min(grid, key=lambda cf: abs(cf[1] - eff_frac))[0]
 
 

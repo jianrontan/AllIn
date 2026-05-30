@@ -41,7 +41,8 @@ import numpy as np
 from ..cfr.poker_game import PokerGame, STARTING_STACK
 from ..cfr.keys import make_info_set_key, action_char
 from ..cfr import translation
-from ..abstractions.sizing import preflop_open_chips, PREFLOP_RAISE_MULT, POSTFLOP_BET_MULT
+from ..abstractions.sizing import (
+    preflop_open_chips, PREFLOP_RAISE_MULT, POSTFLOP_BET_MULT, SIZE_CHAR)
 from ..abstractions.card_abstractions import CardAbstraction
 from ..abstractions.action_abstractions import ActionAbstraction
 from ..abstractions.hand_evaluator import HandEvaluator
@@ -231,14 +232,20 @@ class LBREvaluator:
             char = 'a'
             translated = [('a', 1.0)]
         elif street == 0:
-            # Preflop sizes are absolute chip ladders -> keep the chip-threshold
-            # categorisation (single char; preflop translation deferred).
-            gstate = {'pot_size': max(1, pot), 'big_blind': BB,
-                      'player_stack': stack[lbr_seat]}
-            act = {'action': 'raise' if is_raise else 'bet', 'amount': new_committed_lbr}
-            hist = [{'action': 'RAISE'}] * num_aggr
-            char = self.actions.categorize_bet_size(act, gstate, hist, 'preflop')[0]
-            translated = [(char, 1.0)]
+            # Preflop: the DEPLOYED bot pseudo-harmonic-translates EVERY street, so
+            # mirror that here too (was snap-to-nearest -> a preflop strawman victim
+            # the off-tree exploiter could over-beat). Build the node's preflop grid
+            # via the shared helper (same definition the live API uses), then blend
+            # the bracketing sizes -- on-grid / single-bracket reduces to one char.
+            grid = translation.preflop_grid(
+                num_aggr, committed[lbr_seat], to_call, pot,
+                preflop_open_chips(), PREFLOP_RAISE_MULT, SIZE_CHAR)
+            allin_frac = translation.eff_fraction(stack[lbr_seat], to_call, pot)
+            if allin_frac > (grid[-1][1] if grid else 0.0):
+                grid = grid + [('a', allin_frac)]
+            eff_frac = translation.eff_fraction(total_add, to_call, pot)
+            translated = translation.translate_bet(eff_frac, grid)
+            char = translation.nearest_char(eff_frac, grid)
         else:
             # Postflop: the DEPLOYED bot translates an off-grid bet pseudo-
             # harmonically onto its two bracketing grid sizes (cfr/translation.py,
@@ -257,8 +264,13 @@ class LBREvaluator:
         # bracket -- on-grid or preflop -- reduces to the exact lookup).
         pfold = None
         for c, w in translated:
+            # missing=1.0: an untrained bracket routes to fold, mirroring the
+            # deployed bot (translation.blend missing_action='fold'). Without this
+            # the victim is modelled as CALLING untrained off-grid lines, biasing
+            # LBR to under-value exactly the off-tree bets it exists to find.
             p = botrange.per_hand_action_prob(
-                self._raw_strategy, 'fold', street, self._pos(bot_seat), pattern + c, vis)
+                self._raw_strategy, 'fold', street, self._pos(bot_seat),
+                pattern + c, vis, missing=1.0)
             pfold = w * p if pfold is None else pfold + w * p
         w = botrange.w
         wt = w.sum()
@@ -293,14 +305,24 @@ class LBREvaluator:
         """Bot samples its blueprint; updates LBR's belief. Returns (char, add, aggr)."""
         pot = sum(invested)
         can_aggr = num_aggr < MAX_AGGR_PER_STREET and stack[bot_seat] > max(0, to_call)
+        # Engine-matching action names (opens are bet_*, not raise_*, so the
+        # blueprint lookup hits the stored open keys): preflop open -> 4-size bet_*
+        # ladder; preflop 3-bet/4-bet -> raise_* (3); postflop -> bet_/raise_ incl
+        # overbet. Voluntary all-in when a shove is a genuine raise.
         if to_call > 0:
             legal = ['fold', 'call']
-            if can_aggr:
-                legal += ['raise_small', 'raise_medium', 'raise_large', 'allin']
+            if street == 0 and num_aggr == 0:
+                sized = ['bet_small', 'bet_medium', 'bet_large', 'bet_xlarge']
+            elif street == 0:
+                sized = ['raise_small', 'raise_medium', 'raise_large']
+            else:
+                sized = ['raise_small', 'raise_medium', 'raise_large', 'raise_overbet']
         else:
             legal = ['check']
-            if can_aggr:
-                legal += ['bet_small', 'bet_medium', 'bet_large', 'allin']
+            sized = (['bet_small', 'bet_medium', 'bet_large', 'bet_xlarge'] if street == 0
+                     else ['bet_small', 'bet_medium', 'bet_large', 'bet_overbet'])
+        if can_aggr:
+            legal += sized + ['allin']
 
         pos = self._pos(bot_seat)
         if street == 0:
@@ -537,11 +559,22 @@ class BotRange:
         # positive mass for some live hand) -- the guard is defensive parity.
 
     # -- per-hand probability of one action (from the raw average strategy) ---
-    def per_hand_action_prob(self, raw_lookup, action, street, position, pattern, board):
+    def per_hand_action_prob(self, raw_lookup, action, street, position, pattern,
+                             board, missing=0.0):
         """
         Array of P(bot plays `action`) per bot hand, read from the UNRESTRICTED
         average strategy (so e.g. fold probability is not inflated by dropping the
         bot's raise mass). raw_lookup(key) -> {action: prob} or None.
+
+        `missing` is the per-hand value to use when the bracket KEY IS UNTRAINED
+        (raw_lookup returns None/{}). This distinguishes "trained, but this action
+        has 0 mass" (-> 0.0, correct) from "this bracket was never trained". The
+        deployed bot routes an untrained translation bracket's weight to FOLD
+        (translation.blend(missing_action='fold') via bot_strategy._blend_lookup),
+        so the victim model here must do the same: pass missing=1.0 when querying
+        'fold' so an off-grid bet landing on an untrained bracket is modelled as a
+        fold, not a call. Defaulting missing=0.0 would model the bot calling there
+        -> LBR under-values off-grid bets (the exact off-tree regime LBR measures).
         """
         n = len(self.hands)
         out = np.zeros(n)
@@ -558,7 +591,7 @@ class BotRange:
                 else:
                     key = make_info_set_key(street, position, pf[i], strength[i], pattern)
                 strat = raw_lookup(key)
-                p = float(strat.get(action, 0.0)) if strat else 0.0
+                p = float(strat.get(action, 0.0)) if strat else missing
                 seen[gid] = p
             out[i] = p
         return out

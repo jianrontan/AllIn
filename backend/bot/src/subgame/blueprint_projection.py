@@ -19,15 +19,15 @@ queried once per bucket group per node (reusing ba['groups'][3]).
 import numpy as np
 
 from ..abstractions.sizing import POSTFLOP_BET_MULT
-from ..cfr.keys import make_info_set_key
+from ..cfr.keys import make_info_set_key, action_char
 from .river_tree import is_sized, sized_chips
 from .river_subgame_solver import blueprint_to_tree_dist
 
 
 def tree_action_char(action, node):
     """A tree action -> the blueprint pattern char it maps to. check/call/fold/
-    allin are direct; a sized bet/raise -> the nearest blueprint size char (s/m/l)
-    by pot fraction, matching how the engine would categorise it."""
+    allin are direct; a sized bet/raise -> the nearest blueprint size char
+    (s/m/l/o) by pot fraction, matching how the engine would categorise it."""
     if action == 'check':
         return 'k'
     if action == 'call':
@@ -42,7 +42,7 @@ def tree_action_char(action, node):
         tc = node.to_call
         frac = (node.sc[node.player] + sized_chips(action) - tc) / (node.pot_mid + tc)
     size = min(POSTFLOP_BET_MULT.items(), key=lambda kv: abs(kv[1] - frac))[0]
-    return {'small': 's', 'medium': 'm', 'large': 'l'}[size]
+    return action_char(f'bet_{size}')
 
 
 def _node_patterns(tree):

@@ -56,16 +56,25 @@ def test_action_abstraction_matches_sizing():
     aa = ActionAbstraction()
     gstate = {'pot_size': 3, 'current_bet': 0, 'player_contribution': 0, 'big_blind': 2}
     rstate = {'street': 'preflop', 'action_histories': {'preflop': []}}
+    # Open now has FOUR sizes (incl. 'xlarge'=5 BB); iterate the open keys, not SIZES.
     opens = {s: aa._calculate_target_amount(s, 'bet', gstate, rstate)
-             for s in sizing.SIZES}
+             for s in sizing.PREFLOP_OPEN_BB}
     check('action_abstraction open == sizing.preflop_open_chips',
           opens == sizing.preflop_open_chips(), f"({opens})")
+    # Postflop has FOUR sizes (incl. 'overbet'=1.5x pot); each must match the dict.
+    pstate = {'street': 'flop', 'action_histories': {'flop': []}}
+    pg = {'pot_size': 20, 'current_bet': 0, 'player_contribution': 0, 'big_blind': 2}
+    postflop = {s: aa._calculate_target_amount(s, 'bet', pg, pstate)
+                for s in sizing.POSTFLOP_BET_MULT}
+    expected_post = {s: m * 20 for s, m in sizing.POSTFLOP_BET_MULT.items()}
+    check('action_abstraction postflop (incl overbet) == sizing.POSTFLOP_BET_MULT x pot',
+          postflop == expected_post, f"({postflop})")
 
 
 def test_lbr_open_matches_sizing():
     lbr = LBREvaluator(_NullDB())
     open_chips = sizing.preflop_open_chips()
-    for s in sizing.SIZES:
+    for s in sizing.PREFLOP_OPEN_BB:
         # Open with nothing committed beyond the SB(1): add == raise-to - 1.
         add = lbr._bot_sizing(s, street=0, pot=3, to_call=1, bot_committed=1, num_aggr=0)
         check(f'lbr open {s} add matches engine increment',
@@ -76,7 +85,7 @@ def test_match_matches_sizing():
     """The head-to-head/AIVAT match player must use the same sizes, or version
     comparisons are biased. Mirrors the lbr check (same _sizing signature)."""
     open_chips = sizing.preflop_open_chips()
-    for s in sizing.SIZES:
+    for s in sizing.PREFLOP_OPEN_BB:
         add = match_sizing(s, 0, pot=3, to_call=1, committed=1, num_aggr=0)
         check(f'match open {s} add matches engine increment',
               add == int(round(open_chips[s] - 1)), f"(add={add}, to={open_chips[s]})")

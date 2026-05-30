@@ -22,6 +22,20 @@ of treating all iterations within a round as equally weighted. Keep rounds small
 (merge_every) and the error stays in the band the data-parallel-CFR literature
 tolerates. All workers + master must share identical alpha/gamma.
 
+This block scheme carries TWO distinct approximations of single-thread, not one:
+  1. Discount timing -- all iterations within a round share one decay weight
+     (above).
+  2. CFR+ floor granularity -- each worker floors its regrets at 0 against its
+     OWN baseline-anchored copy, and the master re-floors only the summed total
+     once per round. So negative regret one worker discovers cannot cancel
+     another worker's positive regret WITHIN a round (cancellation happens only
+     at round boundaries, via the next round's baseline). Net effect: a bounded
+     UPWARD bias on cumulative regrets that grows with workers * merge_every and
+     vanishes at workers=1 or merge_every=1. It cannot flip a regret's sign or
+     break convergence -- it just makes regret matching slightly stickier -- and
+     it is the reason this path is validated by exploitability, not seed-compare.
+Both shrink with smaller rounds; both are why the oracle is single-thread.
+
 Platform note: on Windows multiprocessing uses 'spawn' (no fork copy-on-write),
 so the baseline blueprint is pickled to each worker each round. This is the
 correctness-first path (P1); a persistent-worker / incremental-broadcast and a
@@ -146,6 +160,11 @@ def merge_round(info_sets, worker_results, alpha, gamma):
                 if key in res['legal']:
                     info.legal_actions = list(res['legal'][key])
                     break
+        # Every dirty key is built from the union (_dirty_regret | _dirty_strategy),
+        # for which the worker always emits res['legal'], so the scan above must
+        # succeed. Guard the contract: an empty legal_actions here would silently
+        # seed an info set that later NaNs in get_average_strategy / regret matching.
+        assert info.legal_actions, f"merge_round: no legal_actions for key {key!r}"
         return info
 
     # --- Regret merge ---

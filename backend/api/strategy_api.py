@@ -82,16 +82,19 @@ def handle_preflight():
 # Postflop bucket COUNTS per street, read from the live PostflopV2 centroids
 # (distribution-aware/EMD clusters — integers, no human labels). Derived from the
 # centroid files so the Key Explorer can't drift from the real abstraction
-# (e.g. the old hardcoded 8-bucket 0-7 list). 12 flop / 12 turn / 10 river today.
+# (e.g. the old hardcoded 8-bucket 0-7 list). 20 flop / 16 turn / 10 river today.
+# Read ONCE at import — restart the API if the centroids are re-fit to a new K.
 from bot.src.abstractions.postflop_features import load_centroids
-from bot.src.abstractions.card_abstractions import NUM_PREFLOP_BUCKETS
+from bot.src.abstractions.card_abstractions import (
+    NUM_PREFLOP_BUCKETS, NUM_PREFLOP_COARSE)
 _POSTFLOP_BUCKET_COUNTS = {
     street: len(load_centroids(street)[0]) for street in ('flop', 'turn', 'river')
 }
 _PATTERN_CHARS = {
     'k': 'check', 'c': 'call', 'f': 'fold',
     's': 'small bet/raise', 'm': 'medium bet/raise',
-    'l': 'large bet/raise', 'a': 'all-in',
+    'l': 'large bet/raise', 'o': 'overbet (1.5x pot)',
+    'x': 'xlarge open (5 BB)', 'a': 'all-in',
 }
 
 
@@ -118,7 +121,9 @@ def get_strategy():
     })
 
 
-_SIZE_CHAR = {'small': 's', 'medium': 'm', 'large': 'l'}
+# Canonical size->char lives in sizing.py (shared with the LBR victim model) so the
+# explorer's grid and the exploitability harness can't drift.
+from bot.src.abstractions.sizing import SIZE_CHAR as _SIZE_CHAR
 _SB_CHIPS, _BB_CHIPS = 1, 2
 
 
@@ -160,18 +165,12 @@ def _postflop_pattern(actions):
 
 
 def _preflop_grid(num_aggr, committed_actor, to_call, pot):
-    """Trained preflop bet-size grid at a node, as sorted [(char, eff_frac), ...]
-    on the eff_fraction axis. First-in raise = absolute BB ladder (2/2.5/3.5 BB);
-    3-bet+ = pot-relative multipliers (so eff_frac == the multiplier)."""
-    grid = {}
-    if num_aggr == 0:
-        for size, total in preflop_open_chips().items():
-            grid[_SIZE_CHAR[size]] = translation.eff_fraction(
-                total - committed_actor, to_call, pot)
-    else:
-        for size, mult in PREFLOP_RAISE_MULT.items():
-            grid[_SIZE_CHAR[size]] = mult
-    return sorted(grid.items(), key=lambda cf: cf[1])
+    """Trained preflop bet-size grid at a node, as sorted [(char, eff_frac), ...].
+    Thin wrapper over the shared translation.preflop_grid (the one definition the
+    LBR victim model also uses) so the explorer and the harness can't drift."""
+    return translation.preflop_grid(
+        num_aggr, committed_actor, to_call, pot,
+        preflop_open_chips(), PREFLOP_RAISE_MULT, _SIZE_CHAR)
 
 
 def _preflop_pattern(actions):
@@ -332,7 +331,13 @@ def strategy_from_hand():
 def get_abstractions():
     """Vocabulary the frontend Key Explorer dropdowns are built from."""
     return jsonify({
-        "preflopBuckets": [f"pf_{i}" for i in range(NUM_PREFLOP_BUCKETS)],
+        # Decoupled preflop buckets: PREFLOP keys use the FINE id (pf_0..pf_29);
+        # POSTFLOP keys carry the COARSE class (pf_0..pf_9) as startBucket. The Key
+        # Explorer must offer the fine list for preflop and the coarse list for the
+        # postflop startBucket -- offering the fine list postflop would let a user
+        # build a key the (coarse-keyed) blueprint never wrote.
+        "preflopBuckets": [f"pf_{i}" for i in range(NUM_PREFLOP_BUCKETS)],   # fine
+        "preflopStartBuckets": [f"pf_{i}" for i in range(NUM_PREFLOP_COARSE)],  # coarse (postflop)
         # Per-street postflop bucket ids (distribution-aware; no semantic labels).
         "postflopBuckets": {
             street: list(range(n)) for street, n in _POSTFLOP_BUCKET_COUNTS.items()

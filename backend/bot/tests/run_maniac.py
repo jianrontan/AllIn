@@ -45,7 +45,7 @@ class ManiacPlayer:
         self.profile = profile
 
     def act(self, seat, hand, vis, street, pot, committed, stack, to_call, num_aggr, pattern):
-        legal = _legal_actions(to_call, num_aggr, stack, pot)
+        legal = _legal_actions(street, to_call, num_aggr, stack, pot)
         can_aggr = ('allin' in legal)  # implies sized bets/raises are legal too
 
         if can_aggr:

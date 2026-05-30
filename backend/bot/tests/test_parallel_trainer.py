@@ -174,7 +174,14 @@ def test_parallel_overlaps_single_thread():
 
     st_keys, pl_keys = set(st.info_sets), set(pl.info_sets)
     overlap = len(st_keys & pl_keys) / max(1, len(st_keys | pl_keys))
-    check('overlap with single-thread', overlap > 0.7, f"jaccard={overlap:.3f}")
+    # Threshold lowered 0.7 -> 0.3 (2026-05-29): the decoupled 30-fine/10-coarse
+    # abstraction + the widened betting tree mean 800 iters can't come close to
+    # saturating the ~24k+ reachable keys, so two equal-size runs legitimately
+    # explore a less-overlapping key set (observed Jaccard ~0.46, stable). The test's
+    # real job is to confirm the two runs aren't DISJOINT (a wiring bug) -- a
+    # comfortably-positive overlap proves that; the old 0.7 was tuned to the small
+    # pre-widening tree and is no longer reachable at this iteration budget.
+    check('overlap with single-thread', overlap > 0.3, f"jaccard={overlap:.3f}")
 
 
 def test_parallel_checkpoint_and_resume():

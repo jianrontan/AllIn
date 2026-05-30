@@ -64,7 +64,7 @@ AllIn/
 │   │   ├── src/
 │   │   │   ├── config.py                     # resolve_blueprint_path() — picks the active DB
 │   │   │   ├── abstractions/
-│   │   │   │   ├── card_abstractions.py      # 15 preflop + 12/12/10 postflop (delegates to PostflopV2)
+│   │   │   │   ├── card_abstractions.py      # 30-fine/10-coarse preflop + 20/16/10 postflop (delegates to PostflopV2)
 │   │   │   │   ├── postflop_v2.py            # Distribution-aware postflop buckets (table lookup + river runtime)
 │   │   │   │   ├── postflop_features.py      # Shared: equity dist, EMD, rank7, board_winrates, centroid_hash
 │   │   │   │   ├── canonical.py              # Suit-isomorphism canonicalisation of (hole, board)
@@ -152,11 +152,15 @@ one info set; CFR stores one strategy entry per info-set key.
 
 Finer, equity- and texture-driven buckets (the old hand-named buckets are gone):
 
-- **15 preflop buckets** — `pf_0` (weakest) … `pf_14` (strongest), assigned from
-  precomputed Monte Carlo equity (`scripts/compute_preflop_equity.py`).
-  `pf_14` ≈ TT+.
-- **Distribution-aware (potential-aware) postflop buckets** — integers, **12 flop /
-  12 turn / 10 river** (`PostflopV2`). Each hand is described by the *distribution* of
+- **Decoupled preflop buckets — 30 fine / 10 coarse** (imperfect recall). Fine
+  (`pf_0`..`pf_29`) is used in preflop keys; the coarse class (0..9) is the postflop
+  `startBucket`. Both are equal-frequency quantilings of the same Monte Carlo equity
+  table (`scripts/compute_preflop_equity.py`), derived at import in
+  `card_abstractions.py`. The fine→coarse collapse happens in
+  `cfr/keys.make_info_set_key` for postflop streets. See `CLAUDE.md` /
+  `docs/ABSTRACTION_REDESIGN_HANDOFF.md` for the full contract.
+- **Distribution-aware (potential-aware) postflop buckets** — integers, **20 flop /
+  16 turn / 10 river** (`PostflopV2`). Each hand is described by the *distribution* of
   its equity-vs-uniform-range over board runouts (a 30-bin histogram) and clustered by
   Earth Mover's Distance, so hands with equal current equity but different *trajectories*
   (a static made hand vs a polarized draw) get different buckets — which the old

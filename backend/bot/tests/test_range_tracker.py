@@ -10,9 +10,16 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from src.game.range_tracker import RangeTracker
-from src.abstractions.card_abstractions import CardAbstraction
+from src.abstractions.card_abstractions import CardAbstraction, NUM_PREFLOP_BUCKETS
 
 CARDS = CardAbstraction()
+
+# Strongest preflop bucket index (pf_0..pf_{MAX}). Derived from the abstraction so
+# the stub models below normalise to the real bucket range. (History: hardcoding the
+# old 15-bucket max (14) made `frac` exceed 1 once preflop went to 40 buckets, driving
+# the stub fold-probability negative and silently no-op'ing the Bayesian update. Now
+# decoupled to 30 fine buckets -- this tracks NUM_PREFLOP_BUCKETS so it can't rot again.)
+_MAX_PF = NUM_PREFLOP_BUCKETS - 1
 
 
 def _pf_index(key):
@@ -33,7 +40,7 @@ def peaked_fn(key, legal):
 
 def weakfolds_fn(key, legal):
     """Weak preflop buckets fold a lot, strong ones rarely (key-DEPENDENT)."""
-    frac = _pf_index(key) / 14.0
+    frac = _pf_index(key) / _MAX_PF
     fold = 0.85 * (1.0 - frac)
     rest = 1.0 - fold
     m = {'fold': fold, 'call': rest * 0.5, 'raise': rest * 0.5}
@@ -158,7 +165,7 @@ def _stub_strategy_fn(key, legal):
     """Non-uniform, never-zero model: weak preflop buckets fold/check more,
     strong ones bet/raise more. Works for any legal set and street."""
     pf = int(key.split('_')[1])
-    frac = pf / 14.0
+    frac = pf / _MAX_PF
     vals = []
     for a in legal:
         if a == 'fold':

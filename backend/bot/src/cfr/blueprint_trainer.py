@@ -1,4 +1,5 @@
 # backend/bot/src/cfr/blueprint_trainer.py
+import os
 import random
 from .poker_game import PokerGame, STARTING_STACK
 from .information_set import InformationSet
@@ -392,7 +393,7 @@ class BlueprintTrainer:
         print(f"Checkpoint: {len(dirty)} info sets written "
               f"({len(self.info_sets)} total) at iteration {iteration + 1}")
 
-    def resume_from_db(self, db):
+    def resume_from_db(self, db, mode=None):
         self.info_sets = db.load_all_to_memory()
         # Every loaded row is already on disk; nothing is dirty until mutated.
         self._dirty.clear()
@@ -411,5 +412,31 @@ class BlueprintTrainer:
                     f"{name}={stored}, but the run is configured with {getattr(self, name)}. "
                     f"Changing the discount schedule mid-blueprint corrupts the average "
                     f"strategy. Resume without overriding {name} (or pass the stored value).")
+        # Cross-mode resume guard (mode = 'single' | 'parallel' | None to skip).
+        # Single-thread and parallel runs use the SAME visit_count field with
+        # incompatible clocks (it counts iterations in single-thread but merge-
+        # ROUNDS in parallel), so resuming across modes corrupts the Linear-CFR
+        # discount -- either neutering it or triggering a one-shot regret-wiping
+        # decay. Prefer the stamped mode; for a pre-stamp DB (e.g. an in-flight
+        # run started before this guard) fall back to the on-disk filename tag
+        # ('blueprint_par_*' = parallel, written by run_blueprint_trainer). Only
+        # a KNOWN, DIFFERENT mode is refused -- an unknown mode is allowed, like
+        # the alpha/gamma guards above.
+        if mode is not None:
+            stored_mode = db.get_metadata('training_mode', None)
+            if stored_mode is None:
+                base = os.path.basename(getattr(db, 'db_path', '') or '')
+                if base.startswith('blueprint_par'):
+                    stored_mode = 'parallel'
+                # A plain 'blueprint_*' name is ambiguous (single-thread runs and
+                # legacy names share it), so leave stored_mode None and allow it.
+            if stored_mode is not None and stored_mode != mode:
+                raise ValueError(
+                    f"Resume mode mismatch: this blueprint was trained in "
+                    f"{stored_mode!r} mode, but the run is configured for {mode!r}. "
+                    f"Single-thread and parallel runs keep incompatible per-info-set "
+                    f"clocks (visit_count = iterations vs merge-rounds), so resuming "
+                    f"across modes corrupts the discount. Resume in {stored_mode!r} "
+                    f"mode (match/omit the workers arg), or start a fresh run.")
         print(f"Resumed: {len(self.info_sets)} info sets, continuing from iteration {start_iteration}")
         return start_iteration

@@ -167,13 +167,18 @@ class PokerGame:
             else:
                 filtered.append(action)
 
-        # Short-stack shove safety net: every node that reaches this function
-        # permits aggression. If the abstraction produced no sized bet/raise at
-        # all (e.g. every sized raise fell below the minimum legal raise), the
-        # player can still go all-in — provided the shove is a genuine raise
-        # (commits strictly more than a call would).
-        if not needs_allin and not any(
-                a.startswith(('bet_', 'raise_')) for a in filtered):
+        # Voluntary all-in (the all-in ANCHOR) + short-stack shove safety net.
+        # Any node that reaches this function permits aggression, so the player may
+        # always SHOVE, provided the shove is a genuine raise (commits strictly more
+        # than a call). This covers two cases at once:
+        #   * jamming over an affordable sized bet/raise (small/large/overbet) — a
+        #     distinct action, so the blueprint learns jams and carries shove mass;
+        #   * the old safety net (every sized raise fell below the min legal raise,
+        #     so none survived) — the player can still go all-in.
+        # The 3-aggression cap is enforced upstream (get_legal_actions counts only
+        # bet_/raise_, and 'allin in history' closes betting), and all-in is not a
+        # bet_/raise_, so offering it here never exceeds the cap.
+        if not needs_allin:
             call_amount = self.get_call_amount_from_history(
                 street, history, starting_pot, p0_prev, p1_prev)
             allin_amount = self._allin_amount(
@@ -199,7 +204,7 @@ class PokerGame:
         player_remaining = (p0_stack if current_player == 0 else p1_stack)
 
         if not history:
-            actions = ['fold', 'call', 'bet_small', 'bet_medium', 'bet_large']
+            actions = ['fold', 'call', 'bet_small', 'bet_medium', 'bet_large', 'bet_xlarge']
             return self._apply_stack_constraints(
                 actions, player_remaining, street, history, starting_pot,
                 current_player, p0_prev, p1_prev)
@@ -207,7 +212,7 @@ class PokerGame:
         # SB limped (call): BB may check or raise (a raise over the BB is modelled
         # as bet_*, since the blinds are already posted).
         if len(history) == 1 and history[0] == 'call':
-            actions = ['check', 'bet_small', 'bet_medium', 'bet_large']
+            actions = ['check', 'bet_small', 'bet_medium', 'bet_large', 'bet_xlarge']
             return self._apply_stack_constraints(
                 actions, player_remaining, street, history, starting_pot,
                 current_player, p0_prev, p1_prev)
@@ -219,7 +224,7 @@ class PokerGame:
         last_action = history[-1]
 
         if last_action == 'check':
-            actions = ['check', 'bet_small', 'bet_medium', 'bet_large']
+            actions = ['check', 'bet_small', 'bet_medium', 'bet_large', 'bet_xlarge']
             return self._apply_stack_constraints(
                 actions, player_remaining, street, history, starting_pot,
                 current_player, p0_prev, p1_prev)
@@ -516,15 +521,15 @@ class PokerGame:
         lk, num_br = st['last_kind'], st['num_br']
         if street == 0:
             if lk == 'start':
-                actions = ['fold', 'call', 'bet_small', 'bet_medium', 'bet_large']
+                actions = ['fold', 'call', 'bet_small', 'bet_medium', 'bet_large', 'bet_xlarge']
             elif lk == 'call' and num_br == 0:                 # SB limped -> BB option
-                actions = ['check', 'bet_small', 'bet_medium', 'bet_large']
+                actions = ['check', 'bet_small', 'bet_medium', 'bet_large', 'bet_xlarge']
             else:
                 actions = self._ns_fold_call_raises(street, st, cp)
         else:
             if lk in ('start', 'check'):
                 actions = ['check']
-                for size in ('small', 'medium', 'large'):
+                for size in self.BET_MULTIPLIERS:             # incl. 'overbet'
                     if self.BET_MULTIPLIERS[size] * st['pot'] >= 2:
                         actions.append(f'bet_{size}')
             else:
@@ -536,7 +541,10 @@ class PokerGame:
         raise_count = max(0, st['num_br'] - 1)
         if raise_count < self.max_raises_per_street:
             mr = self._ns_min_raise(st)
-            for size in ('small', 'medium', 'large'):
+            # Postflop raises include 'overbet'; preflop 3-bet/4-bet stay 3 sizes
+            # (mirrors get_postflop_legal_actions vs get_preflop_legal_actions).
+            sizes = self.BET_MULTIPLIERS if street > 0 else ('small', 'medium', 'large')
+            for size in sizes:
                 if self._ns_sized_total(size, street, st, cp) >= mr:
                     actions.append(f'raise_{size}')
         return actions
@@ -552,9 +560,11 @@ class PokerGame:
                 needs_allin = True
             else:
                 filtered.append(a)
-        if not needs_allin and not any(a.startswith(('bet_', 'raise_')) for a in filtered):
-            if stack_cp > self._ns_to_call(st, cp):
-                needs_allin = True
+        # Voluntary all-in + short-stack safety net (mirror of
+        # _apply_stack_constraints): offer the shove whenever it is a genuine raise
+        # (more than a call), including over an affordable sized bet (the anchor).
+        if not needs_allin and stack_cp > self._ns_to_call(st, cp):
+            needs_allin = True
         if needs_allin and 'allin' not in filtered:
             i = next((j for j, a in enumerate(filtered) if a.startswith(('bet_', 'raise_'))),
                      len(filtered))

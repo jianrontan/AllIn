@@ -99,7 +99,39 @@ opponent's hole cards, which the river solver consumes as its input range.
 
 ---
 
-## Next blueprint redesign — card + betting abstraction 📅 NEXT (one fresh retrain)
+## Next blueprint redesign — card + betting abstraction 🔄 IN PROGRESS (one fresh retrain)
+
+> **SUPERSEDED IN PART (2026-05-29) — see `docs/ABSTRACTION_REDESIGN_HANDOFF.md`.**
+> The card abstraction below ("preflop 15→40, postflop 12/12/10 unchanged") was
+> revised into a **decoupled imperfect-recall** scheme: **30 fine** preflop buckets
+> (preflop keys only) + **10 coarse** classes (postflop `startBucket`), and postflop
+> strength **20 / 16 / 10** (finer flop). The decouple cuts postflop card-space ~3.7×
+> vs carrying the full preflop bucket, which pays for the finer flop. The **betting**
+> changes in this section (xlarge open, overbet tier, voluntary all-in) are UNCHANGED
+> and still ship in the same retrain. The notes below are kept for the betting bundle
+> + rationale; for the card-abstraction numbers and the fine/coarse key contract, the
+> handoff doc is the source of truth.
+
+> **Status (2026-05-29).** Betting bundle fully implemented + bug-swept. Card
+> abstraction now on the decoupled 30-fine/10-coarse + 20·16·10 scheme (code done;
+> postflop centroids pending re-fit/re-bake — the paused step).
+> Training path: preflop fine/coarse decoupled buckets (`card_abstractions.py`, maps
+> derived from `compute_preflop_equity.py`'s equity table), 4th open `xlarge`/`x` + postflop overbet `overbet`/`o`
+> + voluntary all-in everywhere (`sizing.py`, `keys.py`, `poker_game.py` BOTH the
+> history and threaded `state_*` paths). Measurement/inference mirrors all updated:
+> `best_response.py` (engine-derived, auto-adapts), `lbr.py` + `match.py` +
+> `cross_match.py` victim models (now context-aware: opens are `bet_*` incl. xlarge,
+> 3-bet/4-bet `raise_*`×3, postflop incl. overbet, voluntary all-in — this also fixed
+> a *pre-existing* bug where opens were modelled as `raise_*` and looked up uniformly),
+> `action_abstractions.py` (PyPokerEngine path), `translation.POSTFLOP_GRID` (added the
+> `('o',1.5)` overbet bracket), `blueprint_projection.tree_action_char` (overbet char),
+> API `/abstractions` `_SIZE_CHAR`/`_PATTERN_CHARS` (+`x`/`o`; fixed a preflop-open
+> 500), and the explorer UI vocab. `keys.action_char` now RAISES on an unmapped action
+> (removed the silent `'x'` default that aliased `bet_xlarge`). A 3-agent review found
+> the engine core clean (oracle 262k checks / 0 fail; cap + chip-conservation intact).
+> Gate green across 100+ tests + training/LBR/match/PyPokerEngine smokes. The parallel
+> trainer needs **no** change (merge keys on info-set-key + action-name). All existing
+> `blueprint_*.db` are abstraction-incompatible → fresh run (don't resume).
 
 The next blueprint bundles **all** the abstraction changes below into one retrain
 (they all invalidate existing blueprints, so they ship together and are measured as
@@ -245,8 +277,9 @@ iterations, budget **~6–7N** for the redesign.
 **Parallelism makes the bundle ~wall-clock-neutral.** External-sampling MCCFR is
 independent sampled iterations → embarrassingly parallel. A realistic **~5×** on an
 8-physical-core laptop (thermal throttling caps it below 8×) brings 6–7× iterations
-back to **~1.3× today's wall-clock** for a far richer blueprint. **Plan (design only —
-do not implement until the redesign is ready):**
+back to **~1.3× today's wall-clock** for a far richer blueprint. **IMPLEMENTED** in
+`cfr/parallel_trainer.py` (see measured facts + recommended settings below); the design
+notes that follow document how it works:
 - `multiprocessing` (processes, not threads — the inner loop is pure Python, the GIL
   would serialise threads). W ≈ physical cores. Single-process path stays intact.
 - Each worker runs a chunk into its own in-memory `InformationSet` dict; **periodic
@@ -272,6 +305,44 @@ mirror), frontend explorer vocab.
 raise already equals stack; re-baseline preflop; and read the BR/LBR delta as a
 *bundle* (preflop + postflop changed together) — keep the preflop change minimal so
 it can't masquerade as a postflop regression.
+
+### Measured training-perf facts (2026-05-29) + recommended run settings
+
+The parallel trainer is now IMPLEMENTED (`cfr/parallel_trainer.py`, `run_training(..., workers=)`),
+not just designed. Measured on the new decoupled abstraction (30-fine/10-coarse + 20·16·10),
+baked tables present, single-thread:
+
+| Quantity | Value |
+|---|---|
+| Per-iteration compute (baked tables, single-thread) | **~12 ms/iter (~84 it/s)** |
+| Baseline broadcast size | **156 bytes/info-set** (≈8.9 MB at 57k sets) |
+| Broadcast cost grows as | **blueprint size × workers** — `pool.map` re-pickles the baseline once per worker each round |
+| New-scheme info-set count | **57k at just 20k iters, still climbing** (richer betting tree → likely converges well past the old ~41k) |
+
+The tension: each merge round costs ≈ `(N_infosets × 156 B) × workers` of pickling + IPC, and
+you want the round's *compute* to dwarf it. At 12 ms/iter that's easy to arrange by sizing the
+round large enough.
+
+**Recommended command (8-core laptop):**
+```
+python -c "from tests.run_blueprint_trainer import run_training; \
+run_training(20000000, checkpoint_every=50000, workers=8, merge_every=4000)"
+```
+- **`merge_every=4000`** → 32,000 iters/round (4000 × 8 workers). Round compute ≈ 4000 × 12 ms
+  ≈ 48 s/worker vs a broadcast of only ~3–6 s even at ~150k info-sets → **<15% overhead**, while
+  32k/round is a negligible slice of a 20M run so the discount-timing + write-floor bias stay
+  small. The old default `merge_every=2000` (16k/round) would push overhead to ~25–35% as the
+  blueprint fills — wasteful now that iters are 12 ms, not microseconds.
+- **`workers=8`** (or **7** if running `track_training.py` concurrently, so BR/LBR doesn't steal a
+  training core). Don't exceed physical cores — hyperthreads don't help pure-Python CFR and only
+  multiply the per-round pickle cost.
+- **`checkpoint_every=50000`** — ~1–2 rounds; DB writes are trivial next to 48 s rounds. (If using
+  the snapshot tracker at a 2M cadence, keep `checkpoint_every` a divisor of the snapshot interval
+  — snapshots can only land on checkpoint boundaries.)
+- **20M is a planning figure, not a target.** Stop when BR/LBR flattens (`track_training.py
+  --every 2000000`). The new scheme has *more* info-sets (betting expansion) but a ~3× *smaller*
+  postflop card-space, so per-info-set convergence is faster — expect the knee in the low tens of
+  millions. At ~5× parallel speedup, 20M ≈ **~13–14 h**.
 
 ---
 

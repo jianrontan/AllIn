@@ -86,10 +86,15 @@ def run_training(iterations, resume=None, checkpoint_every=1000,
     print(f"discount: alpha={trainer.alpha} gamma={trainer.gamma} "
           f"seed={seed if seed is not None else 'unset'}")
 
+    mode = 'parallel' if (workers and workers > 1) else 'single'
     start_iteration = 0
     if resume:
-        start_iteration = trainer.resume_from_db(db)
+        start_iteration = trainer.resume_from_db(db, mode=mode)
         print(f"Continuing from iteration {start_iteration}")
+    # Stamp the training mode so later resumes are mode-checked. Cross-mode
+    # resumes corrupt the Linear-CFR discount (single-thread vs parallel keep
+    # incompatible per-info-set clocks); resume_from_db refuses a known mismatch.
+    db.set_metadata('training_mode', mode)   # set_metadata json-encodes internally
 
     try:
         if workers and workers > 1:

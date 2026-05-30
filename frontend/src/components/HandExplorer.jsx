@@ -19,12 +19,12 @@ const DISCRETE = [
 // Preflop sizes are an absolute BB ladder (not pot fractions), so preflop sizing
 // is expressed as a raise-TO total in BB: the three trained opens, plus any
 // custom amount. Postflop uses free pot-fraction sizing.
-const PREFLOP_PRESETS = [2, 2.5, 3.5];               // raise-to totals in BB
+const PREFLOP_PRESETS = [2, 2.5, 3.5, 5];            // raise-to totals in BB (5 = xlarge open)
 
 // Postflop quick sizes as pot fractions; any custom % is allowed too. With
 // pseudo-harmonic translation the backend maps an off-grid size onto the trained
 // grid (⅓ / ⅔ / pot) and blends the responses, so any size returns a strategy.
-const POSTFLOP_PRESETS = [0.33, 0.5, 0.66, 0.75, 1.0, 1.25];
+const POSTFLOP_PRESETS = [0.33, 0.5, 0.66, 0.75, 1.0, 1.25, 1.5];
 
 // A bet/raise is a "raise" once someone has already put money in this street.
 const verbFor = (line) =>

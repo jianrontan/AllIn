@@ -7,14 +7,17 @@ const ACTION_LABELS = {
     bet_small: 'Bet — small (≈ ⅓ pot)',
     bet_medium: 'Bet — medium (≈ ⅔ pot)',
     bet_large: 'Bet — large (≈ pot)',
+    bet_xlarge: 'Open — xlarge (5 BB)',
+    bet_overbet: 'Bet — overbet (1.5× pot)',
     raise_small: 'Raise — small', raise_medium: 'Raise — medium',
     raise_large: 'Raise — large',
+    raise_overbet: 'Raise — overbet (1.5× pot)',
 };
 
 const actionLabel = (a) => ACTION_LABELS[a] || a;
 
 // Bracket size chars (action translation) -> human label.
-const CHAR_LABEL = { s: '⅓ pot', m: '⅔ pot', l: 'pot', a: 'all-in' };
+const CHAR_LABEL = { s: '⅓ pot', m: '⅔ pot', l: 'pot', o: '1.5× pot', x: '5 BB open', a: 'all-in' };
 
 const barColor = (a) => {
     if (a === 'fold') return 'bg-rose-500';

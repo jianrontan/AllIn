@@ -11,18 +11,49 @@ If the key format ever changes, it changes here and everywhere stays in sync.
 
 STREET_NAMES = ['preflop', 'flop', 'turn', 'river']
 
+# Fine preflop bucket -> coarse preflop class, for the postflop startBucket collapse
+# (imperfect recall). Imported lazily inside make_info_set_key to avoid any import
+# order coupling (card_abstractions imports nothing from cfr). See
+# card_abstractions.FINE_TO_COARSE / _build_fine_to_coarse for the rationale.
+_FINE_TO_COARSE = None
+
+
+def _coarse_class(fine_bucket):
+    """Collapse a fine preflop bucket id ('pf_<n>') to its coarse class id
+    ('pf_<m>', m in 0..NUM_PREFLOP_COARSE-1) for postflop keys. Idempotent on an
+    already-coarse id only if it happens to be a valid fine index; callers must pass
+    the FINE bucket (they all do -- card_abstractions.preflop_bucket returns fine)."""
+    global _FINE_TO_COARSE
+    if _FINE_TO_COARSE is None:
+        from ..abstractions.card_abstractions import FINE_TO_COARSE
+        _FINE_TO_COARSE = FINE_TO_COARSE
+    n = int(fine_bucket.split('_')[1])
+    return f"pf_{_FINE_TO_COARSE[n]}"
+
 # CFR action name -> single betting-pattern character.
+# 'x' = 4th preflop OPEN size (5 BB, open-only). 'o' = postflop overbet (1.5x pot,
+# bet or raise). 'a' = (now voluntary) all-in.
 ACTION_CHARS = {
     'check': 'k', 'call': 'c', 'fold': 'f',
     'bet_small': 's', 'bet_medium': 'm', 'bet_large': 'l',
     'raise_small': 's', 'raise_medium': 'm', 'raise_large': 'l',
+    'bet_xlarge': 'x',
+    'bet_overbet': 'o', 'raise_overbet': 'o',
     'allin': 'a',
 }
 
 
 def action_char(action):
-    """Map a CFR action name to its single betting-pattern character."""
-    return ACTION_CHARS.get(action, 'x')
+    """Map a CFR action name to its single betting-pattern character.
+
+    Raises ValueError on an unmapped action. Every legal grid action MUST be in
+    ACTION_CHARS; silently defaulting (this used to return 'x') would now alias the
+    real `bet_xlarge` char `'x'` and corrupt info-set keys. Off-grid / custom human
+    bets are mapped to a grid char by cfr/translation.py — never routed here."""
+    try:
+        return ACTION_CHARS[action]
+    except KeyError:
+        raise ValueError(f"action_char: unmapped action {action!r} (not a grid action)")
 
 
 def make_info_set_key(street, position, preflop_bucket, postflop_strength, bet_pattern):
@@ -31,15 +62,19 @@ def make_info_set_key(street, position, preflop_bucket, postflop_strength, bet_p
 
     street            : 0=preflop, 1=flop, 2=turn, 3=river
     position          : 'ip' (button/SB) or 'oop' (BB)
-    preflop_bucket    : the acting player's preflop bucket (e.g. 'pf_9')
+    preflop_bucket    : the acting player's FINE preflop bucket (e.g. 'pf_9',
+                        from card_abstractions.preflop_bucket). For POSTFLOP keys it
+                        is collapsed here to the coarse class (imperfect recall), so
+                        callers always pass the fine id and never choose.
     postflop_strength : the acting player's postflop strength bucket for this
                         street (ignored preflop, may be None)
     bet_pattern       : current-street betting pattern (e.g. 'm', 'km')
 
-    Preflop : {preflop_bucket}_{position}_{bet_pattern}
-    Postflop: {preflop_bucket}_{postflop_strength}_{position}_{street}_{bet_pattern}
+    Preflop : {fine_bucket}_{position}_{bet_pattern}
+    Postflop: {coarse_class}_{postflop_strength}_{position}_{street}_{bet_pattern}
     """
     if street == 0:
         return f"{preflop_bucket}_{position}_{bet_pattern}"
-    return (f"{preflop_bucket}_{postflop_strength}_{position}_"
+    coarse = _coarse_class(preflop_bucket)
+    return (f"{coarse}_{postflop_strength}_{position}_"
             f"{STREET_NAMES[street]}_{bet_pattern}")

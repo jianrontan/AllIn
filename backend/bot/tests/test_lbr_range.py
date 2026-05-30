@@ -3,7 +3,8 @@
 Validate BotRange (the exploiter's belief over the bot's hand) with an INJECTED
 fake blueprint, so the Bayesian update is deterministic and checkable:
 
-  fake bot: preflop buckets pf_10..pf_14 always raise_large; everything else folds.
+  fake bot: preflop buckets pf_10+ always raise_large; everything else folds.
+  (Fine scheme is 30 buckets pf_0..pf_29; 10 is just an arbitrary in-range threshold.)
 
 After observing the bot raise_large preflop, every surviving hand in the belief
 must be a pf_10+ hand (weak hands had P(raise_large)=0 -> zeroed). We also check

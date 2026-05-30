@@ -17,17 +17,23 @@ const PLAYER_ID_KEY = 'allin_player_id';
 const ACTION_VERB = {
     fold: 'Fold', check: 'Check', call: 'Call', allin: 'All-in',
     bet_small: 'Bet small', bet_medium: 'Bet medium', bet_large: 'Bet large',
+    bet_xlarge: 'Bet xlarge', bet_overbet: 'Overbet',
     raise_small: 'Raise small', raise_medium: 'Raise medium', raise_large: 'Raise large',
+    raise_overbet: 'Raise overbet',
+    // bet_xlarge is preflop-open-only; actionVerb maps a preflop bet_* to raise_*,
+    // so this entry is what the xlarge open actually renders as ("Raise xlarge").
+    raise_xlarge: 'Raise xlarge',
 };
 
 // Canonical display order. The backend's stack-constraint logic inserts
 // 'allin' wherever it lands in its list; this pins a stable order with
-// all-in always last, bets/raises ascending by size.
+// all-in always last, bets/raises ascending by size (overbet after large,
+// xlarge — the 4th preflop open — after large too).
 const ACTION_ORDER = {
     fold: 0, check: 1, call: 2,
-    bet_small: 3, bet_medium: 4, bet_large: 5,
-    raise_small: 6, raise_medium: 7, raise_large: 8,
-    allin: 9,
+    bet_small: 3, bet_medium: 4, bet_large: 5, bet_xlarge: 6, bet_overbet: 7,
+    raise_small: 8, raise_medium: 9, raise_large: 10, raise_overbet: 11,
+    allin: 12,
 };
 
 const sortedActions = (actions) =>

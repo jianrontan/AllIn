@@ -22,7 +22,13 @@ RANK_VAL = {r: i for i, r in enumerate(RANKS)}
 
 SIMULATIONS = 10000
 RANDOM_SEED = 42
-NUM_BUCKETS = 15
+# Decoupled preflop scheme: FINE buckets identify the hand for preflop keys; COARSE
+# classes are the postflop startBucket (imperfect recall). card_abstractions.py DERIVES
+# both maps from the committed _PREFLOP_EQUITY table via the same assign_buckets formula,
+# so this script is the equity GENERATOR; these counts must match
+# card_abstractions.NUM_PREFLOP_BUCKETS / NUM_PREFLOP_COARSE.
+NUM_BUCKETS = 30          # fine
+NUM_COARSE = 10           # coarse
 
 
 def to_phev(card):
@@ -73,24 +79,18 @@ def compute_equities(hand_reps):
     return results
 
 
-TOP_EQUITY_THRESHOLD = 0.75  # equity >= threshold → pf_14 (TT+)
-
-
 def assign_buckets(results, n_buckets):
-    # pf_14: hardcoded top bucket for hands with equity >= TOP_EQUITY_THRESHOLD (TT+)
-    # Remaining hands: equal-quantile into pf_0 through pf_(n_buckets-2)
-    top = {k: v for k, v in results.items() if v >= TOP_EQUITY_THRESHOLD}
-    rest = sorted([(k, v) for k, v in results.items() if v < TOP_EQUITY_THRESHOLD],
-                  key=lambda x: x[1])
-    n_rest_buckets = n_buckets - 1
-    total = len(rest)
+    # Pure equal-frequency quantile over all 169 hands by equity (ascending):
+    # pf_0 weakest .. pf_(n_buckets-1) strongest, ~169/n_buckets hands each. Called
+    # for BOTH the fine (30) and coarse (10) maps; card_abstractions.py derives both
+    # from the committed equity table via this same formula. The strongest bucket
+    # separates naturally (JJ/QQ/KK/AA), so no hardcoded top-bucket special case.
+    ranked = sorted(results.items(), key=lambda x: x[1])
+    total = len(ranked)
     bucket_map = {}
-    for i, (hand, eq) in enumerate(rest):
-        bucket = int(i * n_rest_buckets / total)
-        bucket = min(bucket, n_rest_buckets - 1)
+    for i, (hand, eq) in enumerate(ranked):
+        bucket = min(int(i * n_buckets / total), n_buckets - 1)
         bucket_map[hand] = f"pf_{bucket}"
-    for hand in top:
-        bucket_map[hand] = f"pf_{n_buckets - 1}"
     return bucket_map
 
 
@@ -119,15 +119,22 @@ def main():
         names = ', '.join(h for h, _ in hands)
         print(f"  {b}: [{eq_range}]  {names}")
 
-    print("\n--- Paste this into card_abstractions.py ---")
+    coarse_map = assign_buckets(results, NUM_COARSE)
+    print("\n--- Coarse class summary (postflop startBucket) ---")
+    cbuckets = defaultdict(list)
+    for hand, b in coarse_map.items():
+        cbuckets[int(b.split('_')[1])].append((hand, results[hand]))
+    for b in sorted(cbuckets, reverse=True):
+        hands = sorted(cbuckets[b], key=lambda x: -x[1])
+        print(f"  class {b}: {', '.join(h for h, _ in hands)}")
+
+    print("\n--- Paste ONLY _PREFLOP_EQUITY into card_abstractions.py ---")
+    print("# card_abstractions.py DERIVES the fine (30) and coarse (10) bucket maps")
+    print("# from this table at import (via _quantile_buckets), so there is no bucket")
+    print("# literal to paste -- only the equity table below.")
     print("_PREFLOP_EQUITY = {")
     for hand, eq in sorted(results.items()):
         print(f"    '{hand}': {eq:.4f},")
-    print("}")
-    print()
-    print("_PREFLOP_BUCKET_MAP = {")
-    for hand, bucket in sorted(bucket_map.items()):
-        print(f"    '{hand}': '{bucket}',")
     print("}")
 
 

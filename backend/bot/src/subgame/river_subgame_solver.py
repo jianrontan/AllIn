@@ -203,7 +203,7 @@ class RiverSubgameSolver(BlueprintStrategy):
         # let decide() fall back to the blueprint cleanly.
         if hero[row] <= 1e-12:
             raise ValueError("bot hand has ~zero hero reach; solve can't represent it")
-        node = self._navigate(tree, river_path)
+        node, edge_path = self._navigate(tree, river_path)
         if node is None or node.terminal:
             raise ValueError("river path did not land on a decision node")
         if node.player != bot_seat:
@@ -216,23 +216,33 @@ class RiverSubgameSolver(BlueprintStrategy):
 
         dist = read_action_strategy(cfr, node, hole, ba, idx)
         # Carry the solve context so decide() can run the EV gate without re-solving.
+        # The EV gate needs the reaches INTO this node (root reaches conditioned on
+        # the realized river betting), not the root reaches -- otherwise the villain
+        # range at a non-root node still includes hands that wouldn't have taken the
+        # line, biasing the deviate/keep decision.
+        node_reach0, node_reach1 = cfr.reach_into(edge_path, reach0, reach1)
         info.update({'cfr': cfr, 'ba': ba, 'idx': idx,
-                     'reach0': reach0, 'reach1': reach1})
+                     'reach0': node_reach0, 'reach1': node_reach1})
         return dist, node, info
 
     # -- navigation along the realized river path ------------------------------
     def _navigate(self, tree, river_path):
         """Walk from the root following `river_path`, snapping sized actions to the
-        nearest tree edge (off-grid human bets map to the closest menu size)."""
+        nearest tree edge (off-grid human bets map to the closest menu size).
+        Returns (node, edge_indices) where edge_indices are the child indices taken
+        from the root (used to condition reaches into the node for the EV gate).
+        Returns (None, _) if the path cannot be followed."""
         node = tree.root
+        edges = []
         for spec in river_path:
             if node.terminal:
-                return None
+                return None, edges
             i = self._match_edge(node, spec)
             if i is None:
-                return None
+                return None, edges
+            edges.append(i)
             node = node.children[i]
-        return node
+        return node, edges
 
     @staticmethod
     def _match_edge(node, spec):

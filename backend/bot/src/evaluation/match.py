@@ -31,16 +31,28 @@ _SUITS = ['H', 'D', 'C', 'S']
 _FULL_DECK = [s + r for r in _RANKS for s in _SUITS]
 
 
-def _legal_actions(to_call, num_aggr, stack, pot):
+def _legal_actions(street, to_call, num_aggr, stack, pot):
+    """Mirror poker_game.get_legal_actions using the SAME engine action NAMES so a
+    blueprint lookup hits the stored keys (the DB stores opens as bet_*, NOT raise_*):
+      * preflop OPEN (street 0, num_aggr==0) -> bet_* on the 4-size BB ladder (incl
+        xlarge);  preflop 3-bet/4-bet (num_aggr>=1) -> raise_* (3 pot-relative sizes);
+      * postflop first-in -> bet_* incl overbet;  facing a bet -> raise_* incl overbet.
+    Voluntary all-in is always available when a shove is a genuine raise."""
     can_aggr = num_aggr < MAX_AGGR_PER_STREET and stack > max(0, to_call)
     if to_call > 0:
         legal = ['fold', 'call']
-        if can_aggr:
-            legal += ['raise_small', 'raise_medium', 'raise_large', 'allin']
+        if street == 0 and num_aggr == 0:
+            sized = ['bet_small', 'bet_medium', 'bet_large', 'bet_xlarge']
+        elif street == 0:
+            sized = ['raise_small', 'raise_medium', 'raise_large']
+        else:
+            sized = ['raise_small', 'raise_medium', 'raise_large', 'raise_overbet']
     else:
         legal = ['check']
-        if can_aggr:
-            legal += ['bet_small', 'bet_medium', 'bet_large', 'allin']
+        sized = (['bet_small', 'bet_medium', 'bet_large', 'bet_xlarge'] if street == 0
+                 else ['bet_small', 'bet_medium', 'bet_large', 'bet_overbet'])
+    if can_aggr:
+        legal += sized + ['allin']
     return legal
 
 
@@ -101,7 +113,7 @@ class BlueprintPlayer:
             key = make_info_set_key(
                 street, pos, self.cards.get_bucket(list(hand), None),
                 self.cards.get_bucket(list(hand), vis), pattern)
-        legal = _legal_actions(to_call, num_aggr, stack, pot)
+        legal = _legal_actions(street, to_call, num_aggr, stack, pot)
         probs = self._restricted(key, tuple(legal))
         idx = self.rng.choices(range(len(legal)), weights=probs)[0]
         action = legal[idx]

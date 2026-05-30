@@ -181,6 +181,25 @@ class RiverCFR:
             vals[:, a] = cv0 if p == 0 else cv1
         return vals
 
+    def reach_into(self, edge_indices, reach0, reach1):
+        """Reaches into the node reached by following `edge_indices` (child indices
+        from the root), each player's root reach multiplied by their AVERAGE-strategy
+        probability of the action taken at each node they own along the path. This is
+        the reach the EV gate needs at a non-root node: a villain hand that would
+        rarely take the realized line is correctly down-weighted, instead of using
+        the (unconditioned) root reach. Mirrors the reach split in _eval/_cfr."""
+        r0 = np.asarray(reach0, float).copy()
+        r1 = np.asarray(reach1, float).copy()
+        node = self.tree.root
+        for a in edge_indices:
+            strat = self.average_strategy(node.node_id)
+            if node.player == 0:
+                r0 = r0 * strat[:, a]
+            else:
+                r1 = r1 * strat[:, a]
+            node = node.children[a]
+        return r0, r1
+
     def warm_start(self, seed_strategies, weight):
         """Seed the average-strategy accumulator with `weight` worth of a prior
         strategy per node (e.g. the blueprint mapped onto the tree). An

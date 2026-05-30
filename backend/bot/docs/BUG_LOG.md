@@ -10,6 +10,68 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-008 — LBR victim model drifted from the deployed bot: under-counts off-grid exploitability
+
+| | |
+|---|---|
+| **Date** | 2026-05-29 |
+| **Area** | Measurement (`evaluation/lbr.py`), action translation (`cfr/translation.py`) |
+| **Severity** | High (directional bias in the scoreboard, not a play-time bug) |
+| **Status** | Fixed |
+
+**Summary.** The LBR harness's model of how the bot *responds* to an off-grid bet had
+diverged from the actual deployed bot in two places — exactly the off-tree regime LBR
+exists to measure — so LBR **understated** the exploitability of off-grid betting lines.
+This is the "BotRange is the older sibling of RangeTracker, watch for drift" caution in
+CLAUDE.md coming true. Found by a 3-agent review of the eval harnesses (the CFR trainer and
+BR harness were clean).
+
+### Symptom
+No crash — a silently optimistic LBR number. An off-tree exploiter making big/odd bets
+would in reality get **over-folded** by the bot, but LBR scored those lines as if the bot
+**called**, so the measured lower bound on exploitability was too low precisely where the
+exploiter should shine.
+
+### Root cause (two drifts, same theme: victim ≠ deployed bot)
+1. **Inverted untrained-bracket fold model (the critical one).** When LBR makes an off-grid
+   bet, it translates onto the two bracketing grid sizes and blends the bot's per-hand fold
+   probability. For an **untrained** bracket, `per_hand_action_prob` returned `0.0` fold
+   (i.e. modelled the bot calling its whole range). But the deployed bot routes an untrained
+   bracket's weight to **fold** (`translation.blend(missing_action='fold')` via
+   `bot_strategy._blend_lookup`, shipped earlier this session). So LBR modelled a call where
+   the bot folds → wrong-direction bias.
+2. **Preflop wasn't translated at all.** Postflop LBR pseudo-harmonic-translated off-grid
+   bets, but preflop used snap-to-nearest (`categorize_bet_size`), while the deployed bot
+   translates **every** street. LBR makes off-grid preflop raises, so the preflop victim was
+   a strawman.
+
+### The fix
+- `per_hand_action_prob` gained a `missing=` param (per-hand value when the bracket key is
+  *untrained*, distinct from "trained but this action has 0 mass"). The fold query passes
+  `missing=1.0`, mirroring the deployed bot's fold-routing.
+- Preflop now translates through a shared `translation.preflop_grid(...)` helper — the SAME
+  grid definition the live API (`strategy_api._preflop_grid`) uses — then blends like
+  postflop. Centralized the size→char map as `sizing.SIZE_CHAR` (one copy, imported by both
+  the API and LBR) and routed the API's `_preflop_grid` through the shared helper too.
+
+### Why it wasn't caught earlier
+The two siblings (`BotRange`/`RangeTracker`, LBR-victim/`bot_strategy`) were never merged, and
+the fold-routing fallback was added to the *deployed* path this session without updating the
+*measurement* path. No test compared the victim model to the deployed bot on an off-grid line.
+
+### Retrain impact
+None on training or the served bot — measurement-only. But any LBR number taken **before**
+this fix understates off-grid exploitability; only post-fix LBR is trustworthy for the
+upcoming retrain's before/after.
+
+### Lessons
+Every "the deployed bot does X off-tree" change must update the **victim model** in lockstep,
+or the scoreboard lies in the one regime it's meant to police. Shared helpers (`preflop_grid`,
+`SIZE_CHAR`) are the same anti-drift discipline as `keys.py`/`sizing.py` — extend them, don't
+re-implement.
+
+---
+
 ## BUG-007 — The new bot loses to the old one: a preflop action-grid coverage hole (not a training bug)
 
 | | |

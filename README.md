@@ -94,7 +94,7 @@ SQLite checkpoint → automatic active-blueprint selection → API inference
 
 ### 🤖 Strategy Engine
 - **Fast inference**: direct blueprint lookup from SQLite, no per-decision search.
-- **Distribution-aware abstractions**: 15 preflop + 12/12/10 potential-aware postflop buckets (EMD-clustered equity distributions).
+- **Distribution-aware abstractions**: 30-fine/10-coarse decoupled preflop + 20/16/10 potential-aware postflop buckets (EMD-clustered equity distributions).
 - **Mixed-strategy output**: probability distributions over fold / call / bet /
   raise / all-in, sampled at play time.
 - **Honest "unknown" handling**: situations never reached in training report

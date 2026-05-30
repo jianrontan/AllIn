@@ -50,9 +50,10 @@ class ActionAbstraction:
         # PyPokerEngine path; the LIVE bot maps off-grid bets via
         # cfr/translation.py (pseudo-harmonic), not this function.
         def _bucket(value, sizes):
-            lo = (sizes['small'] + sizes['medium']) / 2.0
-            hi = (sizes['medium'] + sizes['large']) / 2.0
-            return 'small' if value <= lo else ('medium' if value <= hi else 'large')
+            # Nearest size by value. Handles the 4-size sets (xlarge open / overbet);
+            # the size-name's first letter is its pattern char (s/m/l/o/x), which the
+            # caller uses via bet_category[0].
+            return min(sizes.items(), key=lambda kv: abs(kv[1] - value))[0]
 
         if street == 'preflop':
             bet_raise_count = sum(
@@ -97,9 +98,24 @@ class ActionAbstraction:
 
                 needs_allin = False
                 added_sized = False
-                for size_name in ('small', 'medium', 'large'):
+                # Use the SAME size set + action-name kind as the engine: preflop
+                # OPEN -> bet_* on the 4-size BB ladder (incl xlarge); preflop
+                # 3-bet/4-bet -> raise_* (3 sizes); postflop -> bet_/raise_ incl
+                # overbet. (PyPokerEngine reports an open as a 'raise' over the BB,
+                # but the blueprint stores opens as bet_*, so force the kind here.)
+                street_name = round_state.get('street', 'preflop')
+                if street_name == 'preflop':
+                    ah = round_state.get('action_histories', {}).get('preflop', [])
+                    br = sum(1 for a in ah if a.get('action', '').upper() in ('BET', 'RAISE'))
+                    if br == 0:
+                        kind, size_names = 'bet', list(preflop_open_chips())
+                    else:
+                        kind, size_names = 'raise', ['small', 'medium', 'large']
+                else:
+                    kind, size_names = action_type, list(POSTFLOP_BET_MULT)
+                for size_name in size_names:
                     target = self._calculate_target_amount(
-                        size_name, action_type, game_state, round_state)
+                        size_name, kind, game_state, round_state)
                     cost = target - player_contribution  # chips added now
                     if cost <= 0 or target < min_amt:
                         # below the minimum legal raise — not a distinct size
@@ -107,7 +123,7 @@ class ActionAbstraction:
                     if cost >= player_remaining or (max_amt is not None and target >= max_amt):
                         needs_allin = True
                     else:
-                        cfr_actions.append(f"{action_type}_{size_name}")
+                        cfr_actions.append(f"{kind}_{size_name}")
                         added_sized = True
 
                 # Short-stack safety net: PyPokerEngine offered a legal raise,

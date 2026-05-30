@@ -1,7 +1,7 @@
 # backend/bot/src/bot/game_adapter.py
 from ..abstractions.card_abstractions import CardAbstraction
 from ..abstractions.action_abstractions import ActionAbstraction
-from ..cfr.keys import make_info_set_key, STREET_NAMES
+from ..cfr.keys import make_info_set_key, action_char, STREET_NAMES
 
 
 class GameAdapter:
@@ -71,12 +71,12 @@ class GameAdapter:
         return pattern
 
     def cfr_action_to_char(self, cfr_action):
-        """Convert CFR action to single character"""
-        mapping = {
-            'check': 'k', 'call': 'c', 'fold': 'f',
-            'bet_small': 's', 'bet_medium': 'm', 'bet_large': 'l',
-            'raise_small': 's', 'raise_medium': 'm', 'raise_large': 'l',
-            'allin': 'a',
-        }
-        return mapping.get(cfr_action, 'x')
+        """Convert CFR action to single character.
+
+        Routes through keys.action_char (single source of truth) so this
+        PyPokerEngine path can't drift from the trainer / live key format and
+        correctly handles bet_xlarge ('x') / bet_overbet / raise_overbet ('o').
+        Defaulting to 'x' here used to alias the real xlarge-open char and
+        corrupt info-set keys."""
+        return action_char(cfr_action)
 

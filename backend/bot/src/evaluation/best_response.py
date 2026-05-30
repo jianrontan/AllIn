@@ -51,8 +51,17 @@ hand is blocked by exactly 46 + 46 - 1 = 91 villain hands, leaving 990
 compatible. That count is constant across hero hands, so the per-hero
 normalization is just a single division by 990 at the end.
 
-This is a FULL-GAME best response (hero uses exact cards), i.e. real
-exploitability, not merely exploitability inside the abstraction.
+Scope of the "best response" (read before trusting the number)
+--------------------------------------------------------------
+The hero best-responds with EXACT cards (no card bucketing) and over the FULL
+public betting tree the engine permits -- but it chooses among the engine's
+ABSTRACT bet sizes (the grid in sizing.py), not arbitrary chip amounts. So the
+result is exact on cards and tree structure but RESTRICTED on sizing: it is a
+LOWER BOUND on true exploitability, not the exact value. A size-cheating
+adversary (off-grid bets) could do strictly better -- LBR (lbr.py) is the
+off-tree complement that probes exactly that. Treat this number as "exploitability
+reachable within the betting abstraction": good for tracking convergence and
+comparing blueprints, but do not over-claim it as the true game-theoretic value.
 """
 import random
 import numpy as np
