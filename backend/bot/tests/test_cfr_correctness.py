@@ -39,7 +39,11 @@ def run_short_training(iterations=200, seed=42):
 # ===========================================================================
 
 def test_cfr_cumulative_regrets_nonnegative():
-    """CFR+ guarantee: all cumulative regrets must be >= 0."""
+    """CFR+ guarantee: all SINGLE-THREAD / post-merge cumulative regrets are >= 0.
+    run_short_training uses the single-thread path (discount_enabled=True), where
+    the write-floor runs. A parallel WORKER mid-chunk intentionally holds raw
+    signed regrets (Fix #2); the floor is then read-time (get_strategy) + the
+    master's per-round floor -- so this invariant is single-thread-only."""
     trainer = run_short_training(200)
     violations = []
     for key, info_set in trainer.info_sets.items():

@@ -127,8 +127,96 @@ function BotRead({ read }) {
     );
 }
 
+// One {action: prob} distribution as a stack of labelled bars (debug overlay).
+function DistBars({ rows }) {
+    if (!rows || rows.length === 0) return <div className="text-neutral-700">—</div>;
+    return (
+        <div className="space-y-0.5">
+            {rows.map(([a, p]) => (
+                <div key={a} className="flex items-center gap-2">
+                    <span className="w-28 shrink-0 truncate text-neutral-300" title={a}>{a}</span>
+                    <span className="flex-1 h-1.5 rounded bg-neutral-800 overflow-hidden">
+                        <span className="block h-full bg-emerald-500"
+                            style={{ width: `${Math.round((p || 0) * 100)}%` }} />
+                    </span>
+                    <span className="w-9 text-right tabular-nums text-neutral-500">
+                        {Math.round((p || 0) * 100)}%
+                    </span>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+// Debug overlay: the bot's per-decision trace this hand. For each bot action it
+// shows the blueprint info-set key the bot was queried with, the strategy stored
+// there, the action chosen, and — on the river — the subgame solver's solved
+// strategy + EV gate. SPOILER: the info-set key encodes the bot's card bucket, so
+// this lives behind a toggle and is meant for inspection, not mid-hand peeking.
+function BotDebug({ debug }) {
+    if (!debug || debug.length === 0) {
+        return <div className="text-xs text-neutral-600">No bot decisions yet this hand.</div>;
+    }
+    const dist = (d) => Object.entries(d || {})
+        .filter(([, p]) => p > 0.0001)
+        .sort((a, b) => b[1] - a[1]);
+
+    const badge = (s) => {
+        if (s.mode === 'river_solver')
+            return s.deviated
+                ? ['solver · deviated', 'bg-fuchsia-900/60 text-fuchsia-200']
+                : ['solver · kept BP', 'bg-sky-900/60 text-sky-200'];
+        if (s.mode === 'allin_guard') return ['all-in guard', 'bg-amber-900/60 text-amber-200'];
+        if (s.mode === 'fallback') return ['solver fallback', 'bg-rose-900/60 text-rose-200'];
+        return ['blueprint', 'bg-neutral-800 text-neutral-400'];
+    };
+
+    return (
+        <div className="space-y-3">
+            {/* Most recent decision first (newest on top). */}
+            {debug.slice().reverse().map((r, i) => {
+                const s = r.solver;
+                const [label, cls] = s ? badge(s) : [null, null];
+                return (
+                    <div key={i}
+                        className="rounded-lg border border-neutral-800 bg-black/30 p-2.5 text-xs">
+                        <div className="flex items-center justify-between mb-1.5">
+                            <span className="uppercase tracking-wider text-neutral-500">{r.street}</span>
+                            {s && (
+                                <span className={'px-1.5 py-0.5 rounded text-[10px] font-semibold ' + cls}>
+                                    {label}
+                                </span>
+                            )}
+                        </div>
+                        <div className="font-mono text-[11px] text-emerald-300 break-all mb-1.5">
+                            {r.infoSetKey}
+                        </div>
+                        <div className="text-neutral-500 mb-1">
+                            chose <span className="text-neutral-200 font-semibold break-all">{r.chosen}</span>
+                        </div>
+                        <div className="text-neutral-600 mb-0.5">blueprint strategy</div>
+                        <DistBars rows={dist(r.strategy)} />
+                        {s && s.mode === 'river_solver' && (
+                            <>
+                                <div className="text-neutral-600 mt-2 mb-0.5">solved (river subgame)</div>
+                                <DistBars rows={dist(s.solvedStrategy)} />
+                                <div className="mt-1.5 text-[11px] text-neutral-500 tabular-nums leading-relaxed">
+                                    EV solved {s.evSolved} vs BP {s.evBaseline}
+                                    {' '}(Δ {s.evDelta}, margin {s.evMargin})<br />
+                                    {s.iters} iters · gap {s.gap}{s.converged ? ' · converged' : ''}
+                                </div>
+                            </>
+                        )}
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
 function AiGame() {
     const [view, setView] = useState(null);
+    const [showDebug, setShowDebug] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
     const [customAmt, setCustomAmt] = useState('');
@@ -275,11 +363,20 @@ function AiGame() {
                     <Link to="/" className="text-sm text-amber-400 hover:text-amber-300">
                         ← Home
                     </Link>
-                    <span className={'text-sm font-semibold tabular-nums ' +
-                        (net > 0 ? 'text-emerald-400'
-                            : net < 0 ? 'text-rose-400' : 'text-neutral-400')}>
-                        Net&nbsp;&nbsp;{fmtBBSigned(net)} BB
-                    </span>
+                    <div className="flex items-center gap-3">
+                        <button onClick={() => setShowDebug((v) => !v)}
+                            className={'text-xs px-2 py-1 rounded-lg border transition-colors ' +
+                                (showDebug
+                                    ? 'border-fuchsia-600 text-fuchsia-300 bg-fuchsia-950/40'
+                                    : 'border-neutral-700 text-neutral-400 hover:text-neutral-200')}>
+                            {showDebug ? 'Debug ✓' : 'Debug'}
+                        </button>
+                        <span className={'text-sm font-semibold tabular-nums ' +
+                            (net > 0 ? 'text-emerald-400'
+                                : net < 0 ? 'text-rose-400' : 'text-neutral-400')}>
+                            Net&nbsp;&nbsp;{fmtBBSigned(net)} BB
+                        </span>
+                    </div>
                 </div>
 
                 <h1 className="mt-2 text-2xl font-bold">Play With AI</h1>
@@ -448,8 +545,22 @@ function AiGame() {
 
                 </div>{/* end main column */}
 
-                {/* Sidebar: bot read + action log */}
+                {/* Sidebar: bot read + action log (+ debug overlay when toggled) */}
                 <aside className="w-full lg:w-80 lg:flex-shrink-0 flex flex-col gap-7">
+
+                {/* Bot debug overlay — info-set keys + river-solver internals */}
+                {showDebug && (
+                    <div>
+                        <h4 className="text-xs uppercase tracking-wider text-neutral-500 mb-1">
+                            Bot debug
+                        </h4>
+                        <p className="text-[11px] text-neutral-600 mb-2">
+                            Info-set keys &amp; solver internals — reveals the bot&rsquo;s
+                            hand bucket (spoiler).
+                        </p>
+                        <BotDebug debug={view.botDebug} />
+                    </div>
+                )}
 
                 {/* Bot's read of your hand (range tracker) */}
                 {!handOver && <BotRead read={view.botRead} />}

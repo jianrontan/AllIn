@@ -10,6 +10,125 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-010 — Validation harness gated on `visit_count`, comparing zero keys (a near-miss false-pass)
+
+| | |
+|---|---|
+| **Date** | 2026-06-01 |
+| **Area** | Tooling (`scripts/validate_parallel_merge.py`) |
+| **Severity** | Medium (measurement tool; nearly produced a false "all clear") |
+| **Status** | Fixed |
+
+**Summary.** The harness written to *validate* BUG-009's fix filtered the info-sets it compares
+on `visit_count >= min_visits`. But `visit_count` counts **iterations** in single-thread and
+**merge-rounds** in parallel — and a 200k-iter parallel run has only ~7 rounds — so every
+parallel key failed the threshold and the harness compared **0 keys**, printing "No shared
+high-traffic info-sets" after a 44-minute run.
+
+### Symptom
+A full-length run that produced a real, correct speedup number (3.93×) but **no** jam-bias
+comparison — the one number the run existed to produce. Crucially, it failed *loud* ("No shared
+info-sets") rather than silently emitting a spurious 0.0 bias; a slightly different gate could
+have reported a misleading "looks fine."
+
+### Root cause
+`visit_count` is an overloaded clock (documented in `blueprint_trainer.resume_from_db`'s cross-mode
+guard, but the implication for *cross-mode comparison* was missed). Single-thread bumps it once per
+iteration; the parallel master bumps it once per merge round (`merge_round`). They are not
+comparable magnitudes, so any fixed visit threshold that's meaningful for one mode excludes the
+other entirely.
+
+### The fix
+Gate on **cumulative-strategy mass** (`sum(info.cumulative_strategy.values()) >= --min-mass`),
+which accumulates comparably in both modes — the same noise filter `scripts/test_merge_bias.py`
+already used. Re-run compared 22,092 shared keys and produced the bias number (+0.0014).
+
+### Why it wasn't caught earlier
+The harness was smoke-tested only at tiny N where, by luck, single-thread `visit_count` was also
+small — the gate happened to pass a few keys, hiding the cross-mode incompatibility that only
+appears once `merge_every*workers` makes rounds ≪ iterations.
+
+### Retrain impact
+None (tooling only).
+
+### Lessons
+A validation harness needs its own sanity check: "did it actually compare a non-zero, plausible
+number of items?" An overloaded field (`visit_count` = iterations *or* rounds) is a cross-mode
+trap — when comparing two modes, filter on a quantity defined identically in both.
+
+---
+
+## BUG-009 — Parallel CFR+ worker-local flooring biased the blueprint toward high-variance actions
+
+| | |
+|---|---|
+| **Date** | 2026-06-01 |
+| **Area** | Training (`cfr/parallel_trainer.py`, `cfr/blueprint_trainer.py`) |
+| **Severity** | High (corrupted the served blueprint — the bot over-jammed) |
+| **Status** | Fixed (validated at scale) |
+
+**Summary.** In data-parallel MCCFR+, each worker ran the full single-thread `cfr()`, which floors
+cumulative regret at 0 on **every write** (canonical CFR+). Inside a worker that floor clamped a
+losing action's negative regret to 0 *before the master ever saw it*, so a negative regret from one
+worker could never **cancel** a positive regret from another worker within the same merge round.
+The result was a bounded **upward bias on high-variance actions** (all-in / jam) that grew with
+`workers × merge_every` — a *bias*, not a convergence gap, so more iterations never fixed it.
+
+### Symptom
+The served (parallel-trained) bot **over-jammed** — preflop and low-SPR flop — and the behavior
+didn't improve with +10M more iterations. An A/B over `merge_every` (the diagnosis's TEST 1)
+measured the large-round arm jamming ~1.22× aggregate, up to 5.5× at marginal keys
+(e.g. `pf_28_oop_cmm` 0.563 vs 0.160).
+
+### Walkthrough (why one-sided flooring inflates)
+A high-variance action gets a big win in one worker (+30) and a big loss in another (−30) the same
+round; true net 0.
+- **Buggy path:** worker 2 floors its −30 to 0 locally → master sums +30 and 0 → +30. The action
+  keeps large positive regret → over-played.
+- **Correct path:** workers report raw +30 and −30 → master sums to 0, then applies its single
+  per-round floor → 0. Cancellation preserved.
+
+### Root cause
+The CFR+ write-floor belongs **once**, at the boundary where contributions are summed — not inside
+every worker. `discount_enabled=False` (worker mode) already meant "skip the per-iteration discount;
+the master applies a block discount"; the floor should have been bundled into that same split and
+wasn't.
+
+### The fix
+In `cfr()`'s traverser regret update, apply the `max(0.0, prior+regret)` write-floor **only when
+`discount_enabled`** (single-thread); in worker mode store the **raw signed sum**. The master's
+`merge_round` keeps its existing per-round `max(0.0, decay·base + increment)` floor, so raw worker
+deltas cancel *before* that single floor and the global cumulative still stays ≥ 0. Read-time
+flooring in `get_strategy` is unchanged, so a worker's own within-chunk regret matching still floors
+correctly (it just carries raw debt within a chunk → vanilla-CFR re-activation within the chunk,
+bounded and reset every merge).
+
+### Why it wasn't caught earlier
+The parallel path was validated by info-set *overlap* and normalization, never by a *bias* or
+*agreement-with-single-thread* measurement — and the floor lived in shared `cfr()` code that "looked
+obviously correct" in single-thread. The earlier framing in the docs even had it backwards
+(blamed the *master* floor); a first fix attempt wrongly deleted the master floor and was reverted
+once `blueprint_trainer.py`'s line-251 write-floor was confirmed as the real CFR+ site.
+
+### Retrain impact
+**Retrain required to benefit.** The fix changes what parallel training stores; existing
+parallel-trained blueprints (incl. the served `blueprint_par_*`) carry the bias and should be
+retrained. Single-thread blueprints were never affected. Validated at scale (200k iters/arm,
+`merge_every=2000`, 16 workers): jam bias (parallel − single) dropped to **+0.0014** (0.2941 vs
+0.2955 over 10,804 jam-action keys) — statistically gone — at a 3.76× speedup. Bit-identity is not
+expected (different RNG streams); the bias-relevant aggregate is what's validated.
+
+### Lessons
+An idempotent-looking op (flooring at 0) is **not** distributive over a sum when applied per-shard:
+`Σ max(0, xᵢ) ≠ max(0, Σ xᵢ)` whenever any `xᵢ < 0`. Any reduce-from-workers design must apply such
+clamps **once at the merge**, not inside each worker. And "it's a bias, not variance" is the tell
+that more iterations won't save you — measure agreement-with-the-oracle, not just convergence.
+Tests now lock both directions: `test_merge_cross_worker_cancellation` (raw deltas cancel) and
+`test_floor_bias_direction_old_inflates_high_variance` (a millisecond regression re-creating the old
+per-worker floor and asserting it inflates), so reintroducing the worker floor fails CI instantly.
+
+---
+
 ## BUG-008 — LBR victim model drifted from the deployed bot: under-counts off-grid exploitability
 
 | | |

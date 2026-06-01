@@ -242,13 +242,24 @@ class BlueprintTrainer:
             node_value = sum(strategy[i] * own_values[i]
                              for i in range(len(legal_actions)))
 
-            # Accumulate this visit's regret (CFR+ floors at 0). The discount
-            # discount was already applied once at the first visit above; no
-            # reach weighting — external sampling handles opponent reach.
+            # Accumulate this visit's regret. The discount was already applied once
+            # at the first visit above; no reach weighting — external sampling
+            # handles opponent reach.
+            #
+            # CFR+ floor: single-thread floors on every write (canonical CFR+).
+            # WORKER mode (discount_enabled=False) stores the RAW signed sum instead
+            # (Fix #2): the master applies the CFR+ floor once per merge round, and a
+            # raw negative increment must survive the worker so it can cancel another
+            # worker's positive one in merge_round before that single floor. Flooring
+            # here too would discard it -> the documented upward bias on high-variance
+            # actions. get_strategy still floors at read, so this worker's own
+            # within-chunk regret matching is unaffected by the unfloored store.
             for i, action in enumerate(legal_actions):
                 regret = own_values[i] - node_value
                 prior = info_set.cumulative_regrets.get(action, 0.0)
-                info_set.cumulative_regrets[action] = max(0.0, prior + regret)
+                total = prior + regret
+                info_set.cumulative_regrets[action] = (
+                    max(0.0, total) if self.discount_enabled else total)
 
             # Return value back in P0's perspective.
             return sign * node_value

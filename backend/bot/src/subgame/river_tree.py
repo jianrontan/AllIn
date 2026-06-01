@@ -47,7 +47,8 @@ class RiverNode:
     """A node in the river tree. Decision nodes carry parallel `actions`/`children`
     lists; terminals carry the pot/contribution descriptor the kernel needs."""
     __slots__ = ('terminal', 'player', 'to_call', 'pot_mid', 'sc', 'actions',
-                 'children', 'node_id', 'final_pot', 'contrib', 'folder')
+                 'children', 'node_id', 'agg', 'last_inc', 'final_pot', 'contrib',
+                 'folder')
 
     def __init__(self, terminal):
         self.terminal = terminal
@@ -59,6 +60,11 @@ class RiverNode:
         self.actions = []           # list of action labels (str)
         self.children = []          # parallel list of RiverNode
         self.node_id = -1           # dense index among decision nodes (for CFR tables)
+        # aggression budget + min-raise baseline AT this node, stored so a
+        # realized off-grid edge can be spliced in later (nested solving) and its
+        # subtree built with the correct agg/min-raise (see RiverTree.inject_realized_edge).
+        self.agg = 0
+        self.last_inc = 0.0
         # terminal-node fields
         self.final_pot = 0.0        # total chips contested at showdown/fold
         self.contrib = (0.0, 0.0)   # each seat's TOTAL invested (P/2 + river chips)
@@ -137,6 +143,8 @@ class RiverTree:
         node.to_call = to_call
         node.pot_mid = pot_mid
         node.sc = (sc[0], sc[1])
+        node.agg = agg
+        node.last_inc = last_inc
         node.node_id = len(self.decision_nodes)
         self.decision_nodes.append(node)
 
@@ -217,6 +225,70 @@ class RiverTree:
             # falls out naturally (their stack can't afford a raise over the shove).
             add('allin', self._build(other, child_sc, agg + 1, max(inc, last_inc),
                                      prev_check=False))
+
+
+    def inject_realized_edge(self, node, kind, chips):
+        """Splice the opponent's EXACT realized off-grid bet/raise into `node` as a
+        real edge, building its subtree with the standard menu, and return the new
+        child (the node the actor faces next). Used for Libratus-style nested
+        solving: instead of snapping a human's off-grid size to the nearest menu
+        edge (which would solve against the wrong pot), the realized size becomes a
+        true tree node so the downstream solve sees the real pot/stacks.
+
+        kind  : 'bet' (no bet to call at `node`) or 'raise' (facing one).
+        chips : the ADDITIONAL chips the actor put in (matching _river_path_specs /
+                sized_chips), i.e. the action's cost on top of any call.
+
+        Returns the child RiverNode, or None if the realized size is not a legal,
+        distinct sized edge here (caller then falls back to nearest-edge snapping):
+          * agg budget exhausted, or the opponent has no chips behind to face it;
+          * the size meets/exceeds the actor's stack (that's an all-in, already a
+            menu edge — snap to it);
+          * below the min legal bet/raise increment;
+          * duplicates an existing edge's cost (already representable on-grid).
+        The new child is appended to node.actions/children and registered in
+        decision_nodes (a fresh dense node_id), so it must be injected BEFORE the
+        CFR tables are sized."""
+        if node.terminal:
+            return None
+        player = node.player
+        other = 1 - player
+        sc = list(node.sc)
+        stack_p = self.stacks[player] - sc[player]
+        if stack_p <= 1e-9:
+            return None
+        opening = node.to_call <= 1e-9
+        # Aggression budget: an opening bet / a raise both consume one aggression,
+        # and a raise additionally needs the opponent to have chips behind.
+        if node.agg >= self.max_aggressions:
+            return None
+        if not opening and (self.stacks[other] - sc[other]) <= 1e-9:
+            return None
+
+        new_sc_p = sc[player] + chips                 # actor's new street total
+        amount = chips                                # additional cost (== chips)
+        if opening:
+            inc = amount
+            legal_min = amount >= MIN_BET - 1e-9
+        else:
+            inc = new_sc_p - max(sc)                  # raise increment over the call
+            legal_min = inc >= node.last_inc - 1e-9 and amount > 0
+        if not legal_min:
+            return None
+        if amount >= stack_p - 1e-9:
+            return None                               # that's an all-in -> snap to the menu edge
+        # Don't duplicate a size already on the menu (it's representable on-grid).
+        cost_key = round(amount, 6)
+        for a in node.actions:
+            if is_sized(a) and round(sized_chips(a), 6) == cost_key:
+                return None
+
+        child_sc = list(sc)
+        child_sc[player] = new_sc_p
+        child = self._build(other, child_sc, node.agg + 1, inc, prev_check=False)
+        node.actions.append(_sized('bet' if opening else 'raise', amount))
+        node.children.append(child)
+        return child
 
 
 def build_river_tree(pot_entry, stacks, menu=DEFAULT_MENU,

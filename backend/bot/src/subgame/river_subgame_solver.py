@@ -72,13 +72,21 @@ def blueprint_to_tree_dist(bp_dist, node):
             if frac is not None and pool:
                 dest = min(pool, key=lambda t: abs(t[1] - frac))[0]
         if dest is None:                          # no analogous tree action
-            # Effectively DEAD on real input: the blueprint only stores grid
-            # actions (check/fold/call/allin/bet_*/raise_*), every one of which has
-            # a direct or fraction analog above; only *_custom_* would land here and
-            # _state_distribution never emits those. Kept as defensive routing:
-            # aggressive blueprint mass with no tree analog -> the nearest in spirit
-            # (all-in), matching the blueprint's intent. (Note: the EV-gate margin,
-            # not this branch, governs how eager the gate is to deviate.)
+            # When this fires: the blueprint wants a sized bet/raise but this tree
+            # node has NO bet/raise edge of that kind -- they all collapsed to all-in
+            # at low SPR (tree_bets/tree_raises empty). All-in is then the ONLY
+            # aggressive action, so routing the blueprint's aggression to it is the
+            # faithful mapping, not a fallback hack. (It also catches *_custom_* sizes,
+            # which carry no POSTFLOP_BET_MULT fraction -- though _state_distribution
+            # never emits those today.) If the node has no aggression at all (facing
+            # an all-in: only fold/call), the chain drops to call then check.
+            # KNOWN EDGE: when the solver menu's SMALLEST bet collapses to all-in but a
+            # smaller blueprint bet was still affordable, this over-commits to all-in
+            # vs the blueprint's small bet -- a menu-granularity artifact (the solver
+            # menu lacks the blueprint's 0.33/0.66 sizes). Narrow + low-magnitude at
+            # the SPRs where it occurs; fixing it would mean widening the live solver
+            # menu (slower solves), so it's accepted. (The EV-gate margin, not this
+            # branch, governs how eager the gate is to deviate.)
             dest = next((alt for alt in ('allin', 'call', 'check') if alt in out), None)
         if dest is not None:
             out[dest] += p
@@ -92,7 +100,8 @@ def blueprint_to_tree_dist(bp_dist, node):
 class RiverSubgameSolver(BlueprintStrategy):
     def __init__(self, blueprint_db, *, max_iters=400, check_every=40,
                  time_budget=8.0, gap_threshold=None, temper_beta=DEFAULT_TEMPER_BETA,
-                 ev_margin=1.0, menu=DEFAULT_MENU, rng=None):
+                 ev_margin=1.0, menu=DEFAULT_MENU, rng=None,
+                 guard_confidence=0.2, guard_margin=1.0):
         super().__init__(blueprint_db)
         self.max_iters = max_iters
         self.check_every = check_every
@@ -103,6 +112,11 @@ class RiverSubgameSolver(BlueprintStrategy):
         # over the blueprint baseline before we deviate from the blueprint.
         self.ev_margin = ev_margin
         self.menu = tuple(menu)
+        # Facing-all-in guard (flop/turn): only override the blueprint when the
+        # range belief is at least this confident, and only when the call/fold EV
+        # edge clears this chip margin (avoid flipping on a knife-edge / MC noise).
+        self.guard_confidence = guard_confidence
+        self.guard_margin = guard_margin
         # Seedable RNG for the final action sample, so scoring runs / tests are
         # reproducible (the mix itself is correct either way).
         self._rng = rng if rng is not None else np.random.default_rng()
@@ -111,13 +125,34 @@ class RiverSubgameSolver(BlueprintStrategy):
         self._fallback_count = 0       # solve failures that degraded to the blueprint
         # Diagnostics: why does / doesn't the solver change the bot's action?
         self.stats = {'river_calls': 0, 'solved': 0, 'fallback': 0,
-                      'deviated': 0, 'kept_blueprint': 0}
+                      'deviated': 0, 'kept_blueprint': 0, 'allin_guard': 0}
 
     # -- BotStrategy interface -------------------------------------------------
     def decide(self, info_set_key, legal_actions, public_state):
         ps = public_state or {}
+        self.last_debug = None
+        # Near-terminal all-in guard runs FIRST: facing a jam that commits the
+        # whole stack is a pure equity decision (the river solver path below only
+        # fires on the river). See _facing_allin_guard. Wrapped like the solver
+        # path: a guard defect (hero_equity does real numpy/sampling work, and a
+        # malformed public_state could raise) must DEFER, never crash a live hand
+        # -- advance_bot_turns only catches GameError, so an unguarded raise here
+        # would 500 the turn and lose the hand state.
+        try:
+            guard = self._facing_allin_guard(legal_actions, ps)
+        except Exception:
+            self._fallback_count += 1
+            self.stats['fallback'] += 1
+            self.last_debug = {'mode': 'guard_error', 'street': ps.get('street')}
+            guard = None
+        if guard is not None:
+            self.stats['allin_guard'] += 1
+            self.last_debug = {'mode': 'allin_guard', 'street': ps.get('street'),
+                               'action': guard}
+            return guard
         spec = self._solver_inputs(ps)
         if spec is None:
+            self.last_debug = {'mode': 'blueprint', 'street': ps.get('street')}
             return super().decide(info_set_key, legal_actions, public_state)
         self.stats['river_calls'] += 1
         try:
@@ -130,7 +165,25 @@ class RiverSubgameSolver(BlueprintStrategy):
             evs = hand_action_evs(info['cfr'], node, row, info['reach0'], info['reach1'])
             chosen, _gate = ev_gate(node.actions, dist, baseline, evs, self.ev_margin)
             self.stats['solved'] += 1
-            self.stats['deviated' if _gate['used'] == 'solved' else 'kept_blueprint'] += 1
+            deviated = _gate['used'] == 'solved'
+            self.stats['deviated' if deviated else 'kept_blueprint'] += 1
+            self.last_debug = {
+                'mode': 'river_solver',
+                'street': 'river',
+                'solved': True,
+                'deviated': deviated,
+                'nodeActions': list(node.actions),
+                'solvedStrategy': {a: round(float(p), 4) for a, p in dist.items()},
+                'baseline': {a: round(float(p), 4) for a, p in baseline.items()},
+                'evSolved': round(float(_gate['ev_solved']), 3),
+                'evBaseline': round(float(_gate['ev_baseline']), 3),
+                'evDelta': round(float(_gate['delta']), 3),
+                'evMargin': float(self.ev_margin),
+                'iters': int(info.get('iters', 0)),
+                'gap': (round(float(info['gap']), 4)
+                        if info.get('gap') is not None else None),
+                'converged': bool(info.get('converged', False)),
+            }
             return self._pick_engine_action(chosen, legal_actions, spec, node)
         except Exception:
             # Never crash a live hand -- but LOG (rate-limited, with traceback) so a
@@ -138,11 +191,106 @@ class RiverSubgameSolver(BlueprintStrategy):
             # (the failure mode that once hid the uniform-fallback bug).
             self._fallback_count += 1
             self.stats['fallback'] += 1
+            self.last_debug = {'mode': 'fallback', 'street': ps.get('street'),
+                               'solved': False}
             n = self._fallback_count
             if n <= 5 or n % 100 == 0:
                 _LOG.warning("RiverSubgameSolver fell back to blueprint (#%d)",
                              n, exc_info=True)
             return super().decide(info_set_key, legal_actions, public_state)
+
+    # -- facing-an-all-in terminal guard (preflop / flop / turn) ---------------
+    def _facing_allin_guard(self, legal_actions, ps):
+        """Guard the FACING-an-all-in decision on PREFLOP / flop / turn.
+
+        When the bot faces a bet whose call would commit its ENTIRE remaining
+        stack, the hand is near-terminal: calling leaves no money behind either
+        player, so the board simply runs out to showdown -- there is no further
+        decision and no continuation to value (no leaf-value function needed, the
+        thing that makes turn/flop solving hard). The call/fold choice is therefore
+        a pure equity-vs-pot-odds comparison against the live opponent belief, which
+        is sharper than a coarse/undertrained blueprint bucket and directly guards
+        the bot from calling off (or wrongly folding) vs a jam.
+
+        WHY ALL STREETS incl. PREFLOP (fix #1, 2026-05-31): the blueprint plays a
+        FIXED, opponent-agnostic GTO call frequency facing a jam -- it ignores the
+        range tracker's belief about THIS opponent. Vs a human who jams too strong
+        (the observed leak), GTO over-calls. Routing every facing-jam decision (any
+        street) through the tracked-range equity makes the bot ADAPT: it folds the
+        marginal hands the un-adapted blueprint calls off with. A called preflop jam
+        runs all 5 board cards out -> still pure equity, no solve. The river is
+        handled by the full solver downstream, so this guard stays preflop/flop/turn.
+        (`river` deliberately excluded -> falls through to `_solver_inputs`.)
+
+        ON SPR: the trigger is `to_call >= bot_stack` (the call IS all-in), NOT an
+        SPR threshold -- and that is deliberate. A massive OVERBET jam from a
+        high-SPR start (small pot, deep stacks) satisfies it and SHOULD: once jammed
+        and called, betting is closed and the board runs out, so it is near-terminal
+        regardless of the pre-jam SPR, and the pot-odds call is exactly right. The
+        real high-SPR risk is not the trigger but the range QUALITY: a giant overbet
+        is an off-model action, and here the call risks the whole stack, so a bad
+        belief is expensive. That is what `guard_confidence` covers -- an off-model
+        jam decays RangeTracker confidence, so the guard DEFERS to the blueprint
+        rather than act on an untrusted belief exactly in that case.
+
+        Returns the engine action ('call'/'fold') to play, or None to DEFER to the
+        normal path (blueprint / river solver) when the guard doesn't apply:
+          * river (-> the full solver handles it);
+          * not facing a bet (no fold+call), or calling does NOT commit the whole
+            stack (money behind -> NOT near-terminal: that is the deep-raise case,
+            which needs leaf values and is out of scope here);
+          * range tracking is off / the belief is below `guard_confidence` (don't
+            override on a belief we don't trust -- defer to the blueprint);
+          * the call/fold EV edge is within `guard_margin` chips (a knife-edge /
+            Monte-Carlo-noise spot -> don't override).
+
+        NOTE this guards FACING a jam only. Guarding the bot PROPOSING a jam needs
+        the opponent's calling model and a value for the non-jam alternative (a
+        leaf value), so it is deliberately left to a later slice.
+        """
+        street = ps.get('street')
+        if street not in ('preflop', 'flop', 'turn'):
+            return None                              # river -> full solver downstream
+        if 'call' not in legal_actions or 'fold' not in legal_actions:
+            return None                              # not facing a bet
+        tracker = ps.get('opp_range')
+        hole = ps.get('hole_cards')
+        board = ps.get('community')                  # [] preflop -- that's fine
+        seat = ps.get('seat')
+        if tracker is None or not hole or board is None or seat is None:
+            return None
+        to_call = float(ps.get('to_call') or 0.0)
+        bot_stack = float(ps['p0_stack'] if seat == 0 else ps['p1_stack'])
+        if to_call <= 0.0 or to_call < bot_stack - 1e-6:
+            return None                              # call leaves money behind -> not near-terminal
+        # Default missing confidence to 0.0 (DEFER), not 1.0: a tracker lacking a
+        # confidence reading is an untrusted belief, and acting on it risks the
+        # whole stack. The real RangeTracker always sets .confidence; this only
+        # bites a malformed/foreign tracker, where defer is the safe direction.
+        if getattr(tracker, 'confidence', 0.0) < self.guard_confidence:
+            return None                              # belief untrusted -> defer to blueprint
+
+        # More board cards still to come (preflop=5, flop=2) -> Monte-Carlo runout
+        # equity, which is noisy; use more samples the further from the river so the
+        # estimate's std stays well under guard_margin and can't flip call<->fold at
+        # the pot-odds boundary. (turn=1, river=0 are exact -> few/no runouts.)
+        n_runouts = 600 if street == 'preflop' else 200
+        eq = float(tracker.hero_equity(list(hole), list(board), n_runouts=n_runouts))
+        pot_mid = float(ps.get('pot') or 0.0)        # chips in the middle now (incl. the jam)
+        call_cost = min(to_call, bot_stack)          # all-in-for-less caps the bot's risk
+        if to_call <= bot_stack + 1e-9:
+            final_pot = pot_mid + to_call            # bot fully calls
+        else:
+            # All-in-for-less: the opponent's unmatched excess returns, leaving the
+            # matched pot. (Unreachable while stacks reset equal each street, but
+            # correct if that ever changes.)
+            final_pot = pot_mid - to_call + 2.0 * bot_stack
+        ev_call = eq * final_pot - call_cost         # EV(fold) = 0 (forfeit, no further loss)
+        if ev_call > self.guard_margin:
+            return 'call'
+        if ev_call < -self.guard_margin:
+            return 'fold'
+        return None                                  # too close -> defer to blueprint
 
     def _solver_inputs(self, ps):
         """Extract the river-solve inputs from public_state, or None to signal
@@ -227,17 +375,34 @@ class RiverSubgameSolver(BlueprintStrategy):
 
     # -- navigation along the realized river path ------------------------------
     def _navigate(self, tree, river_path):
-        """Walk from the root following `river_path`, snapping sized actions to the
-        nearest tree edge (off-grid human bets map to the closest menu size).
-        Returns (node, edge_indices) where edge_indices are the child indices taken
-        from the root (used to condition reaches into the node for the EV gate).
-        Returns (None, _) if the path cannot be followed."""
+        """Walk from the root following `river_path`. A realized sized bet/raise is
+        handled by NESTED SOLVING (Libratus): if its exact size is off the solver's
+        menu, inject it into the tree as a real edge so the downstream solve sees the
+        TRUE pot/stacks, instead of snapping it to the nearest menu size (which would
+        solve the bot's response against the wrong pot). If the exact size can't be a
+        distinct legal edge (it's really an all-in, below min-raise, or already
+        on-grid), fall back to nearest-edge snapping.
+
+        Must run BEFORE the CFR tables are sized (solve_river), since an injected
+        edge adds a node_id. Returns (node, edge_indices) — child indices from the
+        root, used to condition reaches into the node for the EV gate. Returns
+        (None, _) if the path cannot be followed."""
         node = tree.root
         edges = []
         for spec in river_path:
             if node.terminal:
                 return None, edges
-            i = self._match_edge(node, spec)
+            i = None
+            if not isinstance(spec, str):
+                # Sized bet/raise: try to splice the EXACT size in as a new edge
+                # (nested solving). inject_realized_edge returns None when the size
+                # is already on-grid / really an all-in / below min-raise; in those
+                # cases _match_edge below snaps it (correct — it IS representable).
+                kind, chips = spec
+                if tree.inject_realized_edge(node, kind, chips) is not None:
+                    i = len(node.children) - 1          # the just-appended edge
+            if i is None:
+                i = self._match_edge(node, spec)
             if i is None:
                 return None, edges
             edges.append(i)

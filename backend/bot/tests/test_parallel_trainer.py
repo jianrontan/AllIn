@@ -260,12 +260,142 @@ def test_parallel_tail_round_is_checkpointed():
     check('tail rows persisted', persisted == in_mem, (persisted, in_mem))
 
 
+def test_worker_mode_stores_raw_regret():
+    """Fix #2 (the worker-side change): a worker (discount_enabled=False) stores RAW
+    signed regret -- it does NOT floor cumulative_regrets on write -- so a losing
+    action's negative regret survives to the master, where it can cancel another
+    worker's positive regret before the single per-round floor. Single-thread
+    (discount_enabled=True) keeps the canonical CFR+ write-floor, so all of ITS
+    cumulative regrets stay >= 0. This asymmetry is the whole fix."""
+    random.seed(123)
+    w = BlueprintTrainer()
+    w.discount_enabled = False
+    for it in range(120):
+        w._run_iteration(it)
+    worker_has_neg = any(v < 0 for info in w.info_sets.values()
+                         for v in info.cumulative_regrets.values())
+    check('worker mode stores raw (negative) regret', worker_has_neg)
+
+    random.seed(123)
+    st = BlueprintTrainer()  # discount_enabled True by default
+    for it in range(120):
+        st._run_iteration(it)
+    st_all_nonneg = all(v >= 0 for info in st.info_sets.values()
+                        for v in info.cumulative_regrets.values())
+    check('single-thread floors on write (all regrets >= 0)', st_all_nonneg)
+
+
+def test_merge_cross_worker_cancellation():
+    """With RAW worker deltas, a losing action's negative increment from one worker
+    cancels a winning increment from another WITHIN the round, before the single
+    master floor. Baseline a=0; worker1 reports +10, worker2 reports -10 (raw) ->
+    merged a = max(0, decay*0 + (10-0) + (-10-0)) = 0. The OLD code floored each
+    worker locally, so worker2 would have reported a=0 (its -10 clamped away), giving
+    merged a = max(0, 0 + 10 + 0) = 10 -- the inflation Fix #2 removes."""
+    info = InformationSet()
+    info.cumulative_regrets = {'a': 0.0}
+    info.legal_actions = ['a']
+    info.visit_count = 1
+    info_sets = {'k': info}
+    w1 = {'regret': {'k': {'a': 10.0}}, 'strategy': {}, 'legal': {'k': ['a']},
+          'ev_sum': 0.0, 'ev_count': 0}
+    w2 = {'regret': {'k': {'a': -10.0}}, 'strategy': {}, 'legal': {'k': ['a']},
+          'ev_sum': 0.0, 'ev_count': 0}
+    pt.merge_round(info_sets, [w1, w2], alpha=1.5, gamma=2.0)
+    check('cross-worker cancellation (raw deltas)',
+          _approx(info_sets['k'].cumulative_regrets['a'], 0.0),
+          info_sets['k'].cumulative_regrets)
+
+
+def _merge_old_floored(info_sets, worker_results, alpha, gamma):
+    """Re-create the PRE-Fix-#2 behaviour: each worker floors its OWN reported
+    cumulative at the baseline before the master sums them. Used only to prove the
+    bias DIRECTION against the current (raw) merge_round, as a committed regression
+    so a future reintroduction of the worker-local floor is caught cheaply (without
+    a 25-min training A/B)."""
+    floored = []
+    R0 = {}
+    for res in worker_results:
+        for k, wr in res['regret'].items():
+            R0.setdefault(k, dict(info_sets[k].cumulative_regrets) if k in info_sets else {})
+    for res in worker_results:
+        fr = {}
+        for k, wr in res['regret'].items():
+            base = R0[k]
+            # Old bug: clamp the worker's reported cumulative to >= 0 locally.
+            fr[k] = {a: max(0.0, v) for a, v in wr.items()}
+            # (base is already >=0; the clamp is what discarded negative deltas.)
+        floored.append({**res, 'regret': fr})
+    return pt.merge_round(info_sets, floored, alpha, gamma)
+
+
+def test_floor_bias_direction_old_inflates_high_variance():
+    """COMMITTED regression for the bias DIRECTION. A high-variance action gets a
+    big WIN from one worker (+30) and a big LOSS from another (-30) in the same
+    round -> true net 0. The current (raw) merge cancels them to 0. The old
+    worker-local-floor path clamps the -30 worker to 0 first, so it merges to +30 --
+    strictly MORE mass on the high-variance action. Asserts new <= old, with a real
+    gap, so reinstating the worker floor would fail here in milliseconds."""
+    def _fresh():
+        info = InformationSet()
+        info.cumulative_regrets = {'jam': 0.0, 'fold': 0.0}
+        info.legal_actions = ['jam', 'fold']
+        info.visit_count = 1
+        return {'k': info}
+
+    w_win = {'regret': {'k': {'jam': 30.0, 'fold': 0.0}}, 'strategy': {},
+             'legal': {'k': ['jam', 'fold']}, 'ev_sum': 0.0, 'ev_count': 0}
+    w_loss = {'regret': {'k': {'jam': -30.0, 'fold': 5.0}}, 'strategy': {},
+              'legal': {'k': ['jam', 'fold']}, 'ev_sum': 0.0, 'ev_count': 0}
+
+    new_sets = _fresh()
+    pt.merge_round(new_sets, [w_win, w_loss], alpha=0.0, gamma=0.0)
+    new_jam = new_sets['k'].cumulative_regrets['jam']
+
+    old_sets = _fresh()
+    _merge_old_floored(old_sets, [w_win, w_loss], alpha=0.0, gamma=0.0)
+    old_jam = old_sets['k'].cumulative_regrets['jam']
+
+    check('raw merge cancels high-variance to 0', _approx(new_jam, 0.0), new_jam)
+    check('old floored path inflates high-variance', old_jam > new_jam + 1.0,
+          (old_jam, new_jam))
+
+
+def test_multiround_cross_worker_cancellation_stable():
+    """Cross-worker cancellation holds across MULTIPLE rounds (the unit tests are
+    single-round). Each round two workers report exactly opposite deltas on 'jam';
+    'call' steadily accrues. After several rounds jam must stay floored at 0 while
+    call is clearly positive -- i.e. the cancellation doesn't drift or leak round to
+    round via the rebroadcast baseline."""
+    info = InformationSet()
+    info.cumulative_regrets = {'jam': 0.0, 'call': 0.0}
+    info.legal_actions = ['jam', 'call']
+    info.visit_count = 1
+    info_sets = {'k': info}
+
+    for _ in range(5):
+        base = dict(info_sets['k'].cumulative_regrets)  # rebroadcast (floored) baseline
+        w1 = {'regret': {'k': {'jam': base['jam'] + 12.0, 'call': base['call'] + 4.0}},
+              'strategy': {}, 'legal': {'k': ['jam', 'call']}, 'ev_sum': 0.0, 'ev_count': 0}
+        w2 = {'regret': {'k': {'jam': base['jam'] - 12.0, 'call': base['call'] + 4.0}},
+              'strategy': {}, 'legal': {'k': ['jam', 'call']}, 'ev_sum': 0.0, 'ev_count': 0}
+        pt.merge_round(info_sets, [w1, w2], alpha=0.0, gamma=0.0)
+
+    r = info_sets['k'].cumulative_regrets
+    check('multiround jam stays floored at 0', _approx(r['jam'], 0.0), r)
+    check('multiround call accrues positive', r['call'] > 30.0, r)
+
+
 def _run_all():
     test_merge_new_key_sums_increments()
     test_merge_existing_key_block_discount()
     test_merge_regret_floor()
+    test_merge_cross_worker_cancellation()
+    test_floor_bias_direction_old_inflates_high_variance()
+    test_multiround_cross_worker_cancellation_stable()
     test_merge_strategy_gamma_independent_clock()
     test_worker_chunk_disables_discount()
+    test_worker_mode_stores_raw_regret()
     test_parallel_end_to_end()
     test_parallel_overlaps_single_thread()
     test_parallel_checkpoint_and_resume()

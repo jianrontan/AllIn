@@ -22,19 +22,46 @@ of treating all iterations within a round as equally weighted. Keep rounds small
 (merge_every) and the error stays in the band the data-parallel-CFR literature
 tolerates. All workers + master must share identical alpha/gamma.
 
-This block scheme carries TWO distinct approximations of single-thread, not one:
+CFR+ flooring. Single-thread floors the cumulative regret at 0 on EVERY write
+(blueprint_trainer.py, the `max(0.0, prior+regret)` in the traverser loop) --
+canonical CFR+. The block scheme can only approximate that per-iteration floor.
+Two design points:
+  - The MASTER applies the CFR+ floor once per round, to the summed total
+    (merge_round). This is the per-round-granularity stand-in for the per-iteration
+    floor.
+  - The WORKERS report RAW (unfloored) regret increments (Fix #2, 2026-05-31).
+    Previously each worker floored its own cumulative on write too, so a losing
+    action's negative regret was clamped to 0 INSIDE each worker before the master
+    ever saw it -- it could never cancel another worker's positive regret within a
+    round. That double-floor put a bounded UPWARD bias on high-variance actions
+    (e.g. jam), growing with workers*merge_every. Reporting raw deltas restores
+    cross-worker cancellation (the master's single floor still keeps the global
+    >= 0, matching CFR+ at round granularity).
+    THE TRADE-OFF (be precise): storing raw regret changes a worker's OWN
+    within-chunk regret matching from CFR+ to vanilla-CFR re-activation. Under CFR+
+    a zeroed action re-enters the strategy the instant one positive regret arrives;
+    under raw storage an action driven deeply negative must first climb all the way
+    back above 0 before get_strategy's read-floor lets it back in -- so within a
+    chunk it can stay suppressed longer than CFR+ would (vanilla CFR, still
+    convergent, not "slightly slower"). This is bounded because the master floors
+    and re-broadcasts a floored baseline EVERY merge, so the raw drift only
+    accumulates over one chunk (~merge_every iters) and then resets. Net: we trade
+    a systematic cross-worker bias that does NOT vanish with iterations for a
+    per-chunk vanilla-CFR approximation that resets each merge -- a good trade, but
+    it argues for keeping merge_every modest. Validated by exploitability /
+    agreement-with-single-thread (scripts/validate_parallel_merge.py), not bit-
+    identity.
+
+This leaves TWO approximations of single-thread, both shrinking with merge_every:
   1. Discount timing -- all iterations within a round share one decay weight
-     (above).
-  2. CFR+ floor granularity -- each worker floors its regrets at 0 against its
-     OWN baseline-anchored copy, and the master re-floors only the summed total
-     once per round. So negative regret one worker discovers cannot cancel
-     another worker's positive regret WITHIN a round (cancellation happens only
-     at round boundaries, via the next round's baseline). Net effect: a bounded
-     UPWARD bias on cumulative regrets that grows with workers * merge_every and
-     vanishes at workers=1 or merge_every=1. It cannot flip a regret's sign or
-     break convergence -- it just makes regret matching slightly stickier -- and
-     it is the reason this path is validated by exploitability, not seed-compare.
-Both shrink with smaller rounds; both are why the oracle is single-thread.
+     (block Linear-CFR, above), and workers don't see each other's mid-round
+     updates (each anchors increments to the same pre-round baseline).
+  2. Floor granularity -- per-round + within-chunk raw accumulation instead of a
+     per-iteration floor. Fix #2 shrank this (cancellation restored) but did not
+     remove it.
+Both vanish at merge_every=1; the single-thread trainer remains the oracle, and
+this path is validated by exploitability / agreement-with-single-thread, not
+bit-identity.
 
 Platform note: on Windows multiprocessing uses 'spawn' (no fork copy-on-write),
 so the baseline blueprint is pickled to each worker each round. This is the
@@ -123,8 +150,10 @@ def merge_round(info_sets, worker_results, alpha, gamma):
 
     For every key a worker touched, sum the per-worker increments relative to the
     pre-round baseline, advance that key's discount clock by one round, decay the
-    existing cumulative by the Linear-CFR factor, then add the increments
-    (CFR+-flooring regrets at 0). Returns the set of keys mutated (for dirtying
+    existing cumulative by the Linear-CFR factor, then add the increments and apply
+    the CFR+ floor ONCE to the summed total. The workers report RAW (unfloored)
+    increments (Fix #2), so opposite-signed contributions cancel here before this
+    single floor -- the floor stays. Returns the set of keys mutated (for dirtying
     the checkpoint).
 
     Regret and strategy are clocked independently: a key only advances its regret
@@ -186,6 +215,15 @@ def merge_round(info_sets, worker_results, alpha, gamma):
         decay = ((t - 1) / t) ** alpha if t > 1 else 1.0
         merged = {}
         for a in set(base) | set(increment):
+            # The master applies the CFR+ floor ONCE per round, to the SUMMED total.
+            # Single-thread floors on every write (the max(0.,.) in cfr()'s traverser
+            # loop); the block scheme floors at round granularity instead. Fix #2 is
+            # NOT here -- it is that the WORKERS now report RAW (unfloored) regret
+            # increments (see _worker_run_chunk / blueprint_trainer's worker mode), so
+            # a losing action's negative increment from one worker can cancel a winning
+            # one from another WITHIN this sum before the single floor below. Previously
+            # each worker floored locally first, discarding those negatives -> a bounded
+            # upward bias on high-variance actions (jam). Keep this floor.
             merged[a] = max(0.0, decay * base.get(a, 0.0) + increment.get(a, 0.0))
         info.cumulative_regrets = merged
 

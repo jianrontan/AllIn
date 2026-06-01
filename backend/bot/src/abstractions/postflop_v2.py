@@ -24,6 +24,7 @@ Bucket counts follow the centroids (12 flop / 12 turn / 10 river by default).
 """
 import os
 import random
+import threading
 import warnings
 from collections import OrderedDict
 
@@ -62,6 +63,14 @@ _STREET = {3: 'flop', 4: 'turn', 5: 'river'}
 # 134,459 never evicts.
 _RIVER_BOARD_CACHE = OrderedDict()
 _RIVER_BOARD_CACHE_CAP = int(os.environ.get('ALLIN_RIVER_CACHE_BOARDS', 100_000))
+# The cache is a MODULE GLOBAL shared across PostflopV2 instances. Under the
+# threaded Flask server one PostflopV2 is shared by all request threads, so the
+# OrderedDict mutations (insert / popitem / move_to_end) must be guarded -- the
+# check-then-popitem sequence is not atomic and could otherwise raise under
+# concurrent river solves. Training is unaffected (multiprocessing = per-process
+# globals, lock always uncontended -> sub-microsecond overhead). The expensive
+# board_winrates compute is done OUTSIDE the lock so threads never serialize on it.
+_RIVER_CACHE_LOCK = threading.Lock()
 # Combination-index constants for the 47 live cards on a complete (river) board.
 _RIVER_LIVE = 47
 _RIVER_2NM1 = 2 * _RIVER_LIVE - 1            # = 93, used in the pair->slot formula
@@ -73,7 +82,8 @@ _RIVER_EQ_SCALE = 1980.0
 
 def clear_river_board_cache():
     """Drop the shared per-board river-equity cache (for tests / memory control)."""
-    _RIVER_BOARD_CACHE.clear()
+    with _RIVER_CACHE_LOCK:
+        _RIVER_BOARD_CACHE.clear()
 
 
 class PostflopV2:
@@ -187,14 +197,20 @@ class PostflopV2:
         SAME suit permutation, and the cached equity is looked up. Equity is
         suit-invariant, so this is exact."""
         canon_board, smap = canonical_board_perm(board)
-        entry = _RIVER_BOARD_CACHE.get(canon_board)
+        with _RIVER_CACHE_LOCK:
+            entry = _RIVER_BOARD_CACHE.get(canon_board)
+            if entry is not None:
+                _RIVER_BOARD_CACHE.move_to_end(canon_board)      # mark recently used
         if entry is None:
+            # Compute OUTSIDE the lock (expensive). Two threads racing the same
+            # board just both compute it -- harmless, the value is identical -- and
+            # the second insert overwrites with an equal entry.
             entry = self._compute_board_entry(canon_board)
-            _RIVER_BOARD_CACHE[canon_board] = entry              # most-recently-used
-            if len(_RIVER_BOARD_CACHE) > _RIVER_BOARD_CACHE_CAP:
-                _RIVER_BOARD_CACHE.popitem(last=False)           # evict least-recently-used
-        else:
-            _RIVER_BOARD_CACHE.move_to_end(canon_board)          # mark recently used
+            with _RIVER_CACHE_LOCK:
+                _RIVER_BOARD_CACHE[canon_board] = entry          # most-recently-used
+                _RIVER_BOARD_CACHE.move_to_end(canon_board)
+                if len(_RIVER_BOARD_CACHE) > _RIVER_BOARD_CACHE_CAP:
+                    _RIVER_BOARD_CACHE.popitem(last=False)       # evict least-recently-used
         pos, eq = entry
         # Relabel the hero hand by the board's suit permutation, then index the
         # canonical board's equity array.

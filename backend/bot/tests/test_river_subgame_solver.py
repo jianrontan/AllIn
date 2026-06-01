@@ -90,24 +90,27 @@ def test_solve_for_action_ip_after_villain_checks():
           f"(node {node.node_id}, dist={ {k: round(v,2) for k,v in dist.items()} })")
 
 
-def test_navigate_snaps_offmenu_bet():
+def test_navigate_injects_offmenu_bet():
     db = _blueprint_db()
     if db is None:
-        print("SKIP test_navigate_snaps_offmenu_bet (no blueprint)")
+        print("SKIP test_navigate_injects_offmenu_bet (no blueprint)")
         return
     villain, hero = _trackers()
     solver = _solver(db)
-    # Villain (OOP) makes an off-menu bet of 13 chips; the bot (IP) faces it. The
-    # navigator should snap 13 to the nearest sized edge and land on a seat-0 node
-    # that is facing a bet (fold/call/... available).
+    # Villain (OOP) makes an off-menu bet of 13 chips; the bot (IP) faces it. Nested
+    # solving injects 13 as a REAL tree edge, so the bot's node faces the EXACT pot
+    # (not a snapped 12/18): to_call must be exactly 13, pot_mid = 24 + 13 = 37.
     dist, node, info = solver.solve_for_action(
         board=_BOARD, pot_entry=24.0, stacks=(88.0, 88.0), bot_seat=0, hole=_HOLE,
         villain_tracker=villain, hero_tracker=hero, confidence=1.0,
         river_path=[('bet', 13.0)])
     db.close()
-    assert node.player == 0 and node.to_call > 0, "bot faces the (snapped) bet"
+    assert node.player == 0, "bot faces the injected bet"
+    assert abs(node.to_call - 13.0) < 1e-9, f"exact off-grid pot, got to_call={node.to_call}"
+    assert abs(node.pot_mid - 37.0) < 1e-9, node.pot_mid
     assert 'fold' in node.actions and 'call' in node.actions
-    print(f"PASS test_navigate_snaps_offmenu_bet (to_call={node.to_call:.1f})")
+    print(f"PASS test_navigate_injects_offmenu_bet (exact to_call={node.to_call:.1f}, "
+          f"pot_mid={node.pot_mid:.1f})")
 
 
 def test_decide_falls_back_off_river():
@@ -246,7 +249,7 @@ TESTS = [
     test_decide_river_emits_action_with_ev_gate,
     test_solve_for_action_oop,
     test_solve_for_action_ip_after_villain_checks,
-    test_navigate_snaps_offmenu_bet,
+    test_navigate_injects_offmenu_bet,
     test_decide_falls_back_off_river,
 ]
 

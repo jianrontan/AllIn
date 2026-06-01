@@ -1,6 +1,6 @@
 # Poker AI Roadmap
 
-Last updated: 2026-05-28
+Last updated: 2026-05-30
 
 Status legend: ✅ done · 🚧 in progress · 📅 planned
 
@@ -24,6 +24,72 @@ AWS go-live plan, +EV leaderboard, and cost estimates live in [DEPLOYMENT.md](DE
 > hole), and (2) **depth-limited solving with blueprint leaf values** — the single
 > capability that unlocks the bot's own overbets/5-bets on the flop and turn. The
 > river solver already exists and already overbets; everything else hangs off (2).
+
+---
+
+## ⚠️ ACTIVE INVESTIGATION (2026-05-31) — "bot plays poorly vs humans": diagnosis + redesign plan
+
+The 30.5M new-abstraction blueprint (`blueprint_par_20260529_233056.db`, served via
+`ALLIN_BLUEPRINT_DB`) **overjams** (preflop + low-SPR flop) and **overcalls all-in
+jams**, and more iterations don't fix it (convergence slowing). Two A/B tests
+isolated the causes. **Three distinct root causes, only one is a retrain:**
+
+| Symptom | Root cause (evidenced) | Fix |
+|---|---|---|
+| Over-**jams**, worst at marginal / low-SPR spots | **(2) parallel-trainer floor bias** — TEST 1: merge_every 4000 vs 250 jams 1.22× in aggregate, **up to 3.5–5.5× at marginal keys** (e.g. `pf_28_oop_cmm` 0.563 vs 0.160). It's a BIAS not a convergence gap → more iters don't help. | **Fix #2** corrected merge |
+| Over-**jams** specifically as SPR drops | **(3) bet-sizing menu collapse** — TEST 2: P(allin) ~doubles as the sized-bet menu thins (0.155 at 4 sized opts → 0.234 at 3 → 0.30 at 0). Pot-fraction sizes ≥ stack collapse into all-in, so GTO mass in the gap rounds to a jam. Structural, not training. | **Fix #3** SPR-aware sizing (± SPR buckets) |
+| Over-**calls** human jams | **(1) un-adapted GTO + SPR-blind key (M1)** — TEST 1: call-off freq IDENTICAL across merge arms (1.02×) → **NOT the trainer**. The blueprint plays a fixed GTO call freq that ignores the range tracker's read of *this* opponent. | **Fix #1** extend the facing-jam equity guard to all streets |
+
+> **Tests of record:** TEST 1 (parallel bias) = merge_every 4000 vs 250 A/B at 500k
+> iters, jam 1.22× / call 1.02×. TEST 2 (SPR collapse) = P(allin) vs menu-richness on
+> the served DB. Both confirm *mechanism + direction*, not the exact magnitude in the
+> 30.5M DB. Scripts: `scripts/_tmp_spr_fingerprint.py` (TEST 2).
+
+**Key insight (2026-05-31, user observation) — separate the PROPOSAL menu from the RESPONSE path.**
+Before voluntary all-in was added at every node, the bot handled human aggression *surprisingly well*
+on blueprint + pseudo-harmonic translation alone: a human jam was off-tree, translation mapped it to
+the nearest well-trained big-bet response, and the bot never generated its *own* stray jams (jam
+wasn't in its proposal menu). Adding voluntary all-in everywhere handed the floor-bias (#2) and the
+menu-collapse (#3) a degenerate action to over-weight, and diluted per-action data — in exchange for
+a benefit translation already delivered. Translation is "unsound" only versus a *size-cheating*
+adversary (the LBR leak); a human who just shoves is playing the exact line translation handles most
+robustly. **Principle: keep a tight, well-trained proposal menu + a robust response path (translation
++ Fix #1) for off-tree opponent bets.** This motivates Fix #4 below.
+
+**The four fixes (ranked; do all):**
+1. ✅ **DONE (2026-05-31) — Over-calling guard extended to ALL streets incl. preflop.** `RiverSubgameSolver._facing_allin_guard` now fires on preflop/flop/turn (river still routes through the full solver). Inference-only, NO retrain, fixes the in-game over-calling immediately, and finally makes the range tracker pay off (call iff `hero_equity` vs the tracked opponent range beats pot odds; confidence-gated → defers to blueprint when the read is untrusted). Cheapest, highest felt-impact. A called preflop/flop/turn jam is near-terminal (board runs out) → pure equity, no solve. Empty-board preflop is accepted (`board is None` reject, not falsy-empty); `n_runouts` = 600 preflop / 200 flop. `bot_public_state()` now carries `seat`. Tests: `tests/test_allin_guard.py` (15/15, incl. 3 preflop cases).
+2. ✅ **DONE (2026-06-01) — Bias-corrected parallel merge.** *The bug is WORKER-local flooring: each worker's `cfr()` floored its own cumulative on write (`blueprint_trainer.py:251`), clamping a losing action's negative regret to 0 before the master saw it → no cross-worker cancellation = upward jam bias. Fix: at line 251 apply the CFR+ write-floor ONLY in single-thread (`discount_enabled=True`); in worker mode store the raw signed sum. The master keeps its per-round `max(0, decay*base+increment)` floor (single-thread floors on every write = canonical CFR+, so that floor was correct). Shrinks the floor-granularity approximation, doesn't remove it. Validated: `tests/test_parallel_trainer.py` 29/29 incl. `test_worker_mode_stores_raw_regret` + `test_merge_cross_worker_cancellation`; harness `scripts/validate_parallel_merge.py` — **run at scale 2026-06-01** (200k iters/arm, `merge_every=2000`, 16 workers): jam bias (parallel − single) = **+0.0014** (single 0.2941 vs parallel 0.2955 over 10,804 jam-action keys) → **bias confirmed gone** (was ~1.22× aggregate pre-fix); TV-distance mean 0.224 (not bit-identical — different RNG streams + partly converged, the bias-relevant number is the aggregate jam delta); 3.76× speedup. The harness gates on cumulative-strategy mass, not `visit_count` (which counts iterations single-thread but merge-rounds in parallel).* Workers report **raw unfloored regret increments**; master applies the CFR+ floor ONCE at merge → restores cross-worker cancellation at full `merge_every=4000` throughput (no speed penalty). MUST be validated: the A/B harness shows arm-A ≈ arm-B AND both match a single-thread reference (closes the validation gap the roadmap flagged and we skipped). Parallel is NOT scrapped — it stays an approximation pushed below noise; fallback if validation fails is smaller `merge_every` (slower but correct). Subtlety: a worker still needs floored regrets for its own within-chunk regret-matching, so "report raw deltas" changes within-chunk behavior → exactly why validation gates it.
+3. **SPR-aware bet sizing (the redesign — UNCONFIRMED, measure first).** Replace fixed pot-fractions at low SPR with sizing that doesn't collapse to {small, jam} (geometric / fraction-of-remaining-stack, as solvers do); possibly add SPR buckets on **flop+turn only** (NOT preflop — preflop SPR is already implicit in the betting pattern; M1/SPR-loss is a postflop-pattern-reset problem). SPR buckets (learn different strategies) and SPR-aware sizing (fix the action menu) are DIFFERENT and both may be needed.
+4. **Bet-menu cap + drop the voluntary all-in node (abstraction change → retrain; batch with #3).** Implements the proposal/response split above.
+   - **Postflop:** `POSTFLOP_BET_MULT = {small 0.33, medium 0.66, large 1.0, overbet 1.5, overbet2 2.0}` and **remove the separate voluntary all-in action**. All-in *emerges* when the top tier clamps to the stack — so it still appears at low SPR, but stops competing for regret mass at high SPR. EV loss from the 2x cap is tiny (>2x-pot flop/turn bets are ~never GTO; polarized-river jams are the solver's job) — confirm with BR/LBR. **Off-tree handoff when FACING a bet >2x:** river → subgame solver; flop/turn → translation (no turn/flop solver yet); an actual all-in on any street → Fix #1. **Impl subtlety:** a tier that clamps to all-in should still map to pattern char `a` (not the tier char), so two physically identical all-ins share one key.
+   - **Preflop re-raise:** maybe add `2.0` on the **3-bet branch only** — for 4-bets `2.0x` ≈ a jam at 100BB and CLAUDE.md already rejects a 4th 4-bet size (low-SPR 4-bets compress to one-size-or-jam). Measure before committing.
+   - **Preflop open:** leave the 4-tier BB-anchored ladder (2 / 2.5 / 3.5 / 5BB) **unchanged**. Opens are BB-anchored, not pot-anchored, so the 2.0x-overbet idea doesn't map; a 10BB open is never +EV as a *proposal*, and `xlarge=5BB` + translation already anchor big human opens as a *response*.
+
+**Measurement plan to design the #3 redesign with numbers (do all, cheap — no BR/cloud/full-retrain):**
+- **Measurement A — SPR spread per key.** Replay self-play; per postflop key record the distribution of REAL SPRs that map to it. Output: % of postflop decision mass where one key averages incompatible (jam-vs-small) SPR regimes → sizes whether SPR *buckets* are worth it, and on which streets.
+- **Measurement B — info-set budget per candidate scheme.** Enumerate info-sets under candidate abstractions (reuse the decouple counter): e.g. lossless preflop 169 + flop {N cards × K SPR buckets} + coarse turn/river → does it fit a trainable budget?
+- **Measurement C — does SPR-aware sizing ALONE fix it?** Re-fit just the sizing (geometric low-SPR), short train, re-run TEST 2's fingerprint: did P(allin) stop spiking as the menu thins? If yes, #3 needs no SPR card-buckets (cheapest outcome).
+  - **Arm C2 (Fix #4) — bet-menu cap + dropped all-in node.** Retrain a short run with the 2.0x cap and no voluntary all-in action; re-run TEST 2's fingerprint + BR/LBR. Does P(allin) drop without exploitability rising? This is the empirical test of whether the old proposal/response split genuinely played better.
+
+**Candidate abstraction configs being measured (the grid A/B/C run over).** The **card** abstraction (30/10 preflop, 20/16/10 postflop) is held FIXED as the control — it's not the suspect; the **bet-sizing/SPR** axis is. Two knobs move:
+- **Knob 1 — SPR on the key (Fix #3 bucket half / the M1 fix):** `none` (current SPR-blind key) | `K SPR buckets on FLOP+TURN only` (NOT preflop — SPR implicit in the betting pattern; NOT river — solver's job), with K ∈ {2, 3} candidates.
+- **Knob 2 — bet-sizing menu:** `current` ({0.33,0.66,1.0,1.5} **+ a separate voluntary all-in node**) | `menu-cap` (Fix #4: {0.33,0.66,1.0,1.5,2.0}, **drop the all-in node** — all-in emerges only when the top tier clamps to stack) | `SPR-aware sizing` (Fix #3: low-SPR sizes that don't collapse to {small, jam} — geometric / fraction-of-remaining-stack).
+
+| # | SPR buckets | Sizing menu | What it isolates |
+|---|---|---|---|
+| 0 | none | current + all-in node | **control** (= served blueprint) |
+| 1 | none | menu-cap (Fix #4) | does dropping the all-in node ALONE cut P(jam)? |
+| 2 | none | SPR-aware (Fix #3 sizing) | does sizing ALONE fix it, no card-buckets? (cheapest win) |
+| 3 | K=2 flop+turn | current + all-in node | does SPR *bucketing* alone help? |
+| 4 | K=3 flop+turn | menu-cap | the "full" candidate |
+
+How the three measurements use the grid: **A trains NOTHING** (pure diagnostic on the *existing* blueprint's self-play) — its SPR-spread output CHOOSES K and which streets, and can kill configs 3–4 before any training (if SPRs barely spread, `none` wins). **B is a COUNTING pass only** (reuse the decouple info-set counter): a postflop key is `coarse(10) × strength × position(2) × pattern`, so K SPR buckets multiply the flop+turn slice ~K× — B answers "does config 4 fit a trainable budget or does K=3 blow it up 3×?". **C trains the 1–2 survivors** of A+B for a short run + re-runs the TEST-2 fingerprint: if config 2 (SPR-aware sizing, no buckets) flattens the jam spike → ship it, skip card-buckets (cheapest); else fall to config 4. **Open params** A must set first: K (2 vs 3) and the SPR-aware sizing formula (geometric vs fraction-of-remaining-stack). **Do NOT pre-commit configs 3/4 before A says the SPR spread is real.**
+
+**Architecture decisions locked this session:**
+- **"Solve from the turn" is OFF the table for now.** A solve-to-showdown turn solver is ~46× a river solve → minutes, infeasible (river already ~10s); AND the solver depends on the blueprint for ranges/warm-start/EV-baseline, so the blueprint can't drop turn/river. The solver stays **river-only** until depth-limited solving exists.
+- **North star (a) (user, 2026-05-31): a turn AND flop depth-limited subgame solver running in <10s like the river does now.** Feasible ONLY via depth-limited solving with a **leaf value function** (blueprint counterfactual values, recomputable offline) — NOT solve-to-showdown. This is the Phase-4 "depth-limited turn/flop (leaf values)" hard lift; it's the eventual target, not a near-term fix.
+
+**Sequencing:** ship #1 (immediate, no compute) → build+validate #2 → run Measurements A/B/C → decide #3 from numbers → (later) build the depth-limited turn/flop solver toward north-star (a). Don't commit the #3 abstraction redesign before the measurements.
 
 ---
 
@@ -415,11 +481,22 @@ between what we have and what we don't.
 
 | Component | File | Status |
 |---|---|---|
-| River endgame solver (v1, *unsafe*) | `src/subgame/river_subgame_solver.py` — small river tree, vectorized CFR+, ranges from `RangeTracker`, blueprint warm-start (`river_cfr.warm_start` + `blueprint_projection.py`), EV-gated; **served live** (`bot_public_state` feeds it river-entry pot/stacks/ranges/path) | ✅ built (~24× less river-exploitable than the blueprint); **already overbets** (menu includes 1.5× pot + all-in) |
-| River nested off-grid sizing | inject the opponent's *exact* bet size as a real tree edge instead of snapping it to the nearest menu size (Libratus nested solving) | 📅 |
-| Low-SPR deep-raise / 5-bet+ solving (any street) | reuse the river machinery for near-terminal deep nodes, incl. **preflop non-jam 5-bets+** and any beyond-cap reraise — the bot can re-raise off-abstraction here | 📅 |
+| River endgame solver (v1, *unsafe*) | `src/subgame/river_subgame_solver.py` — small river tree, vectorized CFR+, ranges from `RangeTracker`, blueprint warm-start (`river_cfr.warm_start` + `blueprint_projection.py`), EV-gated; **served live** (`bot_public_state` feeds it river-entry pot/stacks/ranges/path) | ✅ built (~24× less river-exploitable than the blueprint — see caveat below); **already overbets** (menu includes 1.5× pot + all-in) |
+| River nested off-grid sizing | inject the opponent's *exact* bet size as a real tree edge instead of snapping it to the nearest menu size (Libratus nested solving) | ✅ (2026-05-30) `RiverTree.inject_realized_edge` + `_navigate` tries injection before snapping; the bot's decision node now faces the TRUE off-grid pot. Falls back to snapping when the size is really an all-in / below min-raise / already on-grid. Tests in `test_river_tree.py` + end-to-end. |
+| Low-SPR deep-raise / 5-bet+ solving (any street) + **all-in-terminal guard** | reuse the river machinery for near-terminal deep nodes, incl. **preflop non-jam 5-bets+** and any beyond-cap reraise — the bot can re-raise off-abstraction here. **Highest-value slice (file 2026-05-30): guard every all-in.** A flop/turn all-in that gets called runs the board out with no further decisions → it's *near-terminal*, so it solves with the cheap river machinery (equity-vs-range, **no leaf-value function**). | 🔄 **FACING-a-jam DONE (2026-05-30)**; proposing-a-jam + non-jam deep-raise still 📅. `RiverSubgameSolver._facing_allin_guard`: on flop/turn, when the call commits the whole stack (`to_call ≥ bot_stack` — near-terminal regardless of pre-jam SPR), override the blueprint with the pot-odds-correct call/fold from `RangeTracker.hero_equity` vs the live belief. Confidence-gated (`guard_confidence`, defers to blueprint on an off-model/untrusted belief — the high-SPR-overbet safety) + chip-margin gated. Runs BEFORE the river path in `decide()`. Tests: `test_allin_guard.py` (12, incl. high-SPR overbet acts-when-trusted / defers-when-untrusted). Directly kills the stray ~1% blueprint jams that dump a stack. (River all-ins already covered: solver runs on every river decision.) PROPOSING a jam needs the opponent's calling model + a value for the non-jam alternative → deferred. |
 | **Depth-limited turn/flop solving (leaf values)** | blueprint counterfactual values as **multi-valued** leaf states; **this is what lets the bot overbet/5-bet on the flop and turn** | 📅 (the hard lift, gates the rest) |
 | Safe / nested subgame solving | adversarial root + opt-out values (gadget) — provably no-more-exploitable than the blueprint, all streets | 📅 |
+
+> **Measurement caveat on the "~24×" figure (2026-05-30).** That number came from
+> `scripts/measure_river_exploitability.py` when the measurement tree used the *solver's*
+> menu (`{0.5,0.75,1.0,1.5}`), which SNAPPED the blueprint's `{0.33,0.66,1.0,1.5}` bets up
+> to the nearest solver size — measuring a distorted blueprint playing sizes it never chose,
+> which **overstated the leak removed (flattered the solver)**. FIXED: the harness now builds
+> the measurement tree on the **blueprint's own size grid** so the blueprint projects with
+> zero snapping and both strategies are scored on the same grid (verified: each blueprint bet
+> maps to a distinct exact edge). The ~24× is therefore an **upper bound pending a re-run** on
+> the unbiased harness; the relative result (solver ≪ blueprint river-exploitability) holds,
+> the exact multiple will move. Re-measure on a current-abstraction blueprint after the retrain.
 
 Approach: when the spot is **structurally off-abstraction** (raise count beyond the
 cap, or an off-grid size outside translation's bracket) or is a high-leverage endgame,
@@ -435,11 +512,14 @@ no-more-exploitable than the blueprint. Background: [1], [2].
 - *The river solver already solves per-decision (no cache).* `RiverSubgameSolver.decide`
   calls `solve_for_action` on **every** river decision — it does not solve once at
   river-entry and replay. So "nested sizing" is **not** about adding re-solving (that
-  already happens); it's about *how the opponent's off-grid bet enters the tree*. Today
-  `_navigate`/`_match_edge` **snaps** the realized bet to the nearest menu edge to locate
-  the node; **nested sizing** injects the exact size as a real edge (Libratus). This is a
-  separate layer from blueprint pseudo-harmonic translation (`cfr/translation.py`), which
-  is the blueprint's off-grid handling — the snap is the *solver's* path reconstruction.
+  already happens); it's about *how the opponent's off-grid bet enters the tree*.
+  **DONE (2026-05-30):** `_navigate` now tries `RiverTree.inject_realized_edge` (splice the
+  exact realized size as a real tree edge, subtree built with the standard menu) before
+  falling back to `_match_edge` snapping; so the bot's decision node faces the TRUE pot, not
+  a snapped one. Snapping remains the fallback only when the exact size can't be a distinct
+  legal edge (really an all-in, below min-raise, or already on-grid). This is a separate
+  layer from blueprint pseudo-harmonic translation (`cfr/translation.py`), which is the
+  blueprint's off-grid handling — the inject/snap is the *solver's* path reconstruction.
 - *Leaf values use multi-valued states, and are NOT gated on training.* A single
   blueprint value at the depth limit is **unsafe**: if the bot deviates inside the
   subgame, the opponent adapts beyond the leaf and the fixed value never sees it. The fix
@@ -458,6 +538,22 @@ no-more-exploitable than the blueprint. Background: [1], [2].
   live cap is the mechanical prerequisite bundled into the deep-raise item — the blueprint
   stays capped (rare deep lines train thinly), the solver handles beyond-cap raises live
   for both players.
+- *All-in-terminal guard (filed 2026-05-30, user idea) — the cheapest, highest-value entry
+  point to this row.* **Why it's cheap:** an all-in that gets called has no further decisions
+  — the board just runs out — so its value is pure **equity-vs-range to the river**, the same
+  near-terminal case the river solver already handles. No betting subtree, **no leaf-value
+  function** (that's what makes it independent of the hard depth-limited item below it).
+  **Trigger:** in `bot_strategy`/`game_session`, before the bot commits a blueprint-proposed
+  `allin` on the **flop or turn** (river already routes through the solver), or when it faces
+  one, run a one-shot equity solve and **EV-gate** the override (reuse the existing gate).
+  **Why it matters:** it directly removes the stray ~1% undertrained-bucket jams that can dump
+  a whole stack — a catastrophic-loss guard worth having before go-live. **Build notes:** (1)
+  the flop/turn case needs runout enumeration/sampling to the river (the river solver assumes a
+  complete 5-card board), so reuse `showdown_kernel`/`board_winrates` over the remaining
+  runouts, weighting by the `RangeTracker` belief; (2) facing-an-all-in is fold-or-call, a
+  single equity compare; proposing-an-all-in compares jam-EV vs the blueprint's best non-jam
+  action; (3) it does NOT need the aggression-cap lift or CFVs, so it can ship before the rest
+  of this row.
 
 ---
 

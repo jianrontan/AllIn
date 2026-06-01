@@ -145,6 +145,7 @@ class GameSession:
         d['p1_stack'] = float(STARTING_STACK - 2)
         d['status'] = 'in_hand'
         d['action_log'] = []
+        d['bot_debug'] = []          # per-hand bot decision trace (debug overlay)
         d['result'] = None
         d['revealed_board'] = 0
         # Hand-level belief over the HUMAN's hole cards, from the bot's seat
@@ -554,6 +555,7 @@ class GameSession:
             'history': list(d['history']),
             'p0_stack': d['p0_stack'],
             'p1_stack': d['p1_stack'],
+            'seat': actor,                       # the acting (bot) seat, every street
             'hole_cards': d['p0_cards'] if actor == 0 else d['p1_cards'],
             'to_call': to_call,
             'opp_range': self._load_range(),
@@ -704,7 +706,33 @@ class GameSession:
             # Safe to show: it's a guess about the human's OWN cards and never
             # reveals the bot's cards. None when tracking is disabled.
             'botRead': None if hand_over else self.opponent_read(6),
+            # Per-decision bot trace for the optional debug overlay: the info-set
+            # key the blueprint was queried with, its strategy there, and (river
+            # solver only) the subgame-solve diagnostics. SPOILER: the info-set key
+            # encodes the bot's card bucket, so the UI keeps this behind a toggle.
+            'botDebug': d.get('bot_debug', []),
         }
+
+
+def _record_bot_debug(session, bot_strategy, public, key, legal, action):
+    """Append one bot decision to session.data['bot_debug'] for the debug overlay:
+    the info-set key, the blueprint's strategy at that key, the action chosen, and
+    (river solver only) the solve diagnostics stashed on bot_strategy.last_debug.
+    Best-effort -- a debug-capture failure must never disrupt the hand."""
+    try:
+        strategy = bot_strategy.explain(key, legal, public)
+    except Exception:
+        strategy = {}
+    record = {
+        'street': public.get('street'),
+        'infoSetKey': key,
+        'chosen': action,
+        'strategy': {a: round(float(p), 4) for a, p in strategy.items()},
+    }
+    solver = getattr(bot_strategy, 'last_debug', None)
+    if solver is not None:
+        record['solver'] = solver
+    session.data.setdefault('bot_debug', []).append(record)
 
 
 def advance_bot_turns(session, bot_strategy):
@@ -713,10 +741,11 @@ def advance_bot_turns(session, bot_strategy):
     while (session.data['status'] == 'in_hand'
            and not session.is_human_turn()):
         bot = session.current_player()
-        action = bot_strategy.decide(
-            session.info_set_key(bot),
-            session.legal_actions(),
-            session.bot_public_state())
+        key = session.info_set_key(bot)
+        legal = session.legal_actions()
+        public = session.bot_public_state()
+        action = bot_strategy.decide(key, legal, public)
+        _record_bot_debug(session, bot_strategy, public, key, legal, action)
         try:
             session.apply_action(action)
         except GameError:

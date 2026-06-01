@@ -37,6 +37,11 @@ class BlueprintStrategy(BotStrategy):
 
     def __init__(self, blueprint_db):
         self.db = blueprint_db
+        # Per-decision diagnostics for the optional "what is the bot thinking"
+        # debug overlay, populated by decide() and read by advance_bot_turns.
+        # None for a plain blueprint lookup (the info-set key + strategy already
+        # tell the whole story); the river solver fills it with solve details.
+        self.last_debug = None
 
     def _distribution(self, info_set_key, legal_actions):
         """
