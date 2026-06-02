@@ -10,6 +10,71 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-011 — Capped blueprint served through a control-menu engine → uniform-random all-in
+
+| | |
+|---|---|
+| **Date** | 2026-06-02 |
+| **Area** | Serving / inference (`game/game_session.py`, `api/strategy_api.py`) |
+| **Severity** | High (visible in live play — the bot made an indefensible move) |
+| **Status** | Fixed |
+
+**Summary.** A `capped`-menu blueprint (Fix #4: voluntary all-in dropped, 2.0× tier added)
+was served through a `GameSession` that hard-coded `PokerGame()` — the **control** engine
+with `voluntary_allin=True`. So the live engine offered the bot an `allin` action at a
+high-SPR node that the capped blueprint **never trained**; the blueprint lookup fell back to
+**uniform over legal actions**, `allin` drew a random slice, and the bot shoved ~95 BB into a
+checked-down turn. An **inference** bug, not a training bug — same blueprint file, no retrain
+needed to fix.
+
+### Symptom
+User playing the served bot: "how the fuck did the bot just all-in me on the turn??" A
+deep-stacked, high-SPR turn jam with no strategic basis. The bot-debug overlay showed the
+blueprint strategy at that key as a flat-ish spread including `allin` — the fingerprint of a
+uniform fallback, not a trained decision.
+
+### Root cause
+The `menu_mode` toggle (control vs capped) was threaded into the **training** path and the
+**eval** path (BR/LBR) but the **serving** path was deferred — and `GameSession` was the
+serving consumer that actually mattered. With `PokerGame()` defaulting to control:
+1. The engine's legal-action set at a high-SPR node included the voluntary `allin`.
+2. The capped blueprint has **zero** mass there (it was trained with that action removed —
+   verified earlier: 0% of high-SPR capped keys contain `allin`).
+3. `BlueprintStrategy._distribution` returns **uniform over legal actions** for an action the
+   stored strategy doesn't cover → `allin` got ~1/n probability → sampled → stray jam.
+
+### The fix
+- `GameSession.__init__` / `.new` / `.from_dict` gained `menu_mode`; it builds the capped
+  `PokerGame` (`postflop_menu=POSTFLOP_BET_MULT_CAPPED, voluntary_allin=False`) when serving a
+  capped (or `capped_no2`) blueprint, via the shared `sizing.is_capped_mode` predicate.
+- `strategy_api` derives `BLUEPRINT_MENU_MODE = db_menu_mode(BLUEPRINT_DB)` once at startup and
+  passes it to both `GameSession` call sites — so the served engine can never disagree with the
+  served blueprint (auto-derived from the DB stamp, not a hand-set flag).
+- Verified: capped snapshot → `GameSession.game.voluntary_allin=False`, the high-SPR turn menu
+  has no `allin`; control default byte-identical; `test_game_session` 8/8; capped `from_dict`
+  round-trip intact. (The server must be restarted to load it.)
+
+### Why it wasn't caught earlier
+The serving consumers were explicitly deferred ("not needed for the trainer/BR/LBR gate"), and
+the menu mismatch only manifests when a *capped* blueprint is *served* — which first happened
+when the user pinned a capped snapshot via `ALLIN_BLUEPRINT_DB` to play it. No test served a
+capped blueprint through `GameSession`. (Same class as BUG-008: a consumer's action model
+drifting from the deployed/served abstraction.)
+
+### Retrain impact
+None — inference-only. The capped blueprint was correct on disk; only the serving engine was
+misconfigured.
+
+### Lessons
+A per-artifact abstraction flag (`menu_mode`) must be **auto-derived from the artifact** at
+*every* boundary that consumes it — training, eval, AND serving — not hand-set. The moment one
+consumer defaults the flag instead of reading it, you get a silent menu mismatch that surfaces
+as "the model did something insane." The `db_menu_mode(db)` helper is the anti-drift mechanism;
+the bug was a consumer that hadn't been wired to it yet. When you defer threading a flag through
+"non-critical" consumers, the serving path is not non-critical — it's the one the user sees.
+
+---
+
 ## BUG-010 — Validation harness gated on `visit_count`, comparing zero keys (a near-miss false-pass)
 
 | | |

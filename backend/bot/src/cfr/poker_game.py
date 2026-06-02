@@ -37,11 +37,30 @@ class PokerGame:
     This is separate from PyPokerEngine gameplay
     """
 
-    def __init__(self):
+    def __init__(self, postflop_menu=None, voluntary_allin=True):
+        """
+        postflop_menu   : the postflop bet/raise size dict (name -> pot fraction).
+                          Default None -> POSTFLOP_BET_MULT (the current 4-size menu;
+                          control arm, byte-identical to before). Pass
+                          sizing.POSTFLOP_BET_MULT_CAPPED for the Fix-#4 capped menu.
+        voluntary_allin : when True (default) every aggression node offers 'allin' as
+                          a free-standing action (current behaviour). When False
+                          (Fix #4) the voluntary anchor is suppressed and all-in only
+                          EMERGES when a sized tier clamps to the stack -- the
+                          proposal/response split. The emergent shove still maps to
+                          char 'a' (key consistency: two physically identical all-ins
+                          share one key regardless of which tier produced them).
+        Both are an ABSTRACTION choice: a blueprint trained under one menu/flag is
+        incompatible with another. They are constructor args (not the sizing SOT) so
+        the control and capped arms can be trained from the same code for the C
+        measurement.
+        """
         self.streets = ['preflop', 'flop', 'turn', 'river']
         self.max_raises_per_street = 2  # max raises per street (1 bet + 2 raises = 3 total)
         self.hand_evaluator = HandEvaluator()
-        self.BET_MULTIPLIERS = dict(POSTFLOP_BET_MULT)
+        self.BET_MULTIPLIERS = dict(postflop_menu if postflop_menu is not None
+                                    else POSTFLOP_BET_MULT)
+        self.voluntary_allin = voluntary_allin
         self._calc_cache = {}
 
     def _acting_player(self, action_index, street):
@@ -178,7 +197,13 @@ class PokerGame:
         # The 3-aggression cap is enforced upstream (get_legal_actions counts only
         # bet_/raise_, and 'allin in history' closes betting), and all-in is not a
         # bet_/raise_, so offering it here never exceeds the cap.
-        if not needs_allin:
+        #
+        # Fix #4: when voluntary_allin is False the FREE-STANDING anchor is
+        # suppressed -- all-in is NOT offered just because a shove would be a legal
+        # raise. It is still forced when a sized tier CLAMPS (cost >= remaining, the
+        # `needs_allin` set in the loop above), so a low-SPR jam still emerges; only
+        # the high-SPR "jam into a small pot" stray option goes away.
+        if not needs_allin and self.voluntary_allin:
             call_amount = self.get_call_amount_from_history(
                 street, history, starting_pot, p0_prev, p1_prev)
             allin_amount = self._allin_amount(
@@ -563,7 +588,11 @@ class PokerGame:
         # Voluntary all-in + short-stack safety net (mirror of
         # _apply_stack_constraints): offer the shove whenever it is a genuine raise
         # (more than a call), including over an affordable sized bet (the anchor).
-        if not needs_allin and stack_cp > self._ns_to_call(st, cp):
+        # Fix #4: gated on voluntary_allin -- when False the free-standing anchor is
+        # suppressed; the emergent clamp (needs_allin set in the loop above when a
+        # sized cost >= stack) still forces a low-SPR shove. Mirrors
+        # _apply_stack_constraints exactly so the two legal-action paths never drift.
+        if not needs_allin and self.voluntary_allin and stack_cp > self._ns_to_call(st, cp):
             needs_allin = True
         if needs_allin and 'allin' not in filtered:
             i = next((j for j, a in enumerate(filtered) if a.startswith(('bet_', 'raise_'))),

@@ -18,6 +18,11 @@ class Player(BasePokerPlayer):
             db_path = resolve_blueprint_path()
             self.db = BlueprintDB(db_path, read_only=True)
             total_iterations = self.db.get_metadata('total_iterations', 0)
+            # Rebuild the adapter under the served blueprint's action abstraction so
+            # a capped blueprint isn't offered actions it never trained (the serving-
+            # mismatch class: control engine + capped blueprint -> uniform stray jam).
+            from ..abstractions.sizing import db_menu_mode
+            self.game_adapter = GameAdapter(menu_mode=db_menu_mode(self.db))
             print(f"Loaded blueprint DB: {db_path}")
             print(f"Training iterations: {total_iterations}")
         except Exception as e:

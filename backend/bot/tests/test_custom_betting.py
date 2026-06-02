@@ -74,9 +74,14 @@ def test_translation_blend():
     w = dict(t)
     check('0.5 weights sum to 1', abs(w['s'] + w['m'] - 1.0) < 1e-9)
     check('0.5 leans to nearer m', w['m'] > w['s'])
-    grid_ai = g + [('a', 4.0)]
-    t2 = translation.translate_bet(1.5, grid_ai)
-    check('overbet 1.5 -> blends l and a', {c for c, _ in t2} == {'l', 'a'})
+    # 1.5 is now an ON-grid point ('o' = overbet), so it must NOT blend -> single 'o'.
+    # (This test predated the overbet tier being added to POSTFLOP_GRID; updated to use
+    #  a fraction that is genuinely BETWEEN the top grid size and the all-in anchor.)
+    grid_ai = g + [('a', 4.0)]                       # [s .33, m .66, l 1.0, o 1.5, a 4.0]
+    check('on-grid 1.5 -> single o', translation.translate_bet(1.5, grid_ai) == [('o', 1.0)])
+    t2 = translation.translate_bet(2.5, grid_ai)     # between o(1.5) and a(4.0)
+    check('off-grid 2.5 -> blends o and a', {c for c, _ in t2} == {'o', 'a'},
+          f'(got {t2})')
 
 
 # ---------------------------------------------------------------- session + bot

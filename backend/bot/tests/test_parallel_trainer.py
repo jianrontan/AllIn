@@ -128,12 +128,28 @@ def test_merge_strategy_gamma_independent_clock():
 
 def test_worker_chunk_disables_discount():
     """A worker run must not touch the discount clocks (master owns them) and
-    must populate role-specific dirty sets."""
+    must populate role-specific dirty sets. Payload carries menu_mode (last field)
+    so the worker builds the right action-abstraction arm."""
     baseline = {}
-    res = pt._worker_run_chunk((baseline, 0, 40, 12345, 1.5, 2.0))
+    res = pt._worker_run_chunk((baseline, 0, 40, 12345, 1.5, 2.0, 'control'))
     check('worker returns regret deltas', len(res['regret']) > 0)
     check('worker returns strategy deltas', len(res['strategy']) > 0)
     check('worker ev_count', res['ev_count'] == 40)
+
+
+def test_worker_chunk_capped_menu():
+    """A capped-menu worker must produce the capped abstraction's actions: the
+    'overbet2' char '2' appears in some info-set key, and the voluntary all-in node
+    is gone (no high-SPR 'a'-only-from-anchor keys). Light check: it runs and yields
+    at least one key whose pattern contains '2' (the 2.0x tier the control menu can
+    never produce)."""
+    baseline = {}
+    res = pt._worker_run_chunk((baseline, 0, 400, 999, 1.5, 2.0, 'capped'))
+    keys = set(res['regret']) | set(res['strategy'])
+    # postflop key pattern is the last underscore-token; '2' there == overbet2 played.
+    has_overbet2 = any('2' in k.split('_')[-1] for k in keys)
+    check('capped worker can produce overbet2 (char 2)', has_overbet2,
+          f"(no '2' in {len(keys)} keys -- raise chunk if flaky)")
 
 
 # --------------------------------------------------------------------------- #
@@ -395,6 +411,7 @@ def _run_all():
     test_multiround_cross_worker_cancellation_stable()
     test_merge_strategy_gamma_independent_clock()
     test_worker_chunk_disables_discount()
+    test_worker_chunk_capped_menu()
     test_worker_mode_stores_raw_regret()
     test_parallel_end_to_end()
     test_parallel_overlaps_single_thread()

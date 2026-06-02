@@ -24,17 +24,28 @@ def main():
     parser.add_argument('--db', default=None, help="Path to a blueprint .db (default: active).")
     parser.add_argument('--samples', type=int, default=400, help="Monte Carlo board samples.")
     parser.add_argument('--seed', type=int, default=42, help="RNG seed for reproducibility.")
+    parser.add_argument('--workers', type=int, default=1,
+                        help="Parallel worker processes for board samples (>1 = "
+                             "parallel). Bit-identical to serial for the same "
+                             "(seed, samples) -- only faster. Default 1 (serial). "
+                             "Each worker opens its own read-only DB connection.")
     args = parser.parse_args()
 
     db_path = args.db or resolve_blueprint_path()
     print(f"Blueprint : {db_path}")
-    print(f"Samples   : {args.samples}  (seed {args.seed})")
+    print(f"Samples   : {args.samples}  (seed {args.seed}, workers {args.workers})")
 
     db = BlueprintDB(db_path, read_only=True)
     try:
+        # menu_mode auto-derived from the DB metadata (control for a pre-stamp DB)
+        # so a capped blueprint is walked on its own tree.
         ev = BestResponseEvaluator(db, seed=args.seed)
+        print(f"Menu mode : {ev.menu_mode}")
         t0 = time.time()
-        result = ev.evaluate(num_samples=args.samples)
+        if args.workers and args.workers > 1:
+            result = ev.evaluate_parallel(num_samples=args.samples, workers=args.workers)
+        else:
+            result = ev.evaluate(num_samples=args.samples)
         elapsed = time.time() - t0
     finally:
         db.close()

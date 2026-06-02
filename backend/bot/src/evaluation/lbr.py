@@ -44,7 +44,6 @@ from ..cfr import translation
 from ..abstractions.sizing import (
     preflop_open_chips, PREFLOP_RAISE_MULT, POSTFLOP_BET_MULT, SIZE_CHAR)
 from ..abstractions.card_abstractions import CardAbstraction
-from ..abstractions.action_abstractions import ActionAbstraction
 from ..abstractions.hand_evaluator import HandEvaluator
 
 SB, BB = 1, 2
@@ -59,11 +58,24 @@ _FULL_DECK = [s + r for r in _RANKS for s in _SUITS]
 
 
 class LBREvaluator:
-    def __init__(self, blueprint_db, seed=None, flop_runout_samples=120):
+    def __init__(self, blueprint_db, seed=None, flop_runout_samples=120,
+                 menu_mode=None):
         self.db = blueprint_db
-        self.game = PokerGame()
+        # The LBR victim model must MIRROR the deployed bot's action abstraction --
+        # the same arm the blueprint was trained under -- or LBR scores the bot's
+        # responses against the wrong menu (the BUG-008 drift class). Auto-read from
+        # the DB (control for a pre-stamp DB) unless forced.
+        from ..abstractions.sizing import (
+            db_menu_mode, postflop_menu_for, is_capped_mode)
+        self.menu_mode = menu_mode or db_menu_mode(blueprint_db)
+        self._postflop_menu = postflop_menu_for(self.menu_mode)
+        self._voluntary_allin = not is_capped_mode(self.menu_mode)
+        if is_capped_mode(self.menu_mode):           # 'capped' | 'capped_no2'
+            self.game = PokerGame(postflop_menu=self._postflop_menu,
+                                  voluntary_allin=False)
+        else:
+            self.game = PokerGame()
         self.cards = CardAbstraction()
-        self.actions = ActionAbstraction()
         self.evaluator = HandEvaluator()
         self.rng = random.Random(seed)
         self._base_seed = seed
@@ -253,8 +265,10 @@ class LBREvaluator:
             # bot, not a snap-to-nearest victim that LBR could over-exploit.
             eff_frac = translation.eff_fraction(total_add, to_call, pot)
             allin_frac = translation.eff_fraction(stack[lbr_seat], to_call, pot)
-            grid = list(translation.POSTFLOP_GRID)
-            if allin_frac > 1.0:
+            grid = translation.postflop_grid_for(self.menu_mode)
+            # Append the all-in point only if it is BEYOND the top sized tier (so a
+            # capped grid whose top is 2.0x doesn't double-add when stack ~= 2x pot).
+            if allin_frac > grid[-1][1]:
                 grid.append(('a', allin_frac))
             translated = translation.translate_bet(eff_frac, grid)
             char = translation.nearest_char(eff_frac, grid)
@@ -295,7 +309,10 @@ class LBREvaluator:
             # 3-bet / 4-bet+: pot-relative (unified, matches the engine).
             mult = PREFLOP_RAISE_MULT[size]
             return int(round(to_call + mult * (pot + to_call)))
-        mult = POSTFLOP_BET_MULT[size]
+        # Postflop: index the ARM's menu (self._postflop_menu = capped 5-size incl.
+        # overbet2 when menu_mode='capped'), NOT the module default -- otherwise a
+        # capped blueprint's 'overbet2' size raises KeyError here.
+        mult = self._postflop_menu[size]
         if to_call > 0:
             return int(round(to_call + mult * (pot + to_call)))
         return int(round(mult * pot))
@@ -309,6 +326,10 @@ class LBREvaluator:
         # blueprint lookup hits the stored open keys): preflop open -> 4-size bet_*
         # ladder; preflop 3-bet/4-bet -> raise_* (3); postflop -> bet_/raise_ incl
         # overbet. Voluntary all-in when a shove is a genuine raise.
+        # Postflop sized names come from the blueprint's menu arm (control = 4-size
+        # incl. overbet; capped = 5-size incl. overbet2), so the victim model offers
+        # exactly the actions the deployed bot has. Preflop is menu-independent.
+        postflop_sizes = list(self._postflop_menu)        # e.g. [...,'overbet','overbet2']
         if to_call > 0:
             legal = ['fold', 'call']
             if street == 0 and num_aggr == 0:
@@ -316,13 +337,18 @@ class LBREvaluator:
             elif street == 0:
                 sized = ['raise_small', 'raise_medium', 'raise_large']
             else:
-                sized = ['raise_small', 'raise_medium', 'raise_large', 'raise_overbet']
+                sized = [f'raise_{s}' for s in postflop_sizes]
         else:
             legal = ['check']
             sized = (['bet_small', 'bet_medium', 'bet_large', 'bet_xlarge'] if street == 0
-                     else ['bet_small', 'bet_medium', 'bet_large', 'bet_overbet'])
+                     else [f'bet_{s}' for s in postflop_sizes])
         if can_aggr:
-            legal += sized + ['allin']
+            # Voluntary all-in anchor only when the arm has it (control); under the
+            # capped arm all-in EMERGES via the stack clamp below, never as a
+            # free-standing action -- mirroring voluntary_allin=False on the engine.
+            legal += sized
+            if self._voluntary_allin:
+                legal += ['allin']
 
         pos = self._pos(bot_seat)
         if street == 0:

@@ -24,7 +24,20 @@ class BlueprintTrainer:
     Blueprint CFR Trainer with Monte Carlo CFR+ (External Sampling) and stack constraints.
     """
 
-    def __init__(self):
+    def __init__(self, menu_mode='control'):
+        """
+        menu_mode : 'control' (default) trains on the current postflop menu with the
+                    voluntary all-in node (byte-identical to before -- the A/B
+                    baseline). 'capped' trains the Fix-#4 redesign: the 5-size capped
+                    postflop menu (incl. overbet2=2.0x) with the voluntary all-in node
+                    DROPPED (all-in emerges only when a sized tier clamps to stack).
+                    This is an ABSTRACTION choice -- a 'capped' blueprint is
+                    incompatible with a 'control' one and vice versa (the C
+                    measurement trains one of each). The mode is stamped into the DB
+                    metadata so a resume can't silently mix arms (mirrors the
+                    single/parallel mode guard).
+        """
+        self.menu_mode = menu_mode
         self.info_sets = {}
         # Keys created/mutated since the last checkpoint. Checkpoints persist
         # only these (every visited info set is mutated -- regrets or strategy --
@@ -45,10 +58,18 @@ class BlueprintTrainer:
         # round (see parallel_trainer.merge_round). Single-thread keeps it True
         # so its behaviour is unchanged / bit-identical.
         self.discount_enabled = True
-        self.game = PokerGame()
+        from ..abstractions.sizing import postflop_menu_for, is_capped_mode
+        if menu_mode == 'control':
+            self.game = PokerGame()                  # default menu + voluntary all-in
+        elif is_capped_mode(menu_mode):              # 'capped' | 'capped_no2'
+            self.game = PokerGame(postflop_menu=postflop_menu_for(menu_mode),
+                                  voluntary_allin=False)
+        else:
+            raise ValueError(
+                f"menu_mode must be 'control', 'capped', or 'capped_no2', "
+                f"got {menu_mode!r}")
         self.game_adapter = GameAdapter()
         self.deck = self.create_deck()
-        self.BET_MULTIPLIERS = {'small': 0.33, 'medium': 0.66, 'large': 1.00}
 
         # Discount exponents (Linear-CFR-style; cf. Brown & Sandholm 2019).
         # alpha discounts the cumulative regrets; gamma discounts the cumulative
@@ -396,6 +417,9 @@ class BlueprintTrainer:
             'total_iterations': iteration + 1,
             'alpha': self.alpha,
             'gamma': self.gamma,
+            # Action-abstraction arm (control vs Fix-#4 capped). Stamped so a resume
+            # is refused across menus (resume_from_db menu-mode guard).
+            'menu_mode': self.menu_mode,
             # Lifetime EV accumulators so the cumulative mean survives a resume.
             'ev_sum': self.ev_sum,
             'ev_count': self.ev_count,
@@ -449,5 +473,21 @@ class BlueprintTrainer:
                     f"clocks (visit_count = iterations vs merge-rounds), so resuming "
                     f"across modes corrupts the discount. Resume in {stored_mode!r} "
                     f"mode (match/omit the workers arg), or start a fresh run.")
+        # Menu-mode guard: a 'capped' blueprint has a DIFFERENT action abstraction
+        # (5-size menu + no voluntary all-in node) than a 'control' one, so resuming
+        # one as the other would mix incompatible info-set keys (e.g. an 'overbet2'
+        # char that the control menu never produces). Refuse a known mismatch; a
+        # pre-stamp DB (no stored menu_mode) is assumed 'control' (the only mode that
+        # existed before this flag), so resuming it as 'capped' is refused while
+        # resuming it as 'control' is allowed.
+        stored_menu = db.get_metadata('menu_mode', 'control')
+        if stored_menu != self.menu_mode:
+            raise ValueError(
+                f"Resume menu-mode mismatch: this blueprint was trained with "
+                f"menu_mode={stored_menu!r}, but the run is configured for "
+                f"{self.menu_mode!r}. The capped and control menus are different "
+                f"action abstractions (5-size + emergent all-in vs 4-size + voluntary "
+                f"all-in) and produce incompatible info-set keys. Resume with "
+                f"menu_mode={stored_menu!r}, or start a fresh run.")
         print(f"Resumed: {len(self.info_sets)} info sets, continuing from iteration {start_iteration}")
         return start_iteration

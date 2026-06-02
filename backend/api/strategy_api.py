@@ -27,6 +27,13 @@ from bot.src.subgame.river_subgame_solver import RiverSubgameSolver
 # The blueprint DB is opened read-only so a concurrent training run is safe.
 _BLUEPRINT_PATH = resolve_blueprint_path()
 BLUEPRINT_DB = BlueprintDB(_BLUEPRINT_PATH, read_only=True)
+# Action-abstraction arm the served blueprint was trained under ('control'|'capped'),
+# read from its DB metadata. The serving engine (GameSession.game) MUST match it, or
+# a capped blueprint served through a control engine re-introduces the dropped
+# voluntary all-in node -> untrained -> uniform fallback -> the bot stray-jams. A
+# pre-stamp DB defaults to 'control'.
+from bot.src.abstractions.sizing import db_menu_mode
+BLUEPRINT_MENU_MODE = db_menu_mode(BLUEPRINT_DB)
 # Phase-4 bot: the river subgame solver. Off the river (or whenever the solve
 # inputs are missing) it delegates to the blueprint exactly like
 # ConfidenceAwareStrategy; on the river it solves the actual subgame and plays the
@@ -94,6 +101,7 @@ _PATTERN_CHARS = {
     'k': 'check', 'c': 'call', 'f': 'fold',
     's': 'small bet/raise', 'm': 'medium bet/raise',
     'l': 'large bet/raise', 'o': 'overbet (1.5x pot)',
+    '2': 'overbet2 (2.0x pot, capped menu)',
     'x': 'xlarge open (5 BB)', 'a': 'all-in',
 }
 
@@ -366,7 +374,8 @@ def _load_session(session_id):
     data = SESSIONS.get(session_id)
     if data is None:
         return None, (jsonify({"error": "session not found or expired"}), 404)
-    return GameSession.from_dict(data, strategy_fn=BOT_RANGE_FN), None
+    return GameSession.from_dict(data, strategy_fn=BOT_RANGE_FN,
+                                 menu_mode=BLUEPRINT_MENU_MODE), None
 
 
 @app.route('/api/game/new', methods=['POST'])
@@ -378,7 +387,8 @@ def game_new():
 
     # No contention on a freshly-minted id, but lock for uniformity.
     with SESSIONS.lock(session_id):
-        session = GameSession.new(session_id, player_id, strategy_fn=BOT_RANGE_FN)
+        session = GameSession.new(session_id, player_id, strategy_fn=BOT_RANGE_FN,
+                                  menu_mode=BLUEPRINT_MENU_MODE)
         advance_bot_turns(session, BOT)      # bot may act first (when it is SB)
         SESSIONS.put(session_id, session.to_dict())
         view = session.public_view()
@@ -452,7 +462,10 @@ def game_bot_action():
         if err:
             return err
         try:
-            advance_bot_turns(session, BOT)
+            # Pause when a bot action deals a new board card so the client can
+            # render it before the bot's (possibly slow, river-solve) decision on
+            # the new street; the client's bot-turn loop calls back to resume.
+            advance_bot_turns(session, BOT, stop_on_new_card=True)
         except GameError as e:
             return jsonify({"error": str(e)}), 400
         SESSIONS.put(session.data['session_id'], session.to_dict())

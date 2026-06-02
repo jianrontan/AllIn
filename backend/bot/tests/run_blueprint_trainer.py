@@ -32,7 +32,8 @@ ANALYSIS_DIR = Path(__file__).parent.parent / "analysis" / "blueprints"
 
 
 def run_training(iterations, resume=None, checkpoint_every=1000,
-                 seed=None, gamma=None, workers=None, merge_every=2000):
+                 seed=None, gamma=None, workers=None, merge_every=2000,
+                 menu_mode='control'):
     """
     Run CFR training.
 
@@ -77,11 +78,15 @@ def run_training(iterations, resume=None, checkpoint_every=1000,
         # (still matches the blueprint_*.db glob used by resolve_blueprint_path
         # and the tracker, and the YYYYMMDD_HHMMSS stamp is still extractable).
         prefix = "blueprint_par" if (workers and workers > 1) else "blueprint"
-        db_path = ANALYSIS_DIR / f"{prefix}_{timestamp}.db"
-        print(f"New run: {db_path.name}")
+        # Tag non-control menus on disk so the A/B arms are distinguishable at a
+        # glance (still matches the blueprint_*.db glob). 'capped' -> _capped,
+        # 'capped_no2' -> _cappedno2.
+        menu_tag = "" if menu_mode == 'control' else f"_{menu_mode.replace('_', '')}"
+        db_path = ANALYSIS_DIR / f"{prefix}{menu_tag}_{timestamp}.db"
+        print(f"New run: {db_path.name}  (menu_mode={menu_mode})")
 
     db = BlueprintDB(db_path)
-    trainer = BlueprintTrainer()
+    trainer = BlueprintTrainer(menu_mode=menu_mode)
     if gamma is not None:
         trainer.gamma = gamma
     print(f"discount: alpha={trainer.alpha} gamma={trainer.gamma} "
@@ -96,6 +101,7 @@ def run_training(iterations, resume=None, checkpoint_every=1000,
     # resumes corrupt the Linear-CFR discount (single-thread vs parallel keep
     # incompatible per-info-set clocks); resume_from_db refuses a known mismatch.
     db.set_metadata('training_mode', mode)   # set_metadata json-encodes internally
+    db.set_metadata('menu_mode', menu_mode)  # action-abstraction arm (control/capped)
 
     try:
         if workers and workers > 1:
@@ -160,6 +166,14 @@ if __name__ == "__main__":
                    help="Seed Python's RNG (single-thread reproducibility only).")
     p.add_argument('--gamma', type=float, default=None,
                    help="Override the strategy-sum discount exponent.")
+    p.add_argument('--menu-mode', choices=['control', 'capped', 'capped_no2'],
+                   default='control',
+                   help="Action-abstraction arm: 'control' (current 4-size menu + "
+                        "voluntary all-in, the A/B baseline); 'capped' (Fix-#4: 5-size "
+                        "menu incl. 2.0x, voluntary all-in dropped); 'capped_no2' "
+                        "(capped WITHOUT the 2.0x tier -- the clean test arm for the "
+                        "2.0x tier's value). Each arm's blueprint is incompatible with "
+                        "the others (different keys); resume-guarded by menu_mode.")
     args = p.parse_args()
     run_training(
         args.iterations,
@@ -169,4 +183,5 @@ if __name__ == "__main__":
         gamma=args.gamma,
         workers=args.workers,
         merge_every=args.merge_every,
+        menu_mode=args.menu_mode,
     )

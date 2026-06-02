@@ -82,9 +82,21 @@ class GameError(Exception):
 
 
 class GameSession:
-    def __init__(self, data, strategy_fn=None):
+    def __init__(self, data, strategy_fn=None, menu_mode='control'):
         self.data = data
-        self.game = PokerGame()
+        # The serving engine MUST use the same action abstraction the served
+        # blueprint was trained under. Serving a 'capped' blueprint through a
+        # default (control) PokerGame re-introduces the voluntary all-in node the
+        # capped arm never trained -> the blueprint lookup falls back to UNIFORM over
+        # legal actions (incl. allin) -> the bot stray-jams at random. So thread the
+        # blueprint's menu_mode through (the API passes db_menu_mode(BLUEPRINT_DB)).
+        from ..abstractions.sizing import postflop_menu_for, is_capped_mode
+        if is_capped_mode(menu_mode):                # 'capped' | 'capped_no2'
+            self.game = PokerGame(postflop_menu=postflop_menu_for(menu_mode),
+                                  voluntary_allin=False)
+        else:
+            self.game = PokerGame()
+        self.menu_mode = menu_mode
         self.cards = CardAbstraction()
         self.evaluator = HandEvaluator()
         # Opponent model for the hand-level range tracker (Phase 3). A callback
@@ -99,22 +111,22 @@ class GameSession:
     # ------------------------------------------------------------------
 
     @classmethod
-    def new(cls, session_id, player_id, strategy_fn=None):
+    def new(cls, session_id, player_id, strategy_fn=None, menu_mode='control'):
         session = cls({
             'session_id': session_id,
             'player_id': player_id,
             'human_net': 0.0,
-        }, strategy_fn=strategy_fn)
+        }, strategy_fn=strategy_fn, menu_mode=menu_mode)
         session._deal_hand(hand_number=1, human_seat=0)
         return session
 
     @classmethod
-    def from_dict(cls, data, strategy_fn=None):
+    def from_dict(cls, data, strategy_fn=None, menu_mode='control'):
         # Deep-copy so the live session never aliases the stored dict's nested
         # lists/dicts (history, action_log, community, opp_range, ...). Without
         # this, in-place mutations would leak into the store before put() and a
         # mid-apply failure could corrupt the persisted state.
-        return cls(copy.deepcopy(data), strategy_fn=strategy_fn)
+        return cls(copy.deepcopy(data), strategy_fn=strategy_fn, menu_mode=menu_mode)
 
     def to_dict(self):
         return self.data
@@ -735,11 +747,28 @@ def _record_bot_debug(session, bot_strategy, public, key, legal, action):
     session.data.setdefault('bot_debug', []).append(record)
 
 
-def advance_bot_turns(session, bot_strategy):
-    """Apply bot actions until it is the human's turn or the hand ends."""
+def advance_bot_turns(session, bot_strategy, stop_on_new_card=False):
+    """Apply bot actions until it is the human's turn or the hand ends.
+
+    stop_on_new_card: when True, pause and return as soon as a bot action has dealt
+    a new community card (the street advanced) and it is STILL the bot's turn, so
+    the caller can render the freshly-dealt board before the bot's (possibly slow,
+    e.g. river-solve) decision on that new street. Without this, a single call that
+    e.g. closes the turn (bot's call) and then opens the river (bot is OOP) would
+    deal AND solve the river before returning -- the human would stare at the old
+    board through the whole solve, then see the river and the bot's action appear
+    together. The caller resumes by calling again (the next call sees the card
+    already dealt and lets the bot act); the frontend's bot-turn loop does exactly
+    that. /bot-action uses this; /new and /next-hand resolve fully (no river solve
+    is reachable before the human has acted)."""
     guard = 0
+    start_street = session.data['street']
     while (session.data['status'] == 'in_hand'
            and not session.is_human_turn()):
+        # A new board card was dealt since entry and the bot is still to act: hand
+        # control back so the client shows the card before the next bot decision.
+        if stop_on_new_card and session.data['street'] != start_street:
+            return
         bot = session.current_player()
         key = session.info_set_key(bot)
         legal = session.legal_actions()

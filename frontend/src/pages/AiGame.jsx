@@ -275,7 +275,10 @@ function AiGame() {
             setView(v);                       // reveal the new card immediately
             // The bot's turn runs separately so the freshly-dealt card shows first;
             // loop it (with a "thinking" indicator) until it's the human's turn or
-            // the hand ends. One bot action per call, so this is usually one pass.
+            // the hand ends. The backend also pauses the bot whenever ITS action
+            // deals a new board card (stop_on_new_card), so each loop pass renders
+            // that card before the bot's next (possibly slow river-solve) decision
+            // — i.e. you see the river, then the bot thinks, never the reverse.
             let guard = 0;
             while (v && v.status === 'in_hand' && v.toAct === 'bot' && guard < 8) {
                 setThinking(true);

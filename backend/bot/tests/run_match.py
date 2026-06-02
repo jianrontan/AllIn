@@ -43,9 +43,16 @@ def main():
     da = BlueprintDB(a_path, read_only=True)
     db = BlueprintDB(b_path, read_only=True)
     try:
+        # Each side plays under the action abstraction ITS blueprint was trained on
+        # (control/capped/capped_no2), auto-read from the DB stamp -- so a capped vs
+        # control head-to-head offers each side only the actions it actually trained.
+        from src.abstractions.sizing import db_menu_mode
+        mm_a, mm_b = db_menu_mode(da), db_menu_mode(db)
+        print(f"  menu modes: A={mm_a}  B={mm_b}")
         rec = []
         t0 = time.time()
-        HeadToHeadMatch(da, db, seed=args.seed).evaluate(
+        HeadToHeadMatch(da, db, seed=args.seed,
+                        menu_mode_a=mm_a, menu_mode_b=mm_b).evaluate(
             num_hands=args.hands, record=rec, progress_every=max(1, args.hands // 10))
         res = AIVATEstimator(db, seed=args.seed).estimate(
             rec, progress_every=max(1, args.hands // 10))

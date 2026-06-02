@@ -52,6 +52,29 @@ PREFLOP_RAISE_MULT = {'small': 0.66, 'medium': 1.0, 'large': 1.5}
 # 'overbet' (1.5x pot, char 'o') is the one blueprint overbet tier.
 POSTFLOP_BET_MULT = {'small': 0.33, 'medium': 0.66, 'large': 1.0, 'overbet': 1.5}
 
+# CAPPED postflop menu (Fix #4, the proposal/response redesign): adds a 2.0x tier
+# ('overbet2', char '2') AND is meant to be paired with voluntary_allin=False on the
+# engine, so the bot's PROPOSAL menu tops out at 2x pot and all-in only EMERGES when
+# a sized tier clamps to the stack (low SPR) -- it is no longer a free-standing
+# voluntary action at every node. This is the over-jam fix (Measurement A: the
+# over-jamming is the menu offering a degenerate all-in, not SPR-blind keys). It is
+# NOT the default: it is selected per-PokerGame so the control arm stays identical
+# for the C measurement. Larger overbets (>2x) stay the subgame solver's job.
+# Changing it is an abstraction change -> retrain (a blueprint trained under it is
+# incompatible with one trained under POSTFLOP_BET_MULT).
+POSTFLOP_BET_MULT_CAPPED = {'small': 0.33, 'medium': 0.66, 'large': 1.0,
+                            'overbet': 1.5, 'overbet2': 2.0}
+
+# CAPPED-NO-2.0x menu: the capped arm WITHOUT the 2.0x tier (tops out at 1.5x),
+# still paired with voluntary_allin=False. This is the clean one-variable test arm
+# for "is the 2.0x tier worth it?" -- it differs from POSTFLOP_BET_MULT_CAPPED ONLY
+# by the overbet2 entry, so an LBR/BR comparison of capped vs capped_no2 (on
+# CONVERGED arms) isolates the 2.0x tier's value. NOTE: vs this menu, the SPR 1.5-2.0
+# band loses both the 2.0x bet AND (no voluntary jam) any all-in -- the documented
+# jam gap the 2.0x tier was added to close; that's exactly what the test measures.
+POSTFLOP_BET_MULT_CAPPED_NO2 = {'small': 0.33, 'medium': 0.66, 'large': 1.0,
+                                'overbet': 1.5}
+
 # The 3-bet/4-bet core sizes (preflop pot-relative). Open + postflop have their own
 # 4-size sets above; do not use this tuple for those.
 SIZES = ('small', 'medium', 'large')
@@ -60,7 +83,41 @@ SIZES = ('small', 'medium', 'large')
 # grid builder and the LBR victim model share ONE mapping instead of each keeping a
 # private copy. 'xlarge' is the open-only 4th size (char 'x'); 'overbet' is postflop
 # (char 'o'). Mirrors the relevant entries of cfr/keys.ACTION_CHARS.
-SIZE_CHAR = {'small': 's', 'medium': 'm', 'large': 'l', 'xlarge': 'x', 'overbet': 'o'}
+SIZE_CHAR = {'small': 's', 'medium': 'm', 'large': 'l', 'xlarge': 'x', 'overbet': 'o',
+             'overbet2': '2'}
+
+
+def postflop_menu_for(menu_mode):
+    """The postflop bet/raise size dict for a menu_mode
+    ('control' | 'capped' | 'capped_no2'). One place to resolve the arm so every
+    consumer (engine, BR, LBR, the API grid) selects the same dict instead of
+    hard-coding POSTFLOP_BET_MULT."""
+    if menu_mode == 'capped':
+        return POSTFLOP_BET_MULT_CAPPED
+    if menu_mode == 'capped_no2':
+        return POSTFLOP_BET_MULT_CAPPED_NO2
+    return POSTFLOP_BET_MULT
+
+
+# menu_modes that drop the free-standing voluntary all-in (Fix #4 family). Both
+# capped variants do; 'control' keeps the voluntary jam. One predicate so the
+# engine builders (trainer, GameSession, BR, LBR) agree on which arms are
+# voluntary_allin=False.
+def is_capped_mode(menu_mode):
+    return menu_mode in ('capped', 'capped_no2')
+
+
+def db_menu_mode(blueprint_db):
+    """Read the action-abstraction arm a blueprint was trained under from its DB
+    metadata. A pre-stamp DB (trained before the menu_mode flag existed) is
+    'control' -- the only arm that existed then. So an eval harness auto-matches
+    the blueprint without the caller having to know which arm it is."""
+    if blueprint_db is None:
+        return 'control'
+    try:
+        return blueprint_db.get_metadata('menu_mode', 'control') or 'control'
+    except Exception:
+        return 'control'
 
 
 def preflop_open_chips():

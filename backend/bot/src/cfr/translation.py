@@ -24,6 +24,17 @@ never drift.
 # (char, frac) sorted ascending by frac, where frac is the size on the same axis
 # as eff_fraction() (bet / pot-after-call).
 POSTFLOP_GRID = [('s', 0.33), ('m', 0.66), ('l', 1.0), ('o', 1.5)]
+# Capped-menu (Fix #4) default grid: adds the 2.0x tier ('2'). A blueprint trained
+# under the capped menu must translate off-grid bets against THIS grid (otherwise a
+# bet between 1.5x and 2x wrongly clamps to 'o' instead of blending toward '2').
+POSTFLOP_GRID_CAPPED = [('s', 0.33), ('m', 0.66), ('l', 1.0), ('o', 1.5), ('2', 2.0)]
+
+
+def postflop_grid_for(menu_mode):
+    """The default postflop translation grid for a menu_mode. Only 'capped' has the
+    2.0x ('2') point; 'control' and 'capped_no2' both top out at 1.5x ('o'), so they
+    use the base grid."""
+    return list(POSTFLOP_GRID_CAPPED if menu_mode == 'capped' else POSTFLOP_GRID)
 
 
 def eff_fraction(total_add, to_call, pot):

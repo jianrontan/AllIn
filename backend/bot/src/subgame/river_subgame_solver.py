@@ -41,13 +41,18 @@ from .range_inputs import (
 _LOG = logging.getLogger(__name__)
 
 
-def blueprint_to_tree_dist(bp_dist, node):
+def blueprint_to_tree_dist(bp_dist, node, postflop_menu=None):
     """Redistribute a blueprint action distribution (over ENGINE actions) onto the
     tree node's action menu -- the EV-gate baseline ('what the blueprint would do
     here'). check/fold/call/allin map directly; a bet_*/raise_* maps to the tree
     sized edge whose SIZE FRACTION is nearest the blueprint size's fraction
-    (POSTFLOP_BET_MULT). Mass with no analogous tree action falls back to
-    allin/call/check. Renormalised over the node's actions."""
+    (`postflop_menu`, default POSTFLOP_BET_MULT). Mass with no analogous tree action
+    falls back to allin/call/check. Renormalised over the node's actions.
+
+    `postflop_menu` MUST match the arm the blueprint was trained under: a capped
+    blueprint stores `overbet2`, which is only in POSTFLOP_BET_MULT_CAPPED -- passing
+    the default control menu would drop that mass to the wrong nearest size."""
+    menu = postflop_menu if postflop_menu is not None else POSTFLOP_BET_MULT
     out = {a: 0.0 for a in node.actions}
     pot, tc = node.pot_mid, node.to_call
     sc_actor = node.sc[node.player]               # actor's chips already in this street
@@ -67,7 +72,7 @@ def blueprint_to_tree_dist(bp_dist, node):
             dest = bp_a if bp_a in out else None
         elif bp_a.startswith('bet_') or bp_a.startswith('raise_'):
             kind = 'bet' if bp_a.startswith('bet_') else 'raise'
-            frac = POSTFLOP_BET_MULT.get(bp_a.split('_')[1])   # None for *_custom_*
+            frac = menu.get(bp_a.split('_')[1])   # None for *_custom_*
             pool = tree_bets if kind == 'bet' else tree_raises
             if frac is not None and pool:
                 dest = min(pool, key=lambda t: abs(t[1] - frac))[0]
@@ -103,6 +108,11 @@ class RiverSubgameSolver(BlueprintStrategy):
                  ev_margin=1.0, menu=DEFAULT_MENU, rng=None,
                  guard_confidence=0.2, guard_margin=1.0):
         super().__init__(blueprint_db)
+        # Postflop size menu the served blueprint was trained under (control vs
+        # capped), so the EV-gate baseline projection maps the blueprint's stored
+        # sizes (incl. capped's overbet2) onto the river tree correctly.
+        from ..abstractions.sizing import db_menu_mode, postflop_menu_for
+        self._postflop_menu = postflop_menu_for(db_menu_mode(blueprint_db))
         self.max_iters = max_iters
         self.check_every = check_every
         self.time_budget = time_budget
@@ -160,7 +170,7 @@ class RiverSubgameSolver(BlueprintStrategy):
             # EV gate: deviate to the solved strategy only if it beats the
             # blueprint baseline (mapped onto the tree) by self.ev_margin chips.
             bp_engine = self._state_distribution(info_set_key, legal_actions, ps)
-            baseline = blueprint_to_tree_dist(bp_engine, node)
+            baseline = blueprint_to_tree_dist(bp_engine, node, self._postflop_menu)
             row = hand_row(info['ba'], spec['hole'], info['idx'])
             evs = hand_action_evs(info['cfr'], node, row, info['reach0'], info['reach1'])
             chosen, _gate = ev_gate(node.actions, dist, baseline, evs, self.ev_margin)

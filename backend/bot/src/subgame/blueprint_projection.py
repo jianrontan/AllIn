@@ -24,10 +24,14 @@ from .river_tree import is_sized, sized_chips
 from .river_subgame_solver import blueprint_to_tree_dist
 
 
-def tree_action_char(action, node):
+def tree_action_char(action, node, postflop_menu=None):
     """A tree action -> the blueprint pattern char it maps to. check/call/fold/
-    allin are direct; a sized bet/raise -> the nearest blueprint size char
-    (s/m/l/o) by pot fraction, matching how the engine would categorise it."""
+    allin are direct; a sized bet/raise -> the nearest blueprint size char by pot
+    fraction (`postflop_menu`, default POSTFLOP_BET_MULT), matching how the engine
+    would categorise it. The menu MUST match the blueprint's arm (capped adds the
+    2.0x 'overbet2'/'2' size) or the projected river pattern keys won't match the
+    blueprint's stored keys."""
+    menu = postflop_menu if postflop_menu is not None else POSTFLOP_BET_MULT
     if action == 'check':
         return 'k'
     if action == 'call':
@@ -41,11 +45,11 @@ def tree_action_char(action, node):
     else:  # raise:
         tc = node.to_call
         frac = (node.sc[node.player] + sized_chips(action) - tc) / (node.pot_mid + tc)
-    size = min(POSTFLOP_BET_MULT.items(), key=lambda kv: abs(kv[1] - frac))[0]
+    size = min(menu.items(), key=lambda kv: abs(kv[1] - frac))[0]
     return action_char(f'bet_{size}')
 
 
-def _node_patterns(tree):
+def _node_patterns(tree, postflop_menu=None):
     """node_id -> blueprint river pattern (chars from the root to that node)."""
     pat = {}
 
@@ -54,21 +58,25 @@ def _node_patterns(tree):
             return
         pat[node.node_id] = p
         for a, child in zip(node.actions, node.children):
-            walk(child, p + tree_action_char(a, node))
+            walk(child, p + tree_action_char(a, node, postflop_menu))
 
     walk(tree.root, '')
     return pat
 
 
-def blueprint_strategy_on_tree(tree, ba, raw_strategy):
+def blueprint_strategy_on_tree(tree, ba, raw_strategy, postflop_menu=None):
     """Per-node blueprint strategy on the tree.
 
     raw_strategy(key) -> {action: prob} or None (e.g. BlueprintDB.get_average_strategy).
     Returns a list indexed by node_id; each entry is an [H, A] row-stochastic
     array (A = that node's tree actions). Suitable as a strat_fn for
     RiverCFR.exploitability via `lambda nid: out[nid]`.
+
+    `postflop_menu` selects the blueprint's arm (control vs capped) so both the
+    river PATTERN chars and the action-distribution projection use the right size
+    set -- pass postflop_menu_for(db_menu_mode(db)). Default = control menu.
     """
-    patterns = _node_patterns(tree)
+    patterns = _node_patterns(tree, postflop_menu)
     pf = ba['pf']
     strg = ba['strg'][3]                 # river strength bucket per hand
     groups = ba['groups'][3]             # [(mask, rep_idx), ...] by (preflop, strength)
@@ -81,7 +89,7 @@ def blueprint_strategy_on_tree(tree, ba, raw_strategy):
         mat = np.zeros((ba['H'], len(node.actions)))
         for mask, rep in groups:
             key = make_info_set_key(3, pos, pf[rep], strg[rep], pattern)
-            tree_dist = blueprint_to_tree_dist(raw_strategy(key) or {}, node)
+            tree_dist = blueprint_to_tree_dist(raw_strategy(key) or {}, node, postflop_menu)
             mat[mask] = np.array([tree_dist[a] for a in node.actions])
         out[nid] = mat
     return out

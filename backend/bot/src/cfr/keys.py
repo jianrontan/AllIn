@@ -16,29 +16,44 @@ STREET_NAMES = ['preflop', 'flop', 'turn', 'river']
 # order coupling (card_abstractions imports nothing from cfr). See
 # card_abstractions.FINE_TO_COARSE / _build_fine_to_coarse for the rationale.
 _FINE_TO_COARSE = None
+# Memo: fine bucket id ('pf_<n>') -> coarse class id ('pf_<m>'). _coarse_class is a
+# PURE function of its string arg but was a measured BR hotspot -- profiled at 122M
+# calls / ~116s in a 2-sample best-response walk, each redoing split('_') + an int()
+# + an f-string. There are only NUM_PREFLOP_BUCKETS (30) distinct inputs, so a dict
+# memo collapses it to ~free. Bit-identical (same output, just cached).
+_COARSE_CACHE = {}
 
 
 def _coarse_class(fine_bucket):
     """Collapse a fine preflop bucket id ('pf_<n>') to its coarse class id
     ('pf_<m>', m in 0..NUM_PREFLOP_COARSE-1) for postflop keys. Idempotent on an
     already-coarse id only if it happens to be a valid fine index; callers must pass
-    the FINE bucket (they all do -- card_abstractions.preflop_bucket returns fine)."""
+    the FINE bucket (they all do -- card_abstractions.preflop_bucket returns fine).
+    Memoized (see _COARSE_CACHE) -- it's a hot path in the best-response walk."""
+    cached = _COARSE_CACHE.get(fine_bucket)
+    if cached is not None:
+        return cached
     global _FINE_TO_COARSE
     if _FINE_TO_COARSE is None:
         from ..abstractions.card_abstractions import FINE_TO_COARSE
         _FINE_TO_COARSE = FINE_TO_COARSE
     n = int(fine_bucket.split('_')[1])
-    return f"pf_{_FINE_TO_COARSE[n]}"
+    result = f"pf_{_FINE_TO_COARSE[n]}"
+    _COARSE_CACHE[fine_bucket] = result
+    return result
 
 # CFR action name -> single betting-pattern character.
 # 'x' = 4th preflop OPEN size (5 BB, open-only). 'o' = postflop overbet (1.5x pot,
-# bet or raise). 'a' = (now voluntary) all-in.
+# bet or raise). '2' = postflop overbet2 (2.0x pot, capped-menu Fix #4 only, bet or
+# raise). 'a' = all-in (voluntary in the default menu; emergent-only under the
+# capped menu, where a sized tier that clamps to the stack maps here).
 ACTION_CHARS = {
     'check': 'k', 'call': 'c', 'fold': 'f',
     'bet_small': 's', 'bet_medium': 'm', 'bet_large': 'l',
     'raise_small': 's', 'raise_medium': 'm', 'raise_large': 'l',
     'bet_xlarge': 'x',
     'bet_overbet': 'o', 'raise_overbet': 'o',
+    'bet_overbet2': '2', 'raise_overbet2': '2',
     'allin': 'a',
 }
 

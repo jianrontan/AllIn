@@ -5,9 +5,11 @@ from ..cfr.keys import make_info_set_key, action_char, STREET_NAMES
 
 
 class GameAdapter:
-    def __init__(self):
+    def __init__(self, menu_mode='control'):
         self.card_abstractions = CardAbstraction()
-        self.action_abstractions = ActionAbstraction()
+        # menu_mode drives the action abstraction so the PyPokerEngine path serves a
+        # capped blueprint on its own menu (2.0x tier, no voluntary all-in).
+        self.action_abstractions = ActionAbstraction(menu_mode=menu_mode)
 
     def create_info_set_key(self, hole_card, round_state, position='ip'):
         """

@@ -31,13 +31,15 @@ _SUITS = ['H', 'D', 'C', 'S']
 _FULL_DECK = [s + r for r in _RANKS for s in _SUITS]
 
 
-def _legal_actions(street, to_call, num_aggr, stack, pot):
+def _legal_actions(street, to_call, num_aggr, stack, pot, menu_mode='control'):
     """Mirror poker_game.get_legal_actions using the SAME engine action NAMES so a
     blueprint lookup hits the stored keys (the DB stores opens as bet_*, NOT raise_*):
       * preflop OPEN (street 0, num_aggr==0) -> bet_* on the 4-size BB ladder (incl
         xlarge);  preflop 3-bet/4-bet (num_aggr>=1) -> raise_* (3 pot-relative sizes);
       * postflop first-in -> bet_* incl overbet;  facing a bet -> raise_* incl overbet.
     Voluntary all-in is always available when a shove is a genuine raise."""
+    from ..abstractions.sizing import postflop_menu_for, is_capped_mode
+    postflop_sizes = list(postflop_menu_for(menu_mode))   # incl overbet2 iff 'capped'
     can_aggr = num_aggr < MAX_AGGR_PER_STREET and stack > max(0, to_call)
     if to_call > 0:
         legal = ['fold', 'call']
@@ -46,19 +48,25 @@ def _legal_actions(street, to_call, num_aggr, stack, pot):
         elif street == 0:
             sized = ['raise_small', 'raise_medium', 'raise_large']
         else:
-            sized = ['raise_small', 'raise_medium', 'raise_large', 'raise_overbet']
+            sized = [f'raise_{s}' for s in postflop_sizes]
     else:
         legal = ['check']
         sized = (['bet_small', 'bet_medium', 'bet_large', 'bet_xlarge'] if street == 0
-                 else ['bet_small', 'bet_medium', 'bet_large', 'bet_overbet'])
+                 else [f'bet_{s}' for s in postflop_sizes])
     if can_aggr:
-        legal += sized + ['allin']
+        legal += sized
+        # Voluntary all-in only when the arm has it (control); capped/capped_no2 drop
+        # the free-standing anchor (all-in still emerges via the stack clamp in act()).
+        if not is_capped_mode(menu_mode):
+            legal += ['allin']
     return legal
 
 
-def _sizing(size, street, pot, to_call, committed, num_aggr):
+def _sizing(size, street, pot, to_call, committed, num_aggr, postflop_menu=None):
     """Chips ADDED for an abstract bet/raise size. Sizes come from
-    abstractions/sizing.py (single source of truth); mirrors lbr._bot_sizing."""
+    abstractions/sizing.py (single source of truth); mirrors lbr._bot_sizing.
+    `postflop_menu` selects the arm's size dict (capped incl. overbet2); None ->
+    the default 4-size POSTFLOP_BET_MULT."""
     if street == 0:
         if num_aggr == 0:                          # open: absolute BB ladder
             to_amt = preflop_open_chips()[size]
@@ -66,7 +74,7 @@ def _sizing(size, street, pot, to_call, committed, num_aggr):
         # 3-bet / 4-bet+: pot-relative (unified, matches the engine).
         mult = PREFLOP_RAISE_MULT[size]
         return int(round(to_call + mult * (pot + to_call)))
-    mult = POSTFLOP_BET_MULT[size]
+    mult = (postflop_menu or POSTFLOP_BET_MULT)[size]
     if to_call > 0:
         return int(round(to_call + mult * (pot + to_call)))
     return int(round(mult * pot))
@@ -75,10 +83,16 @@ def _sizing(size, street, pot, to_call, committed, num_aggr):
 class BlueprintPlayer:
     """Samples its abstract action from a blueprint at the bucketed info-set key."""
 
-    def __init__(self, strategy_source, cards, rng):
+    def __init__(self, strategy_source, cards, rng, menu_mode='control'):
         self.src = strategy_source
         self.cards = cards
         self.rng = rng
+        # Action-abstraction arm this player's blueprint was trained under. Drives
+        # both the legal-action menu and the sizing dict so a capped blueprint isn't
+        # offered actions it never trained (the BUG-008 / serving-mismatch class).
+        self.menu_mode = menu_mode
+        from ..abstractions.sizing import postflop_menu_for
+        self._postflop_menu = postflop_menu_for(menu_mode)
         self._raw_cache = {}
         self._restricted_cache = {}
 
@@ -113,7 +127,7 @@ class BlueprintPlayer:
             key = make_info_set_key(
                 street, pos, self.cards.get_bucket(list(hand), None),
                 self.cards.get_bucket(list(hand), vis), pattern)
-        legal = _legal_actions(street, to_call, num_aggr, stack, pot)
+        legal = _legal_actions(street, to_call, num_aggr, stack, pot, self.menu_mode)
         probs = self._restricted(key, tuple(legal))
         idx = self.rng.choices(range(len(legal)), weights=probs)[0]
         action = legal[idx]
@@ -128,7 +142,8 @@ class BlueprintPlayer:
             char, add, aggr = 'a', stack, True
         else:
             size = action.split('_')[1]
-            add = max(_sizing(size, street, pot, to_call, committed, num_aggr), to_call + 1)
+            add = max(_sizing(size, street, pot, to_call, committed, num_aggr,
+                              self._postflop_menu), to_call + 1)
             if add >= stack:
                 char, add, aggr = 'a', stack, True
             else:
@@ -144,12 +159,16 @@ class HeadToHeadMatch:
     `seat_of_A` alternates each hand to cancel positional asymmetry.
     """
 
-    def __init__(self, strat_a, strat_b, seed=None):
+    def __init__(self, strat_a, strat_b, seed=None,
+                 menu_mode_a='control', menu_mode_b='control'):
         self.cards = CardAbstraction()
         self.evaluator = HandEvaluator()
         self.rng = random.Random(seed)
-        self.pa = BlueprintPlayer(strat_a, self.cards, self.rng)
-        self.pb = BlueprintPlayer(strat_b, self.cards, self.rng)
+        # Each side can be a DIFFERENT arm (e.g. capped vs control head-to-head), so
+        # menu_mode is per-player. A BlueprintDB strat exposes get_metadata; default
+        # to control for a fake/pre-stamp source.
+        self.pa = BlueprintPlayer(strat_a, self.cards, self.rng, menu_mode=menu_mode_a)
+        self.pb = BlueprintPlayer(strat_b, self.cards, self.rng, menu_mode=menu_mode_b)
 
     def play_hand(self, seat_of_A, hand_a, hand_b, board, record=None):
         """Returns A's net chips. If `record` is a list, append a trajectory dict."""

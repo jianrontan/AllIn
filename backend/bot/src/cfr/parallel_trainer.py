@@ -71,11 +71,24 @@ abstraction.
 """
 import os
 import time
+import signal
 import random
-from multiprocessing import Pool
+from multiprocessing import Pool, TimeoutError as _mp_TimeoutError
 
 from .information_set import InformationSet
 from .blueprint_trainer import BlueprintTrainer, _format_duration
+
+
+def _worker_init():
+    """Pool-worker initializer: make workers IGNORE SIGINT (Ctrl+C). On Windows,
+    Ctrl+C is delivered to the WHOLE process group, so without this every worker
+    raises KeyboardInterrupt mid-cfr() AND the pool's maintenance thread respawns
+    them (SpawnPoolWorker-9..16 in the traceback) -- an endless "Ctrl+C does
+    nothing" loop. With workers ignoring SIGINT, Ctrl+C reaches ONLY the master,
+    which then calls pool.terminate() once to SIGKILL the (idle-waiting) workers.
+    The master re-enables default SIGINT handling for itself right after pool
+    creation."""
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 
 # --------------------------------------------------------------------------- #
@@ -111,10 +124,13 @@ def _worker_run_chunk(payload):
     """Run `chunk` iterations from a baseline with the discount disabled, and
     return only this round's deltas (the info sets touched, split by whether they
     got a regret update, a strategy update, or both)."""
-    baseline, start_iteration, chunk, seed, alpha, gamma = payload
+    baseline, start_iteration, chunk, seed, alpha, gamma, menu_mode = payload
     random.seed(seed)
 
-    trainer = BlueprintTrainer()
+    # The worker MUST build its game under the same action abstraction as the master
+    # (capped vs control); otherwise it would generate the wrong legal-action set and
+    # info-set keys for the arm being trained.
+    trainer = BlueprintTrainer(menu_mode=menu_mode)
     trainer.alpha = alpha
     trainer.gamma = gamma
     trainer.discount_enabled = False        # master applies the block discount
@@ -269,6 +285,7 @@ def train_blueprint_parallel(trainer, iterations, db=None, start_iteration=0,
     if workers is None:
         workers = os.cpu_count() or 1
     alpha, gamma = trainer.alpha, trainer.gamma
+    menu_mode = trainer.menu_mode      # workers must build the same abstraction arm
     # Per-worker seed = base_seed + round_idx*workers + w (unique per (round, worker)).
     # Fold start_iteration in so a SEEDED resume doesn't restart round_idx at 0 and
     # re-deal the exact hands the original run already trained on (correlated work).
@@ -276,7 +293,15 @@ def train_blueprint_parallel(trainer, iterations, db=None, start_iteration=0,
 
     own_pool = pool is None
     if own_pool:
-        pool = Pool(processes=workers)
+        # Workers ignore SIGINT (see _worker_init) so Ctrl+C hits only the master.
+        # The Pool maintenance thread inherits SIG_IGN from creation context; set it
+        # here, create the pool, then restore the master's own SIGINT so our
+        # except-KeyboardInterrupt below still fires.
+        prev_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            pool = Pool(processes=workers, initializer=_worker_init)
+        finally:
+            signal.signal(signal.SIGINT, prev_sigint)
 
     total_target = start_iteration + iterations
     print(f"Starting PARALLEL blueprint CFR training")
@@ -292,6 +317,8 @@ def train_blueprint_parallel(trainer, iterations, db=None, start_iteration=0,
     cursor = start_iteration
     since_checkpoint = 0
     round_idx = 0
+    ev_ema = None                 # smoothed per-round EV (see EV(round) print below)
+    EV_EMA_BETA = 0.2             # ~last 5 rounds
 
     try:
         while done < iterations:
@@ -313,17 +340,41 @@ def train_blueprint_parallel(trainer, iterations, db=None, start_iteration=0,
                     cursor + offset,
                     chunk,
                     base_seed + round_idx * workers + w,
-                    alpha, gamma,
+                    alpha, gamma, menu_mode,
                 ))
                 offset += chunk
 
-            results = pool.map(_worker_run_chunk, payloads)
+            # map_async(...).get(timeout) instead of the blocking pool.map: a bare
+            # blocking map() on Windows does NOT return control to the main thread on
+            # Ctrl+C (the interrupt can't surface until the C-level wait ends), so the
+            # except below never fires. Polling .get() with a finite timeout keeps the
+            # main thread interruptible, so KeyboardInterrupt propagates immediately.
+            async_res = pool.map_async(_worker_run_chunk, payloads)
+            while True:
+                try:
+                    results = async_res.get(timeout=1.0)
+                    break
+                except _mp_TimeoutError:
+                    continue
 
             touched = merge_round(trainer.info_sets, results, alpha, gamma)
             trainer._dirty.update(touched)
+            round_ev_sum = round_ev_count = 0.0
             for res in results:
                 trainer.ev_sum += res['ev_sum']
                 trainer.ev_count += res['ev_count']
+                round_ev_sum += res['ev_sum']
+                round_ev_count += res['ev_count']
+            # Per-round EV: mean root value of THIS round's frozen broadcast strategy.
+            # The least-lagged EV signal the parallel path has (vs the lifetime
+            # EV(cum) which barely moves on a resume). Still lagged ~one round behind
+            # single-thread's per-iteration EV(sess) -- all workers measure the
+            # round-START strategy, not within-round updates -- so watch its TREND
+            # (should fall toward the game value as it converges), not its absolute
+            # level, and never compare it to single-thread EV(sess) or to BR/LBR.
+            round_ev = round_ev_sum / round_ev_count if round_ev_count else 0.0
+            ev_ema = round_ev if ev_ema is None else (
+                EV_EMA_BETA * round_ev + (1.0 - EV_EMA_BETA) * ev_ema)
 
             done += round_total
             cursor += round_total
@@ -335,9 +386,21 @@ def train_blueprint_parallel(trainer, iterations, db=None, start_iteration=0,
             ips = done / elapsed if elapsed > 0 else 0
             round_ips = round_total / round_secs if round_secs > 0 else 0
             eta = _format_duration((iterations - done) / ips) if ips > 0 else "?"
+            # NOTE: EV(cum) here READS HIGH vs single-thread and is NOT comparable to
+            # it. Each worker records the value of the STALE round-start broadcast
+            # strategy (frozen per round; workers don't see within-round updates), so
+            # this gauge measures a strategy that advances only once per round
+            # (merge_every*workers iters) -- structurally less converged -> inflated
+            # EV. Measured: parallel reads ~+1.4 (control) to ~+2.2 (capped) above
+            # single-thread at matched iters. The accumulation is arithmetically
+            # correct (ev_count==total_iterations); it's the gauge's reference
+            # strategy that lags. For TRUE strength use the eval harness (BR/LBR), not
+            # this number. Labelled EV(cum,lagged) to flag it. See
+            # ev-cum-investigation memory.
             cum_ev = trainer.ev_sum / trainer.ev_count if trainer.ev_count else 0.0
             print(f"  round {round_idx:>4} | iter {cursor:>11,}/{total_target:,} "
-                  f"(+{round_total:,}) | EV(cum): {cum_ev:+.5f} | "
+                  f"(+{round_total:,}) | EV(cum,lagged): {cum_ev:+.5f} | "
+                  f"EV(round): {round_ev:+.4f} | EV(round,ema): {ev_ema:+.4f} | "
                   f"info sets: {len(trainer.info_sets):>8,} | "
                   f"{round_ips:>7.1f} it/s round ({ips:>6.1f} avg) | "
                   f"round: {_format_duration(round_secs)} | "
@@ -354,6 +417,20 @@ def train_blueprint_parallel(trainer, iterations, db=None, start_iteration=0,
         if db is not None and since_checkpoint > 0:
             trainer.checkpoint_to_db(db, cursor - 1)
             since_checkpoint = 0
+    except KeyboardInterrupt:
+        # Ctrl+C: kill the workers IMMEDIATELY (terminate, not close). pool.close()
+        # waits for every queued chunk to finish before join() returns -- with 8
+        # workers each mid-chunk that's "Ctrl+C does nothing for minutes", the
+        # symptom that forced killing the terminal. terminate() SIGKILLs them now.
+        # Work since the last checkpoint is lost (resume picks up from the last
+        # checkpointed iteration), which is the correct interrupt semantics.
+        print("\nKeyboardInterrupt -- terminating workers (progress since the last "
+              "checkpoint is discarded; resume from the checkpointed iteration).")
+        if own_pool:
+            pool.terminate()
+            pool.join()
+            own_pool = False             # already torn down; skip the finally close()
+        raise
     finally:
         if own_pool:
             pool.close()

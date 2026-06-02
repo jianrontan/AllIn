@@ -78,12 +78,31 @@ from .showdown_kernel import (
 
 
 class BestResponseEvaluator:
-    def __init__(self, blueprint_db, seed=None):
+    def __init__(self, blueprint_db, seed=None, menu_mode=None):
         self.db = blueprint_db
-        self.game = PokerGame()
+        # The eval game must use the SAME action abstraction the blueprint was
+        # trained under, or the public-tree walk enumerates the wrong legal actions
+        # / keys. menu_mode=None auto-reads it from the DB metadata (control for a
+        # pre-stamp DB); 'control'/'capped' force it. BR is otherwise menu-agnostic
+        # -- it walks game.get_legal_actions and groups by blueprint key -- so the
+        # only thing that needs the menu is the PokerGame it walks.
+        from ..abstractions.sizing import (
+            db_menu_mode, postflop_menu_for, is_capped_mode)
+        mm = menu_mode or db_menu_mode(blueprint_db)
+        if is_capped_mode(mm):                        # 'capped' | 'capped_no2'
+            self.game = PokerGame(postflop_menu=postflop_menu_for(mm),
+                                  voluntary_allin=False)
+        else:
+            self.game = PokerGame()
+        self.menu_mode = mm
         self.cards = CardAbstraction()
         self.evaluator = HandEvaluator()
-        self.rng = random.Random(seed)
+        # Keep the raw seed (not just the RNG) so the serial and parallel paths can
+        # both derive the SAME board list from it -> identical results either way.
+        # None -> a fresh random seed, materialised once here so a no-seed run is
+        # still reproducible between its own serial and parallel calls.
+        self.seed = seed if seed is not None else random.randrange(1 << 30)
+        self.rng = random.Random(self.seed)
 
         # Memoize blueprint lookups: info_set_key -> {action: prob} (or None).
         self._strategy_cache = {}
@@ -152,15 +171,27 @@ class BestResponseEvaluator:
         pf = ba['pf']
         strg = ba['strg']
 
+        # Cache the constructed info-set KEY per (street, group-rep, pattern). The
+        # tree walk revisits the same (street, bucket-group, pattern) at many nodes,
+        # and make_info_set_key was a profiled hotspot (122M calls in a 2-sample
+        # walk -- once per group per node). The key depends only on these three (plus
+        # the fixed villain_pos), so caching the string collapses the 122M builds to
+        # ~thousands. _restricted_probs is still separately cached by (key, legal).
+        key_cache = {}
+
         def villain_probs_matrix(street, pattern, legal):
             """[H, n_legal] blueprint probs per villain hand, grouped by key."""
             mat = np.empty((H, len(legal)))
-            for mask, rep in ba['groups'][street]:
-                if street == 0:
-                    key = make_info_set_key(0, villain_pos, pf[rep], None, pattern)
-                else:
-                    key = make_info_set_key(
-                        street, villain_pos, pf[rep], strg[street][rep], pattern)
+            for gi, (mask, rep) in enumerate(ba['groups'][street]):
+                kc = (street, gi, pattern)
+                key = key_cache.get(kc)
+                if key is None:
+                    if street == 0:
+                        key = make_info_set_key(0, villain_pos, pf[rep], None, pattern)
+                    else:
+                        key = make_info_set_key(
+                            street, villain_pos, pf[rep], strg[street][rep], pattern)
+                    key_cache[kc] = key
                 mat[mask] = self._restricted_probs(key, legal)
             return mat
 
@@ -243,33 +274,115 @@ class BestResponseEvaluator:
     # Top-level estimate
     # ------------------------------------------------------------------
 
-    def evaluate(self, num_samples=100, progress_every=10):
-        """
-        Return a dict with BR values per seat and total exploitability, all in
-        milli-big-blinds per hand (mbb/hand). BB = 2 chips. Each board sample
-        integrates all hero hands and the full villain range, so far fewer
-        samples are needed than the old per-hero-hand estimator.
-        """
-        br_chips = {0: 0.0, 1: 0.0}
+    def board_contribution(self, board):
+        """Per-board BR contribution (board_seat0_chips, board_seat1_chips): the
+        seat's measure-mean / compatible-villain-count for THIS board. Summing these
+        over boards and dividing by num_samples gives the per-seat BR. Factored out
+        so a single board is the parallelizable unit of work (see evaluate_parallel)
+        and so `evaluate` and the parallel path share one definition."""
+        ba = self._board_arrays(board)
+        out = []
+        for hero_seat in (0, 1):
+            vec = self._board_value(hero_seat, board, ba)
+            out.append(float(vec.mean()) / _COMPATIBLE)
+        return out[0], out[1]
 
-        for s in range(num_samples):
-            board = self.rng.sample(_FULL_DECK, 5)
-            ba = self._board_arrays(board)
-            for hero_seat in (0, 1):
-                vec = self._board_value(hero_seat, board, ba)
-                # mean over hero hands of (measure / compatible villain count)
-                br_chips[hero_seat] += float(vec.mean()) / _COMPATIBLE
+    @staticmethod
+    def _boards_for(seed, num_samples):
+        """The exact board list `evaluate` would draw for (seed, num_samples).
+        Centralised so the serial and parallel paths sample IDENTICAL boards from a
+        seed -> same number for the same seed, parallel or not."""
+        rng = random.Random(seed)
+        return [rng.sample(_FULL_DECK, 5) for _ in range(num_samples)]
 
-            if progress_every and (s + 1) % progress_every == 0:
-                print(f"  sample {s + 1}/{num_samples}", flush=True)
-
-        br0 = br_chips[0] / num_samples
-        br1 = br_chips[1] / num_samples
-        # chips -> mbb: divide by BB(2), times 1000.
-        to_mbb = 1000.0 / 2.0
+    @staticmethod
+    def _finalize(br0_chips_sum, br1_chips_sum, num_samples):
+        br0 = br0_chips_sum / num_samples
+        br1 = br1_chips_sum / num_samples
+        to_mbb = 1000.0 / 2.0                         # chips -> mbb: /BB(2) *1000
         return {
             'br_seat0_mbb': br0 * to_mbb,
             'br_seat1_mbb': br1 * to_mbb,
             'exploitability_mbb': (br0 + br1) * to_mbb,
             'num_samples': num_samples,
         }
+
+    def evaluate(self, num_samples=100, progress_every=10):
+        """
+        Return a dict with BR values per seat and total exploitability, all in
+        milli-big-blinds per hand (mbb/hand). BB = 2 chips. Each board sample
+        integrates all hero hands and the full villain range, so far fewer
+        samples are needed than the old per-hero-hand estimator.
+
+        NOTE: boards are now drawn up-front from the seed (via _boards_for) so this
+        serial path and evaluate_parallel produce BIT-IDENTICAL results for the same
+        (seed, num_samples) -- the only difference is wall-time.
+        """
+        boards = self._boards_for(self.seed, num_samples)
+        b0 = b1 = 0.0
+        for s, board in enumerate(boards):
+            c0, c1 = self.board_contribution(board)
+            b0 += c0
+            b1 += c1
+            if progress_every and (s + 1) % progress_every == 0:
+                print(f"  sample {s + 1}/{num_samples}", flush=True)
+        return self._finalize(b0, b1, num_samples)
+
+    def evaluate_parallel(self, num_samples=100, workers=None, progress_every=None,
+                          seed=None):
+        """Parallel BR: board samples are independent, so split them across worker
+        processes. Each worker opens its OWN read-only DB connection + evaluator
+        (BlueprintDB(read_only=True) is explicitly multi-reader-safe), computes a
+        slice of boards, and returns partial (seat0, seat1) chip sums. Result is
+        BIT-IDENTICAL to evaluate() for the same (seed, num_samples) because both
+        derive the board list from _boards_for(seed) -- parallelism only changes
+        speed, not the number.
+
+        workers: process count (default os.cpu_count()). seed: overrides the
+        evaluator's seed for board draw (default: the evaluator's own seed)."""
+        import os
+        from multiprocessing import Pool
+
+        if workers is None:
+            workers = os.cpu_count() or 1
+        the_seed = seed if seed is not None else self.seed
+        boards = self._boards_for(the_seed, num_samples)
+
+        # Split board indices into `workers` contiguous chunks. Each chunk is one
+        # task: (db_path, menu_mode, board_sublist).
+        chunks = [boards[i::workers] for i in range(workers)]
+        payloads = [(self.db.db_path, self.menu_mode, ch) for ch in chunks if ch]
+
+        b0 = b1 = 0.0
+        with Pool(processes=workers) as pool:
+            for (p0, p1) in pool.imap_unordered(_br_board_chunk, payloads):
+                b0 += p0
+                b1 += p1
+        return self._finalize(b0, b1, num_samples)
+
+
+# --------------------------------------------------------------------------- #
+# Parallel worker (module-level so it is picklable under 'spawn'). Each worker
+# opens its OWN read-only blueprint connection + evaluator and sums a sublist of
+# boards -- BlueprintDB(read_only=True) opens mode=ro, so many workers can read the
+# same DB file concurrently (the same property that lets inference read a DB while
+# training writes a different one).
+# --------------------------------------------------------------------------- #
+
+def _br_board_chunk(payload):
+    """(db_path, menu_mode, boards) -> (seat0_chip_sum, seat1_chip_sum) over the
+    chunk. Builds a fresh evaluator per process; menu_mode is forced so a capped
+    blueprint is walked on the capped tree even though the worker re-opens the DB."""
+    db_path, menu_mode, boards = payload
+    from ..storage.blueprint_db import BlueprintDB
+    db = BlueprintDB(db_path, read_only=True)
+    try:
+        ev = BestResponseEvaluator(db, menu_mode=menu_mode)
+        b0 = b1 = 0.0
+        for board in boards:
+            c0, c1 = ev.board_contribution(board)
+            b0 += c0
+            b1 += c1
+        return (b0, b1)
+    finally:
+        db.close()

@@ -98,7 +98,10 @@ cd backend/bot
 python tests/run_blueprint_trainer.py --iterations 30000000 --workers 8 --merge-every 4000 --checkpoint-every 50000
 
 # Resume a parallel run (worker count MAY differ from the original run)
-python tests/run_blueprint_trainer.py --iterations 10000000 --resume blueprint_par_20260529_002511.db --workers 6 --merge-every 4000
+python tests/run_blueprint_trainer.py --iterations 10000000 --resume blueprint_par_20260529_002511.db --workers 6 --merge-every 2000
+
+# Redesign blueprint v2 run
+python tests/run_blueprint_trainer.py --iterations 30000000 --workers 8 --merge-every 2000 --menu-mode capped --resume blueprint_par_capped_20260601_204425.db
 ```
 
 **Choosing the settings:**

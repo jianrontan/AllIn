@@ -6,7 +6,17 @@ class ActionAbstraction:
     """
     Maps between PyPokerEngine actions and the CFR action vocabulary
     (check/call/fold + small/medium/large bet sizing + allin).
+
+    menu_mode selects the postflop size set so a capped blueprint served through the
+    PyPokerEngine path offers/sizes the 2.0x 'overbet2' tier (and a capped/capped_no2
+    arm drops the free-standing voluntary all-in). Default 'control' = the original
+    4-size menu, so existing callers are unchanged.
     """
+
+    def __init__(self, menu_mode='control'):
+        from .sizing import postflop_menu_for
+        self.menu_mode = menu_mode
+        self._postflop_menu = postflop_menu_for(menu_mode)
 
     def abstract_action_history(self, pypoker_actions, game_state, street='preflop'):
         """Convert PyPokerEngine action history to simple format."""
@@ -63,7 +73,7 @@ class ActionAbstraction:
                 return _bucket(bet_amount, preflop_open_chips())
             # 3-bet / 4-bet+: pot-relative (fraction of the pre-bet pot, approx).
             return _bucket(bet_amount / pre_bet_pot_size, PREFLOP_RAISE_MULT)
-        return _bucket(bet_amount / pre_bet_pot_size, POSTFLOP_BET_MULT)
+        return _bucket(bet_amount / pre_bet_pot_size, self._postflop_menu)
 
     def pypoker_to_cfr_actions(self, pypoker_valid_actions, game_state, round_state):
         """
@@ -112,7 +122,7 @@ class ActionAbstraction:
                     else:
                         kind, size_names = 'raise', ['small', 'medium', 'large']
                 else:
-                    kind, size_names = action_type, list(POSTFLOP_BET_MULT)
+                    kind, size_names = action_type, list(self._postflop_menu)
                 for size_name in size_names:
                     target = self._calculate_target_amount(
                         size_name, kind, game_state, round_state)
@@ -202,7 +212,7 @@ class ActionAbstraction:
                 return preflop_open_chips()[size_name]
             multipliers = PREFLOP_RAISE_MULT               # 3-bet / 4-bet+: pot-relative
         else:
-            multipliers = POSTFLOP_BET_MULT
+            multipliers = self._postflop_menu
         if action_type == 'raise':
             to_call = current_bet - player_contrib
             pot_after_call = pot_size + to_call
