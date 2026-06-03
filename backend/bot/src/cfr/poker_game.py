@@ -37,8 +37,24 @@ class PokerGame:
     This is separate from PyPokerEngine gameplay
     """
 
-    def __init__(self, postflop_menu=None, voluntary_allin=True):
+    def __init__(self, postflop_menu=None, voluntary_allin=True,
+                 max_raises_per_street=2):
         """
+        max_raises_per_street : raises allowed per street beyond the opening bet
+                          (default 2 → 1 bet + 2 raises = 3 aggressions, the cap the
+                          blueprint is TRAINED under — keep this default everywhere in
+                          training/eval). LIVE play (`GameSession`) passes
+                          ``float('inf')`` to UNCAP re-raises so a human can 5-bet/
+                          6-bet+ any amount on any street; the bound is then the stack
+                          (aggression closes when a tier clamps to all-in). The bot
+                          stays within its trained tree automatically — it has ~0
+                          average-strategy mass on beyond-cap raises so it won't
+                          propose them; a faced all-in 5-bet is answered by the
+                          near-terminal equity guard (`RiverSubgameSolver._facing_allin_guard`),
+                          and a faced NON-jam deep raise (money behind, no trained key)
+                          falls to the blueprint/translation stopgap until the
+                          depth-limited deep-raise solver (Phase 4) lands. inf works
+                          unchanged in every `>= cap+1` / `< cap` comparison below.
         postflop_menu   : the postflop bet/raise size dict (name -> pot fraction).
                           Default None -> POSTFLOP_BET_MULT (the current 4-size menu;
                           control arm, byte-identical to before). Pass
@@ -56,7 +72,9 @@ class PokerGame:
         measurement.
         """
         self.streets = ['preflop', 'flop', 'turn', 'river']
-        self.max_raises_per_street = 2  # max raises per street (1 bet + 2 raises = 3 total)
+        # Default 2 = 1 bet + 2 raises = 3 aggressions (the trained cap). LIVE play
+        # passes float('inf') to uncap re-raises (see the constructor docstring).
+        self.max_raises_per_street = max_raises_per_street
         self.hand_evaluator = HandEvaluator()
         self.BET_MULTIPLIERS = dict(postflop_menu if postflop_menu is not None
                                     else POSTFLOP_BET_MULT)

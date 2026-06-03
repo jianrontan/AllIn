@@ -76,11 +76,17 @@ BlueprintDB.save_batch(...) every `checkpoint_every` iterations
   [DEVELOPER_GUIDE.md §11](DEVELOPER_GUIDE.md#11-known-limitations).
 - After a run, `config.resolve_blueprint_path()` auto-selects the DB with the most
   iterations — no manual promotion step.
-- The printed **EV(cum)** is a lifetime running mean of the per-iteration sampled root
-  value (`ev_sum`/`ev_count`, persisted to DB metadata and restored on resume, so it is
-  stable across resume boundaries); **EV(sess)** is this session only. It is a
-  convergence *gauge* of the evolving strategy, **not** the blueprint's true EV — for
-  that, score the average strategy with the evaluation harness.
+- ⚠️ **`EV(cum)` / `EV(round)` / `EV(sess)` measure the CURRENT regret-matched iterate, which
+  CFR does NOT drive to convergence** (it can cycle at a large, seat-imbalanced value forever —
+  see BUG-013). They are a *gauge of the evolving strategy*, NOT the served blueprint and NOT a
+  strength metric. `EV(cum)` is the lifetime mean (`ev_sum`/`ev_count`, persisted/restored on
+  resume); in the **parallel** trainer it reads high and lags (each worker measures the stale
+  round-start strategy) so it is labelled `EV(cum,lagged)`, with `EV(round)`/`EV(round,ema)` as
+  fresher views. **The dial to watch is `EV(served, avg strategy)`** (printed at every checkpoint,
+  `BlueprintTrainer.evaluate_served_ev`) — the self-play value of the *average* strategy you
+  actually serve; it settles to a small constant (the button's game-value edge). Even that is only
+  a seat-balance/convergence sanity check — **for true strength use the evaluation harness (LBR/BR)**,
+  which best-responds; a seat-balanced-but-weak strategy self-plays near the game value too.
 - Hand evaluation goes through `postflop_features.rank7`, which precomputes card→id ids
   and calls phevaluator's internal evaluator directly (skips per-call string parsing);
   river equity is computed via the vectorized `board_winrates` shared across both

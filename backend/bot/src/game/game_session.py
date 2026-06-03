@@ -90,12 +90,19 @@ class GameSession:
         # capped arm never trained -> the blueprint lookup falls back to UNIFORM over
         # legal actions (incl. allin) -> the bot stray-jams at random. So thread the
         # blueprint's menu_mode through (the API passes db_menu_mode(BLUEPRINT_DB)).
+        # LIVE play UNCAPS re-raises (max_raises_per_street=inf) so a human can
+        # 5-bet/6-bet+ any amount on any street. Training/eval keep the trained cap
+        # (default 2). The bot stays in its trained tree (no strategy mass on
+        # beyond-cap raises); a faced all-in 5-bet is handled by the near-terminal
+        # equity guard, a faced non-jam deep raise by the blueprint/translation
+        # stopgap until the Phase-4 deep-raise solver. See PokerGame.__init__.
         from ..abstractions.sizing import postflop_menu_for, is_capped_mode
         if is_capped_mode(menu_mode):                # 'capped' | 'capped_no2'
             self.game = PokerGame(postflop_menu=postflop_menu_for(menu_mode),
-                                  voluntary_allin=False)
+                                  voluntary_allin=False,
+                                  max_raises_per_street=float('inf'))
         else:
-            self.game = PokerGame()
+            self.game = PokerGame(max_raises_per_street=float('inf'))
         self.menu_mode = menu_mode
         self.cards = CardAbstraction()
         self.evaluator = HandEvaluator()

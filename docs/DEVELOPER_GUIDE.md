@@ -329,7 +329,7 @@ run_blueprint_trainer.run_training(N)         # tests/run_blueprint_trainer.py
       cfr(..., updating_player = i % 2)        # P0-perspective value
         PokerGame.get_legal_actions(street, history, pot, player, stacks…)
         keys.make_info_set_key(street, position, preflop_bucket, strength, pattern)
-          CardAbstraction.get_bucket(cards, board)   # 15 preflop / 12-12-10 postflop
+          CardAbstraction.get_bucket(cards, board)   # 30-fine/10-coarse preflop / 20-16-10 postflop
         InformationSet.get_strategy(legal_actions)   # CFR+ regret matching (pure)
         [updating player] explore all actions → recurse, update regrets (discount, floor 0)
         [opponent]        sample one action  → recurse, accumulate_strategy
@@ -518,7 +518,7 @@ the test harness could drop it too and drive `PokerGame` directly.
 ## 12. PlantUML Diagrams
 
 > ⚠️ **These diagrams predate the SQLite migration, the abstraction overhaul
-> (15 preflop / 12-12-10 distribution-aware postflop), the position-aware keys,
+> (30-fine/10-coarse preflop / 20-16-10 distribution-aware postflop), the position-aware keys,
 > the range tracker, and the `game/` engine.** They still
 > convey the broad shape (training vs inference, key assembly) but the class
 > names, bucket names, JSON storage, and "bug annotations" are stale. Treat

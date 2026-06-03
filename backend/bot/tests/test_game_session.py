@@ -144,6 +144,59 @@ def test_store():
     _passed("InMemorySessionStore get/put/delete")
 
 
+def test_live_engine_uncapped_training_capped():
+    """The LIVE GameSession engine uncaps re-raises (5-bet/6-bet+); the default
+    engine used by training/eval keeps the 3-aggression cap. After 1 bet + 2 raises
+    the capped engine offers only fold/call; the live engine still offers a raise."""
+    from src.cfr.poker_game import PokerGame, STARTING_STACK
+    hist = ['bet_medium', 'raise_medium', 'raise_medium']     # 3 aggressions = cap
+    big = STARTING_STACK
+
+    capped = PokerGame()                                       # training/eval default
+    assert capped.max_raises_per_street == 2
+    legal_capped = capped.get_legal_actions(1, hist, 6, 0, p0_stack=big, p1_stack=big)
+    assert set(legal_capped) == {'fold', 'call'}, legal_capped
+
+    session = GameSession.new("s", "p")
+    assert session.game.max_raises_per_street == float('inf')
+    legal_live = session.game.get_legal_actions(1, hist, 6, 0, p0_stack=big, p1_stack=big)
+    assert any(a.startswith(('bet_', 'raise_')) for a in legal_live), legal_live
+    _passed("live engine uncapped; default (training/eval) engine capped at 3 aggressions")
+
+
+def test_uncapped_custom_raise_past_cap():
+    """A human can custom-raise past the trained cap in live play; the capped engine
+    offers no custom raise once aggression is closed."""
+    from src.cfr.poker_game import PokerGame, STARTING_STACK
+    hist = ['bet_medium', 'raise_medium', 'raise_medium']
+    s = STARTING_STACK
+    live = PokerGame(max_raises_per_street=float('inf'))
+    bounds = live.custom_bet_bounds(1, hist, 6, 0, s, s)
+    assert bounds is not None and bounds[0] < bounds[1], bounds   # a 4th raise is legal
+    capped = PokerGame()
+    assert capped.custom_bet_bounds(1, hist, 6, 0, s, s) is None
+    _passed("uncapped engine offers a custom 5-bet past the cap; capped engine does not")
+
+
+def test_untrained_key_passive_fallback():
+    """An untrained key must map to PASSIVE actions only (check/call/fold) -- never a
+    raise/jam -- so the uncapped live engine can't make the bot stray-raise from a
+    node it never trained (the BUG-011 class)."""
+    from src.game.bot_strategy import BlueprintStrategy
+
+    class _NoDB:
+        def get_average_strategy(self, k):
+            return None                                       # every key 'untrained'
+
+    bs = BlueprintStrategy.__new__(BlueprintStrategy)
+    bs.db = _NoDB()
+    deep_legal = ['fold', 'call', 'raise_small', 'raise_medium', 'raise_large', 'allin']
+    dist = bs._distribution("UNTRAINED_DEEP_KEY", deep_legal)
+    assert dist and all(a in ('check', 'call', 'fold')
+                        for a, p in dist.items() if p > 0), dist
+    _passed("untrained key -> passive only (no stray raise/jam)")
+
+
 if __name__ == "__main__":
     tests = [
         test_card_conversion,
@@ -154,6 +207,9 @@ if __name__ == "__main__":
         test_illegal_action_rejected,
         test_info_set_key_format,
         test_store,
+        test_live_engine_uncapped_training_capped,
+        test_uncapped_custom_raise_past_cap,
+        test_untrained_key_passive_fallback,
     ]
     print("Running GameSession tests...\n")
     for t in tests:

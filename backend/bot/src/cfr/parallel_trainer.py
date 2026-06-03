@@ -409,6 +409,16 @@ def train_blueprint_parallel(trainer, iterations, db=None, start_iteration=0,
             if db is not None and since_checkpoint >= checkpoint_every:
                 trainer.checkpoint_to_db(db, cursor - 1)
                 since_checkpoint = 0
+                # Self-play value of the SERVED (average) strategy. Unlike
+                # EV(cum,lagged)/EV(round) above (the CURRENT iterate, which can cycle
+                # at a large value forever), this settles to a small STABLE constant
+                # (the button's game-value edge, ~0). It is a SEAT-BALANCE/convergence
+                # sanity check, NOT a strength metric: a seat-lopsided or unconverged
+                # served strategy reads large, but two equally-bad strategies also
+                # self-play near the constant -- for exploitability/strength use LBR.
+                served_ev = trainer.evaluate_served_ev()
+                print(f"  EV(served, avg strategy): {served_ev:+.4f}  <- served "
+                      f"self-play value (seat-balance check, NOT strength -> use LBR)")
 
         # Flush the tail. since_checkpoint advances in round_total units and rarely
         # lands exactly on a checkpoint boundary, so the final rounds' work is
@@ -417,6 +427,9 @@ def train_blueprint_parallel(trainer, iterations, db=None, start_iteration=0,
         if db is not None and since_checkpoint > 0:
             trainer.checkpoint_to_db(db, cursor - 1)
             since_checkpoint = 0
+            served_ev = trainer.evaluate_served_ev()
+            print(f"  EV(served, avg strategy): {served_ev:+.4f}  <- served "
+                  f"self-play value (seat-balance check, NOT strength -> use LBR)")
     except KeyboardInterrupt:
         # Ctrl+C: kill the workers IMMEDIATELY (terminate, not close). pool.close()
         # waits for every queued chunk to finish before join() returns -- with 8

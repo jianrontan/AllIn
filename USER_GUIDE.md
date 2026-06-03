@@ -292,8 +292,13 @@ Go to the **Play** page. You're dealt a hand and play heads-up against the AI.
   everything in **BB** (chips ÷ 2).
 - Each hand starts fresh at full stacks; your running profit/loss across hands
   is tracked separately and shown as your net.
-- Click an action (check/call/fold or a bet/raise size). The bot responds
-  automatically, and the board advances street by street to showdown.
+- Click an action (check/call/fold or a bet/raise size), or type a **custom
+  amount** in the bet box to bet/raise any legal size. Re-raising is **uncapped**
+  in live play: you can 5-bet/6-bet+ (any amount, any street) until someone is
+  all-in — the bot answers an all-in with an exact equity-vs-range decision, and a
+  non-jam deep raise with a conservative (call/fold) fallback until the deep-raise
+  solver lands. (Training stays capped at 3 aggressions/street; only the live game
+  is uncapped.) The bot responds automatically and the board advances to showdown.
 - After a hand ends, deal the next one — the button (who acts first preflop)
   alternates, as in real heads-up.
 

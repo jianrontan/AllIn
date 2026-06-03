@@ -126,6 +126,101 @@ class BlueprintTrainer:
             self._postflop_memo[key] = val
         return val
 
+    def _rollout_avg(self, p0, p1, comm):
+        """One self-play hand sampling the AVERAGE (served) strategy for both
+        seats; returns the P0-perspective utility. Mirrors cfr()'s forward pass
+        (state threading, street transitions, pattern chars) but follows a SINGLE
+        sampled path and reads get_average_strategy -- the strategy actually served
+        at inference -- instead of the current regret-matched one. Untrained keys
+        fall back to uniform. Assumes the per-hand caches (_p0_preflop/_p1_preflop,
+        _p0_cards/_p1_cards, _postflop_memo) are already set for this hand."""
+        g = self.game
+        g._calc_cache.clear()
+        street, history, spot = 0, [], 3
+        p0_inv = p1_inv = 0.0
+        p0_stack, p1_stack = STARTING_STACK - 1, STARTING_STACK - 2
+        pat = ''
+        st = g.init_node_state(0, spot)
+
+        def term(s, state):
+            return g.get_utility(p0, p1, comm, history, min(s, 3), spot,
+                                 p0_inv, p1_inv,
+                                 _final_pot=state['pot'],
+                                 _p0_total=p0_inv + state['c'][0])
+
+        for _ in range(60):
+            if street > 3 or g.is_terminal(history, street):
+                return term(street, st)
+            cp = g._acting_player(len(history), street)
+            stack_cp = p0_stack if cp == 0 else p1_stack
+            legal = g.state_legal_actions(street, st, cp, stack_cp)
+            if not legal:
+                if street >= 3:
+                    return term(street, st)
+                p0_inv += st['c'][0]
+                p1_inv += st['c'][1]
+                p0_stack = STARTING_STACK - p0_inv
+                p1_stack = STARTING_STACK - p1_inv
+                spot, street, history, pat = st['pot'], street + 1, [], ''
+                st = g.init_node_state(street, spot)
+                continue
+            pos = 'ip' if cp == 0 else 'oop'
+            pf = self._p0_preflop if cp == 0 else self._p1_preflop
+            strength = self._postflop_strength(cp, street, comm) if street > 0 else None
+            key = make_info_set_key(street, pos, pf, strength, pat)
+            iset = self.info_sets.get(key)
+            if iset is None:
+                probs = [1.0 / len(legal)] * len(legal)
+            else:
+                # get_average_strategy returns a numpy array aligned to `legal`.
+                probs = list(iset.get_average_strategy(legal))
+            action = random.choices(legal, weights=probs)[0]
+            cost = g.state_action_cost(action, street, st, cp, stack_cp)
+            child = g.advance_node_state(st, action, street, cp, stack_cp,
+                                         (p0_inv, p1_inv))
+            if cp == 0:
+                p0_stack -= cost
+            else:
+                p1_stack -= cost
+            st = child
+            history = history + [action]
+            pat += _action_char(action)
+        return term(street, st)
+
+    def evaluate_served_ev(self, n=4000, seed=12345):
+        """Mean P0-perspective EV (chips) of the SERVED (average) strategy, over n
+        self-play rollouts. THIS is the iterate CFR guarantees converges -- unlike
+        the per-iteration EV gauge (EV(cum)/EV(round)/EV(sess)), which is the
+        CURRENT regret-matched strategy and need NOT converge (it can cycle at a
+        large value forever while the average settles; see the 2026-06-03 diagnosis).
+        This settles to a small STABLE constant -- the button's game-value edge, not
+        literally 0 (HU poker is asymmetric: P0=button/SB plays the better seat).
+        CAVEAT: this is a SEAT-BALANCE / convergence sanity check, NOT a strength
+        metric. A seat-lopsided or unconverged served strategy reads large, but two
+        equally-bad symmetric strategies also self-play near the constant -- so a
+        small value does NOT prove strength. For exploitability use LBR/BR.
+
+        Deterministically seeded so the estimate is paired across checkpoints
+        (low-variance trend), and RNG-isolated: the global random state is saved
+        and restored, so calling this mid-training does not perturb the training
+        hand stream. Clobbers the per-hand caches, which is safe between iterations
+        (every _run_iteration resets them)."""
+        rng_state = random.getstate()
+        try:
+            random.seed(seed)
+            ca = self.game_adapter.card_abstractions
+            total = 0.0
+            for _ in range(n):
+                p0, p1, comm = self.deal_random_hand()
+                self._p0_preflop = ca.get_bucket(p0, None)
+                self._p1_preflop = ca.get_bucket(p1, None)
+                self._p0_cards, self._p1_cards = p0, p1
+                self._postflop_memo = {}
+                total += self._rollout_avg(p0, p1, comm)
+            return total / n if n else 0.0
+        finally:
+            random.setstate(rng_state)
+
     def cfr(self, p0_cards, p1_cards, community_cards, history,
             street, updating_player, depth=0, iteration=0, starting_pot=None,
             p0_invested=0.0, p1_invested=0.0, bet_pattern='',
@@ -394,6 +489,13 @@ class BlueprintTrainer:
 
             if db is not None and (i + 1) % checkpoint_every == 0:
                 self.checkpoint_to_db(db, actual_iteration)
+                # Self-play value of the SERVED (average) strategy -- settles to a
+                # small stable constant (button game-value edge), unlike EV(cum)/
+                # EV(sess) (current iterate). Seat-balance/convergence check, NOT a
+                # strength metric -> use LBR for exploitability.
+                served_ev = self.evaluate_served_ev()
+                print(f"  EV(served, avg strategy): {served_ev:+.4f}  <- served "
+                      f"self-play value (seat-balance check, NOT strength -> use LBR)")
 
         total_elapsed = _format_duration(time.time() - t_start)
         print(f"\nTraining completed in {total_elapsed}.")

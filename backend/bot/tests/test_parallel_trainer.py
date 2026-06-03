@@ -402,7 +402,25 @@ def test_multiround_cross_worker_cancellation_stable():
     check('multiround call accrues positive', r['call'] > 30.0, r)
 
 
+def test_evaluate_served_ev_rng_isolated():
+    """evaluate_served_ev must NOT perturb the global RNG stream (so calling it
+    mid-training doesn't shift the training hand sequence) and must be deterministic
+    for a fixed seed (the paired-trend property the checkpoint gauge relies on)."""
+    import random as _r
+    trainer = BlueprintTrainer()
+    _r.seed(123)
+    before = _r.getstate()
+    v1 = trainer.evaluate_served_ev(n=20, seed=7)
+    after = _r.getstate()
+    check('evaluate_served_ev preserves global RNG state', before == after)
+    v2 = trainer.evaluate_served_ev(n=20, seed=7)
+    check('evaluate_served_ev deterministic for fixed seed', v1 == v2, f'{v1} vs {v2}')
+    assert before == after, "evaluate_served_ev perturbed the global RNG"
+    assert v1 == v2, f"evaluate_served_ev not deterministic: {v1} vs {v2}"
+
+
 def _run_all():
+    test_evaluate_served_ev_rng_isolated()
     test_merge_new_key_sums_increments()
     test_merge_existing_key_block_discount()
     test_merge_regret_floor()

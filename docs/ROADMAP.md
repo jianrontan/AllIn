@@ -1,6 +1,6 @@
 # Poker AI Roadmap
 
-Last updated: 2026-05-30
+Last updated: 2026-06-03
 
 Status legend: ✅ done · 🚧 in progress · 📅 planned
 
@@ -27,7 +27,45 @@ AWS go-live plan, +EV leaderboard, and cost estimates live in [DEPLOYMENT.md](DE
 
 ---
 
-## ⚠️ ACTIVE INVESTIGATION (2026-05-31) — "bot plays poorly vs humans": diagnosis + redesign plan
+## ✅ RESOLVED (2026-06-03) — "bot plays poorly vs humans": diagnosis + redesign plan
+
+> **RESOLUTION SUMMARY (2026-06-03).** The investigation below is closed. Outcome:
+>
+> - **Fix #1 (all-in over-call guard)** ✅ shipped (inference-only, all streets).
+> - **Fix #2 (parallel merge jam-bias / BUG-009)** ✅ shipped + validated at scale (bias +0.0014, gone).
+> - **Fix #3 (SPR-aware sizing / SPR buckets)** ❌ **decided AGAINST.** Measurements A+B killed it:
+>   only ~9% of decisions are low-SPR (A), and SPR buckets cost 1.7–2.5× training for the same
+>   per-key convergence (B). The over-jamming was the proposal *menu*, not SPR-blind keys.
+> - **Fix #4 (bet-menu cap + drop voluntary all-in)** ✅ shipped + **LBR-VALIDATED at matched iters
+>   (2026-06-03, 3000 hands, seed 42, lower = better):**
+>
+>   | blueprint | abstraction / menu | iters | LBR (mbb/hand) |
+>   |---|---|---|---|
+>   | pre-redesign (old 15-bucket) | OLD | 9M | **3,114** (old-harness anchor, BR 13,936) |
+>   | control-4M | NEW / control | 4M | **3,337** |
+>   | **capped-5M** | NEW / capped | 5M | **2,204** |
+>   | control-33M (incumbent) | NEW / control | 33M | **1,917** |
+>
+>   → capped is **34% less exploitable than control at matched iters** (the 4M gate's −35% reproduced).
+>   **Ship gate:** the capped 28M retrain (`blueprint_par_capped_20260603_013018.db`, in progress) must
+>   come in **below the incumbent's 1,917** — on track (2,204 at only 5M, with a 34% structural edge).
+>   BR not run (≈9 min/sample → impractical; LBR is the right probe for a sizing change).
+>
+> - **EV-gauge scare (2026-06-02/03) — RESOLVED, was never a bug.** The trainer's `EV(cum)`/`EV(round)`/
+>   `EV(sess)` are computed on the **current regret-matched iterate**, which CFR does *not* drive to
+>   convergence (capped's cycles, seat-imbalanced P0+46/P1−34, gauge ≈ +6 forever). The **served**
+>   strategy is the *average* iterate, which is fine (~0 self-play value, same as control). Proven by
+>   `scripts/probe_seat_ev.py`, and the gauge is **anti-correlated** with LBR (capped's scary +4.68
+>   gauge is *less* exploitable than control's nice +0.37). **Fix:** `BlueprintTrainer.evaluate_served_ev`
+>   now prints `EV(served, avg strategy)` at every checkpoint — the dial to watch (a seat-balance /
+>   convergence check, NOT a strength metric → use LBR for strength). See the `ev-cum-investigation` memo.
+> - **Also shipped this arc:** BUG-011 (capped served through a control engine → stray jam), BUG-012
+>   (parallel Ctrl+C hang), `menu_mode` threaded through every train/eval/serve consumer via
+>   `db_menu_mode`, parallel BR (`--workers`), and the `capped_no2` ablation arm (wired, not yet trained).
+>
+> The original diagnosis is retained below as the project narrative.
+
+---
 
 The 30.5M new-abstraction blueprint (`blueprint_par_20260529_233056.db`, served via
 `ALLIN_BLUEPRINT_DB`) **overjams** (preflop + low-SPR flop) and **overcalls all-in
@@ -100,10 +138,10 @@ A heads-up blueprint is trained with Monte Carlo CFR+ and stored in SQLite.
 | Component | File | Status |
 |---|---|---|
 | Hand evaluation | `src/abstractions/hand_evaluator.py` (phevaluator) | ✅ |
-| Card abstraction | `src/abstractions/card_abstractions.py` — 15 preflop equity buckets (`pf_0..pf_14`) + **distribution-aware (potential-aware) postflop buckets: 12 flop / 12 turn / 10 river** (`PostflopV2`, EMD-clustered equity distributions) | ✅ |
+| Card abstraction | `src/abstractions/card_abstractions.py` — **decoupled imperfect-recall preflop: 30 fine buckets (`pf_0..pf_29`, preflop keys) / 10 coarse classes (postflop `startBucket`)** + **distribution-aware (potential-aware) postflop buckets: 20 flop / 16 turn / 10 river** (`PostflopV2`, EMD-clustered equity distributions) | ✅ |
 | Preflop equity precompute | `scripts/compute_preflop_equity.py` | ✅ |
 | Postflop bucket pipeline | `scripts/compute_postflop_buckets.py` (fit centroids) → `scripts/bake_postflop_table.py` (bake canonical→bucket tables, centroid-stamped) → `src/abstractions/{postflop_v2,postflop_features,canonical}.py` | ✅ |
-| Action abstraction | `src/abstractions/action_abstractions.py` — small/medium/large + preflop ladders + all-in | ✅ |
+| Action abstraction | `src/abstractions/action_abstractions.py` — small/medium/large + preflop ladders + all-in. **`menu_mode` toggle (`control` \| `capped` \| `capped_no2`, `src/abstractions/sizing.py`): `capped` adds the 2.0× `overbet2` tier and DROPS the voluntary all-in node (Fix #4); auto-derived at every boundary via `db_menu_mode`.** | ✅ |
 | Abstracted rules engine | `src/cfr/poker_game.py` — stack-aware, all-ins, 3 aggressions/street | ✅ |
 | Info-set keys | `src/cfr/keys.py` — single source of truth, position-aware | ✅ |
 | CFR+ trainer | `src/cfr/blueprint_trainer.py` — external-sampling MCCFR+, Linear-CFR-style discounting (regret + strategy-sum; not canonical DCFR) | ✅ |
@@ -531,13 +569,18 @@ no-more-exploitable than the blueprint. Background: [1], [2].
   finished blueprint** by a tree traversal. So the next (bucket) retrain does **not** need
   CFV instrumentation; checkpointing CFVs during training is an optional speed
   optimization to add when this item is built, not a now-or-never decision.
-- *Lifting the live aggression cap is part of the deep-raise work, not a separate phase.*
-  The engine caps everyone at 3 aggressions/street (`poker_game.py:42`
-  `max_raises_per_street = 2`), which blocks **both** a human 5-bet **and the bot's own
-  5-bet+**. "Train shallow (capped), play uncapped, solve the deep tail": relaxing the
-  live cap is the mechanical prerequisite bundled into the deep-raise item — the blueprint
-  stays capped (rare deep lines train thinly), the solver handles beyond-cap raises live
-  for both players.
+- *Lifting the live aggression cap — HUMAN side ✅ DONE (2026-06-03); bot's own deep raises
+  still pending the solver.* "Train shallow (capped), play uncapped, solve the deep tail":
+  `max_raises_per_street` is now a `PokerGame` constructor param (default **2** = the trained
+  cap, kept everywhere in training/eval) and `GameSession` builds its LIVE engine with
+  `float('inf')`, so a **human can 5-bet/6-bet+ any amount on any street** (bounded by stack;
+  combines with the Phase-1a custom-bet sizing). The blueprint stays capped. The bot's
+  responses route as designed: a faced **all-in** 5-bet → the near-terminal equity guard;
+  a faced **non-jam** deep raise → a **passive stopgap** (`bot_strategy._distribution` now
+  falls back to check/call/fold on an untrained key, never uniform-over-legal — so the uncap
+  can't make the bot stray-raise/jam from an untrained node). The bot does **not** yet
+  *propose* its own 5-bets+ (it has ~0 average-strategy mass on beyond-cap raises) — that, and
+  a principled non-jam-deep-raise response, are the remaining solver work below.
 - *All-in-terminal guard (filed 2026-05-30, user idea) — the cheapest, highest-value entry
   point to this row.* **Why it's cheap:** an all-in that gets called has no further decisions
   — the board just runs out — so its value is pure **equity-vs-range to the river**, the same

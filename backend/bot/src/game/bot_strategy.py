@@ -59,8 +59,20 @@ class BlueprintStrategy(BotStrategy):
             total = sum(weights.values())
             if total > 1e-12:
                 return {a: w / total for a, w in weights.items()}
-        n = len(legal_actions)
-        return {a: 1.0 / n for a in legal_actions}
+        # Untrained key: fall back to PASSIVE actions only (check/call/fold), never
+        # uniform over the full legal set. Live play uncaps re-raises
+        # (GameSession passes max_raises_per_street=inf), so at a beyond-cap node
+        # legal_actions includes sized raises + all-in; uniform over those would make
+        # the bot stray-raise/jam from a key it never trained (the BUG-011 failure
+        # mode). The bot must never PROPOSE an untrained aggressive size. A faced
+        # all-in is already handled upstream by the near-terminal guard; this passive
+        # fallback is the non-jam deep-raise stopgap until the Phase-4 deep-raise
+        # solver. (Falls through to the full legal set only if no passive action is
+        # legal -- a degenerate node that shouldn't occur in normal play.)
+        passive = [a for a in legal_actions if a in ('check', 'call', 'fold')]
+        pool = passive or legal_actions
+        n = len(pool)
+        return {a: 1.0 / n for a in pool}
 
     def _blend_lookup(self, info_set_key, legal_actions):
         """Restricted blueprint dist for a translation bracket, or {} when the key
@@ -173,18 +185,24 @@ class ConfidenceAwareStrategy(BlueprintStrategy):
                     return a
             return None
 
+        # Absolute last resort prefers a PASSIVE action over `legal[0]` (which could
+        # be an aggressive size): the equity fallback must never emit an untrained
+        # raise/jam either (the BUG-011 class). legal[0] is only reached at a
+        # degenerate node with no check/call/fold legal, which doesn't arise in normal
+        # play. (This strategy isn't the deployed one -- RiverSubgameSolver is -- but
+        # keep it safe in case it's ever served directly.)
         if to_call <= 0:                                   # no bet to face
             if eq >= 0.62:
                 a = first('bet_medium', 'bet_small', 'bet_large')
                 if a:
                     return a
-            return first('check') or legal[0]
+            return first('check', 'call', 'fold') or legal[0]
 
         pot_odds = to_call / (pot + to_call) if (pot + to_call) > 0 else 0.0
         if eq < pot_odds:
-            return first('fold') or first('check') or legal[0]
+            return first('fold', 'check', 'call') or legal[0]
         if eq >= 0.75:
             a = first('raise_medium', 'raise_small', 'raise_large')
             if a:
                 return a
-        return first('call') or first('check') or legal[0]
+        return first('call', 'check', 'fold') or legal[0]

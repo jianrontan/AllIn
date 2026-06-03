@@ -10,6 +10,82 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-013 — EV gauge measured the non-converging CURRENT iterate, not the served strategy (a day-long false alarm)
+
+| | |
+|---|---|
+| **Date** | 2026-06-02 / 03 |
+| **Area** | Observability / training telemetry (`cfr/blueprint_trainer.py`, `cfr/parallel_trainer.py`) |
+| **Severity** | Medium (no wrong *output* — a misleading *metric* that cost ~a day chasing a non-bug) |
+| **Status** | Fixed (added `EV(served)` gauge) |
+
+**Summary.** The trainer's `EV(cum)` / `EV(round)` / `EV(sess)` print the sampled root value of the
+**current regret-matched strategy** (`get_strategy`, blueprint_trainer.py:263). The capped blueprint's
+current iterate sits at a large, seat-imbalanced value (P0 +46 / P1 −34 → gauge ≈ +6) and **does not
+converge** — by CFR theory only the *average* iterate (the served blueprint, `get_average_strategy`) is
+guaranteed to. So the gauge read ~+7 "forever" and *looked* like a broken/diverging blueprint, when the
+**served** strategy was actually fine (~0 self-play value, same as control).
+
+### Symptom
+User watched `EV(round)` climb to +6/+8 and stay there across millions of iters ("why the fuck is the EV
+so high compared to last time?"). Past (control) runs had settled near +1, so capped looked broken.
+
+### Root cause
+Two compounding facts: (1) the gauge measures the current iterate, which CFR doesn't converge — it can
+cycle indefinitely; (2) the capped abstraction's current iterate is *more* lopsided than control's (its
+two traverser-halves don't cancel: control +47.2/−46.4 → ~0; capped +40.1/−30.7 → +4.7). At matched iters
+control's gauge reads +0.37 while capped's reads +4.68 — **13× apart**, purely from the abstraction, not
+iteration count (the first wrong hypothesis offered was "you're comparing 5M to 33M").
+
+### Fix
+`BlueprintTrainer.evaluate_served_ev(n, seed)` + `_rollout_avg` — self-play sampling the **average**
+strategy (RNG-isolated, deterministically seeded for a paired trend). Printed as `EV(served, avg
+strategy)` at every checkpoint in both the single-thread and parallel loops. Relabeled `EV(cum)` →
+`EV(cum,lagged)` and added `EV(round)`/`EV(round,ema)` earlier in the arc. `scripts/probe_seat_ev.py`
+contrasts current vs served per snapshot (shares `evaluate_served_ev`, no drift).
+
+### Proof it was a false alarm
+`probe_seat_ev.py`: served EV ≈ 0 across capped 4M/7M/9.76M (−2.6/+0.8/−0.6) vs control's +0.37 — same
+ballpark. And LBR is **anti-correlated** with the gauge: capped-5M (scary +4.68 gauge) is 1,100 mbb/hand
+*less* exploitable than control-4M (nice +0.37 gauge). Choosing a bot by the gauge picks the worse one.
+
+### Lessons
+A convergence metric must measure the iterate you actually *serve* (the average), not the current one.
+The old commit message that claimed to "fix the EV gauge" had only *relabeled* it — a relabel is not a
+fix; this entry is the real fix. For strength always use LBR/BR (best-responds), never any EV self-play
+gauge (seat-balanced-but-bad strategies self-play near the game value too).
+
+---
+
+## BUG-012 — Parallel trainer Ctrl+C hung forever and orphaned workers (Windows)
+
+| | |
+|---|---|
+| **Date** | 2026-06-02 |
+| **Area** | Training orchestration (`cfr/parallel_trainer.py`) |
+| **Severity** | Medium (no data corruption, but Ctrl+C did nothing for minutes and left worker processes hogging cores, slowing every subsequent diagnostic) |
+| **Status** | Fixed (3-part) |
+
+**Summary.** On Windows, Ctrl+C on a parallel training run never returned control and left
+`SpawnPoolWorker` processes alive. Three causes, all needed fixing: (1) Ctrl+C is delivered to the whole
+process group → every worker raised `KeyboardInterrupt` mid-`cfr()` **and the Pool's maintenance thread
+respawned them** (an endless loop); (2) `pool.map()` blocks uninterruptibly on Windows, so the master
+never surfaced the interrupt; (3) the master needed to `terminate()` (not `close()`) the pool.
+
+### Fix
+(a) `_worker_init()` sets `signal.SIGINT = SIG_IGN` so **workers ignore Ctrl+C** (only the master gets it;
+no respawn loop); pool created with `initializer=_worker_init`, master SIGINT restored right after. (b)
+`pool.map` → `map_async(...).get(timeout=1.0)` polling loop (swallow `TimeoutError`) so the main thread
+stays interruptible. (c) `except KeyboardInterrupt → pool.terminate(); join()`. Verified: ~0.2s interrupt,
+zero orphans; `test_parallel_trainer` green. Work since the last checkpoint is discarded (correct
+interrupt semantics — resume picks up from the checkpointed iteration).
+
+### Lessons
+Pool worker signal handling + a non-blocking `get(timeout=)` are both mandatory for an interruptible
+Windows `multiprocessing.Pool`; either alone leaves the hang.
+
+---
+
 ## BUG-011 — Capped blueprint served through a control-menu engine → uniform-random all-in
 
 | | |

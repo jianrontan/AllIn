@@ -97,19 +97,29 @@ class LBREvaluator:
         return cached
 
     def restricted_probs(self, key, legal):
-        """Blueprint probabilities over `legal`, renormalised. Uniform if unknown."""
+        """Blueprint probabilities over `legal`, renormalised. Untrained/zero-mass
+        key -> PASSIVE actions only (check/call/fold), mirroring the deployed bot
+        (bot_strategy.BlueprintStrategy._distribution). NOT uniform-over-legal: the
+        live bot never stray-raises from an untrained key, so the LBR victim model
+        must not either (CLAUDE.md / BUG-008 lockstep). LBR runs the capped engine,
+        so this only affects within-cap untrained keys (rare), but keep them in sync."""
         cache_key = (key, legal)
         cached = self._restricted_cache.get(cache_key)
         if cached is not None:
             return cached
         stored = self._raw_strategy(key)
         n = len(legal)
+        probs = None
         if stored:
             w = np.array([max(0.0, stored.get(a, 0.0)) for a in legal])
             total = w.sum()
-            probs = w / total if total > 1e-12 else np.ones(n) / n
-        else:
-            probs = np.ones(n) / n
+            if total > 1e-12:
+                probs = w / total
+        if probs is None:                       # untrained / zero-mass -> passive only
+            passive = np.array([1.0 if a in ('check', 'call', 'fold') else 0.0
+                                for a in legal])
+            s = passive.sum()
+            probs = passive / s if s > 0 else np.ones(n) / n
         self._restricted_cache[cache_key] = probs
         return probs
 
