@@ -362,20 +362,25 @@ class BlueprintTrainer:
             # at the first visit above; no reach weighting — external sampling
             # handles opponent reach.
             #
-            # CFR+ floor: single-thread floors on every write (canonical CFR+).
-            # WORKER mode (discount_enabled=False) stores the RAW signed sum instead
-            # (Fix #2): the master applies the CFR+ floor once per merge round, and a
-            # raw negative increment must survive the worker so it can cancel another
-            # worker's positive one in merge_round before that single floor. Flooring
-            # here too would discard it -> the documented upward bias on high-variance
-            # actions. get_strategy still floors at read, so this worker's own
-            # within-chunk regret matching is unaffected by the unfloored store.
+            # CFR+ write-floor: cumulative regret is floored at 0 on EVERY write, in
+            # BOTH single-thread and parallel-worker mode (canonical CFR+).
+            #
+            # REVERTED Fix #2 (2026-06-04). Fix #2 had workers store the RAW unfloored
+            # sum so the master could cancel opposite-signed deltas before one per-round
+            # floor (to remove a small upward jam bias). But raw storage BREAKS CFR+
+            # re-activation: an action driven negative can't pop back the instant it gets
+            # one good iteration, so within a chunk it stays suppressed and the strategy
+            # COLLAPSES onto whatever dominated early. In practice that produced a
+            # blueprint that opens `xlarge` (5 BB) with 100% of hands and never folds the
+            # button. A 500k-iter A/B (scripts/ab_fix2_revert.py) confirmed it: per-worker
+            # flooring -> pf_0 folds 74%; raw -> 1%. The +0.0014 jam bias Fix #2 chased is
+            # negligible and is covered structurally by Fix #4 (the capped menu drops the
+            # voluntary all-in node). So we floor per worker = canonical data-parallel
+            # CFR+ -- the path that trained the sane blueprint_par_20260529_233056.
             for i, action in enumerate(legal_actions):
                 regret = own_values[i] - node_value
                 prior = info_set.cumulative_regrets.get(action, 0.0)
-                total = prior + regret
-                info_set.cumulative_regrets[action] = (
-                    max(0.0, total) if self.discount_enabled else total)
+                info_set.cumulative_regrets[action] = max(0.0, prior + regret)
 
             # Return value back in P0's perspective.
             return sign * node_value
@@ -496,6 +501,12 @@ class BlueprintTrainer:
                 served_ev = self.evaluate_served_ev()
                 print(f"  EV(served, avg strategy): {served_ev:+.4f}  <- served "
                       f"self-play value (seat-balance check, NOT strength -> use LBR)")
+                # Strategy-shape sanity probe -- screams if the preflop strategy has
+                # collapsed (BUG-014: open one size with 100% of hands, never fold).
+                from .strategy_shape import strategy_shape_report, format_shape_line
+                print(format_shape_line(strategy_shape_report(
+                    lambda k: (self.info_sets[k].cumulative_strategy
+                               if k in self.info_sets else None))))
 
         total_elapsed = _format_duration(time.time() - t_start)
         print(f"\nTraining completed in {total_elapsed}.")

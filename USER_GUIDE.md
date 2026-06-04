@@ -100,8 +100,9 @@ python tests/run_blueprint_trainer.py --iterations 30000000 --workers 8 --merge-
 # Resume a parallel run (worker count MAY differ from the original run)
 python tests/run_blueprint_trainer.py --iterations 10000000 --resume blueprint_par_20260529_002511.db --workers 6 --merge-every 2000
 
-# Redesign blueprint v2 run
-python tests/run_blueprint_trainer.py --iterations 30000000 --workers 8 --merge-every 2000 --menu-mode capped --resume blueprint_par_capped_20260601_204425.db
+# Capped (Fix-#4) blueprint run — must be trained FROM SCRATCH (no --resume): capped
+# DBs trained before the BUG-014 trainer fix are corrupt and cannot be resumed.
+python tests/run_blueprint_trainer.py --iterations 30000000 --workers 7 --merge-every 2000 --menu-mode capped --checkpoint-every 70000
 ```
 
 **Choosing the settings:**
@@ -137,8 +138,8 @@ browser alongside):
 **Important caveats:**
 
 - **Parallel is an *approximation* of single-threaded CFR** ("block Linear-CFR":
-  workers accumulate raw regret, the master applies the discount once per merge
-  round). It is **validated by exploitability** (§6 / §3.3), **not** by seed
+  workers run canonical CFR+ — flooring regret on every write — and the master applies
+  the discount once per merge round). It is **validated by exploitability** (§6 / §3.3), **not** by seed
   reproducibility — a `seed=` does *not* make a parallel run bit-reproducible. Judge
   a parallel run by whether its BR/LBR drops, not by comparing it to a single-thread run.
 - **Do not mix modes on one DB.** A blueprint trained single-threaded should be

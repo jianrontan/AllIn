@@ -87,6 +87,14 @@ BlueprintDB.save_batch(...) every `checkpoint_every` iterations
   actually serve; it settles to a small constant (the button's game-value edge). Even that is only
   a seat-balance/convergence sanity check — **for true strength use the evaluation harness (LBR/BR)**,
   which best-responds; a seat-balanced-but-weak strategy self-plays near the game value too.
+- **`shape:` line** (printed at every checkpoint next to `EV(served)`, `src/cfr/strategy_shape.py`) is a
+  per-decision **collapse detector** — it reads `OK`, `WARN`, or `COLLAPSE` and reports weak-hand open
+  fold%, the open-size concentration, the pf_0-vs-strongest fold gradient, and the BB-vs-5BB fold%. It
+  exists because no aggregate metric (EV/LBR/AIVAT) catches a *balanced-but-degenerate* strategy — it
+  was added after BUG-014, where a blueprint quietly trained to "open one size with 100% of hands, never
+  fold the button" for a week. A healthy run shows weak hands folding a lot with a wide strength gradient;
+  `COLLAPSE` means a weak bucket folds <5% while playing one size >75%. Run it on any DB:
+  `python scripts/check_strategy_shape.py [--db <path>] [--verbose]` (exit code 2 on COLLAPSE).
 - Hand evaluation goes through `postflop_features.rank7`, which precomputes card→id ids
   and calls phevaluator's internal evaluator directly (skips per-call string parsing);
   river equity is computed via the vectorized `board_winrates` shared across both

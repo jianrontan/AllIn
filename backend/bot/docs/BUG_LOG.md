@@ -10,6 +10,82 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-014 — Fix #2 (parallel raw-regret merge) broke CFR+ re-activation → blueprints collapse to "open xlarge with every hand"
+
+| | |
+|---|---|
+| **Date** | 2026-06-04 (introduced 2026-05-31 as "Fix #2", `a55d78c`) |
+| **Area** | Parallel training (`cfr/blueprint_trainer.py` worker regret store, `cfr/parallel_trainer.py`) |
+| **Severity** | High (every blueprint trained after the change is strategically degenerate) |
+| **Status** | Fixed (Fix #2 reverted to per-worker CFR+ flooring) |
+
+**Summary.** "Fix #2" had parallel workers store **raw, unfloored** cumulative regret (master floors once
+per merge round) to remove a small upward jam bias from per-worker flooring. It backfired: raw storage
+**breaks CFR+ re-activation** — an action driven negative can't pop back the instant it earns one positive
+regret, so within a chunk it stays suppressed and the strategy **collapses onto whatever action dominated
+early**. Every blueprint trained after `a55d78c` opens `bet_xlarge` (5 BB) with ~80-99% of *every* preflop
+bucket and **never folds the button** (pf_0 trash fold ~0-1%), getting worse with iterations.
+
+### Symptom
+User played the capped retrain and saw the bot open 5 BB with literally every hand. The strategy explorer
+confirmed `pf_4_ip_` → 97% `bet_xlarge`, and the pattern held across all 30 buckets and all snapshots
+(5M/14M/21M), worsening over time — i.e. not undertraining.
+
+### Root cause
+CFR+ floors cumulative regret at 0 on every write, so a dominated action re-enters the strategy the instant
+it earns one positive regret (fast re-activation — the reason CFR+ mixes). Fix #2 removed the **per-worker**
+write-floor; the master only floors the **summed** per-round delta. Once a dominated action's merged regret
+hits 0 (fold, small opens), workers keep reporting net-negative chunk deltas, and `max(0, decay·0 +
+negative) = 0` pins it there permanently. Early in training, before the BB learns to defend, opening the
+biggest size is locally best — so the strategy locks onto xlarge and fold/small-open can never climb back.
+
+### Fix
+Revert to **per-worker CFR+ flooring**: `cfr()` floors `max(0.0, prior+regret)` on every write in worker
+mode too (removed the `discount_enabled` gate). `merge_round` is unchanged (sums signed increments + master
+floor) — it now operates on floored cumulatives, the canonical data-parallel CFR+ path that trained the sane
+`blueprint_par_20260529_233056`. Single-thread is byte-identical (it always floored). The +0.0014 jam bias
+Fix #2 chased is negligible and covered structurally by Fix #4 (capped menu drops the voluntary all-in node).
+
+### Proof (decisive A/B — `scripts/ab_fix2_revert.py`, 500k iters, seed 1, single variable)
+`RAW (Fix #2)`: pf_0 xlarge 32% / large 64% / **fold 1%** (collapsed).
+`FLOORED (revert)`: pf_0 xlarge 5% / **fold 74%** (sane, matches `233056`'s 79% at 504k).
+
+### Why it took a week to catch
+Every aggregate metric is blind to a *balanced-but-degenerate* strategy: EV(cum/round) measures the current
+iterate; EV(served) checks only seat balance (a collapsed strategy is balanced → ~0); LBR at 5M looked
+*good* (+2204) because it probes postflop off-tree sizing and is blind to a balanced wide preflop open,
+while the Fix-#4 postflop win dominated the scalar; the **BR pilot actually flagged it** (8-sample, ~3×
+normal) but was dismissed as noise and the full BR skipped for cost; AIVAT is head-to-head variance
+reduction, not a pathology detector. Only a human inspecting the actual opens caught it.
+
+### Retrain impact
+**All blueprints trained after `a55d78c` are corrupt and cannot be resumed** — the collapsed regrets are
+baked in. Retrain from scratch on the reverted trainer. Serve `233056` (pre-fix) meanwhile.
+
+### Lessons
+(1) A "fix" validated on one narrow metric (jam-action keys) can introduce a worse regression elsewhere
+(opens) — validate the *strategy shape*, not just the target symptom. (2) No scalar aggregate (EV, LBR,
+AIVAT) catches strategy collapse; add a cheap per-info-set sanity probe (fold%, open-size histogram) to
+convergence tracking. (3) Take BR seriously even when expensive — its pilot was right.
+
+### Process fix shipped (2026-06-04)
+The lesson-(2) sanity probe was built: **`src/cfr/strategy_shape.py`** prints a `shape: OK|WARN|COLLAPSE`
+line at **every training checkpoint** (parallel + single-thread, next to `EV(served)`) and is also a
+standalone CLI — `python scripts/check_strategy_shape.py [--db <path>] [--verbose]` (exit 2 on COLLAPSE).
+It detects the collapse fingerprint on BOTH preflop nodes (open `pf_N_ip_` and BB-vs-5BB `pf_N_oop_x`):
+weak hands fold <5% while one size >75%, or a dead pf_0-vs-strongest fold gradient. Validated: COLLAPSE on
+the archived broken DB, OK on the fresh fixed run. The forensic audit of the old DB also surfaced a SECOND
+collapse node (BB-vs-5BB-open → raise_large ~99%, masked by the open-collapse); both are cleared in the
+new run (`blueprint_par_capped_20260604_114512`: pf_0 open fold 78% / BB-vs-5BB fold 82% by ~1.2M).
+
+### Tests
+`test_worker_mode_stores_raw_regret` → rewritten as `test_worker_mode_floors_regret` (asserts workers
+floor). Removed `test_floor_bias_direction_old_inflates_high_variance` + `_merge_old_floored` (existed only
+to justify Fix #2; now backwards). Added `tests/test_strategy_shape.py` (3 — flags collapse, passes
+healthy, no false-alarm on empty). 15/15 `test_parallel_trainer`, 3/3 `test_strategy_shape` pass.
+
+---
+
 ## BUG-013 — EV gauge measured the non-converging CURRENT iterate, not the served strategy (a day-long false alarm)
 
 | | |
