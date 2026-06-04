@@ -271,12 +271,19 @@ class GameSession:
             d['starting_pot'], d['history'], d['street'],
             d['p0_invested'], d['p1_invested'])
 
-    def _node_grid(self, legal):
+    def _node_grid(self, legal, include_allin=True):
         """The trained bet-size grid available at the current node, as a sorted
         [(char, frac), ...] on the eff_fraction axis (bet / pot-after-call).
         Built from the engine's real sizes so it is correct preflop (absolute
         ladders) and postflop (pot multipliers). Translation maps an off-grid
-        custom bet onto these chars."""
+        custom bet onto these chars.
+
+        include_allin=False drops the 'a' (all-in) edge -- used when snapping a
+        SUB-stack custom bet (apply_action already normalizes an at/above-stack
+        custom to 'allin'). Without this, a sub-stack near-shove whose pot-fraction
+        lands closest to the all-in edge would be recorded as 'a' (BUG-016): the
+        pattern/key + range tracker would claim the player shoved when money is still
+        behind. A genuinely sub-stack bet must snap to the largest SIZED char."""
         pot = self._current_pot()
         to_call = self._action_cost('call') if 'call' in legal else 0.0
         grid = {}
@@ -284,7 +291,7 @@ class GameSession:
             if a.startswith(('bet_', 'raise_')):
                 frac = translation.eff_fraction(self._action_cost(a), to_call, pot)
                 grid[action_char(a)] = frac
-            elif a == 'allin':
+            elif a == 'allin' and include_allin:
                 frac = translation.eff_fraction(self._action_cost('allin'), to_call, pot)
                 grid['a'] = frac
         return sorted(grid.items(), key=lambda cf: cf[1])
@@ -353,12 +360,23 @@ class GameSession:
                 char = action_char('allin')
                 snapped_action = 'allin'
             else:
-                grid = self._node_grid(legal)
-                pot, to_call = self._current_pot(), (self._action_cost('call') if 'call' in legal else 0.0)
-                eff = translation.eff_fraction(self._action_cost(action), to_call, pot)
-                translated = translation.translate_bet(eff, grid)
-                char = translation.nearest_char(eff, grid)
-                snapped_action = self._grid_action_for_char(char, legal)
+                # This custom bet is SUB-stack (>= stack was normalized to 'allin'
+                # above), so snap it onto the SIZED grid only -- excluding the all-in
+                # edge prevents a near-shove from being mis-recorded as 'a' (BUG-016).
+                grid = self._node_grid(legal, include_allin=False)
+                if not grid:
+                    # Degenerate: NO sized bet/raise is legal (every tier clamped to
+                    # all-in -- ~<1 BB effective behind). There's no sized char to snap
+                    # to, and the custom is a near-shove with nothing else available, so
+                    # record it as all-in directly (honest: it commits ~everything).
+                    char = action_char('allin')
+                    snapped_action = 'allin'
+                else:
+                    pot, to_call = self._current_pot(), (self._action_cost('call') if 'call' in legal else 0.0)
+                    eff = translation.eff_fraction(self._action_cost(action), to_call, pot)
+                    translated = translation.translate_bet(eff, grid)
+                    char = translation.nearest_char(eff, grid)
+                    snapped_action = self._grid_action_for_char(char, legal)
         elif action not in legal:
             raise GameError(f"Illegal action {action!r}; legal: {legal}")
         else:

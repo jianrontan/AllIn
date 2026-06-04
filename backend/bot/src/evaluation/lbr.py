@@ -581,6 +581,13 @@ class BotRange:
     def observe(self, lookup, action, street, position, bet_pattern, legal, board):
         """Condition the belief on the bot having taken `action` at this node."""
         legal = list(legal)
+        if action not in legal:
+            # Off-MENU action (an emergent/custom all-in outside the node's abstract
+            # menu) has no model column -> no-op rather than raise. Mirrors
+            # RangeTracker.observe (the live sibling, BUG-008 lockstep) so the two never
+            # diverge on off-menu handling. Rarely hit here (LBR's victim samples from
+            # the grid), but kept for parity + defense.
+            return
         ai = legal.index(action)
         mat = self.action_probs(lookup, street, position, bet_pattern, legal, board)
         new_w = self.w * mat[:, ai]

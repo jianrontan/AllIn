@@ -139,6 +139,22 @@ def test_offmodel_action_preserves_range():
     print(f"PASS test_offmodel_action_preserves_range: conf {conf_before:.2f}->{t.confidence:.3f}")
 
 
+def test_offmenu_action_does_not_crash():
+    """Regression (2026-06-04): observe(action) where `action` is NOT in `legal` -- an
+    emergent/custom all-in outside the node's abstract menu (e.g. a capped/deep-stack
+    river jam normalized to 'allin' when 'allin' isn't a listed legal action) -- must
+    no-op safely, NOT raise ValueError and 500 the live hand. Range + confidence are
+    preserved."""
+    t = RangeTracker(('HA', 'DK'), CARDS)
+    legal = ['fold', 'call', 'raise_medium', 'raise_large']   # note: no 'allin'
+    before = t.w.copy()
+    conf_before = t.confidence
+    t.observe(weakfolds_fn, 'allin', 0, 'oop', '', legal, [])   # 'allin' not in legal
+    assert np.allclose(t.w, before), "off-menu action must leave the range unchanged"
+    assert t.confidence == conf_before, "off-menu action no-op must not alter confidence"
+    print("PASS test_offmenu_action_does_not_crash")
+
+
 def test_serialization_roundtrip():
     t = RangeTracker(('HA', 'DK'), CARDS)
     legal = ['fold', 'call', 'raise']
@@ -363,6 +379,7 @@ TESTS = [
     test_confidence_drops_on_offmodel_action,
     test_bayesian_update_shifts_toward_consistent_hands,
     test_offmodel_action_preserves_range,
+    test_offmenu_action_does_not_crash,
     test_serialization_roundtrip,
     test_gamesession_tracking_disabled_without_model,
     test_gamesession_tracks_and_serializes,

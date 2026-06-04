@@ -40,6 +40,40 @@ from .range_inputs import (
 
 _LOG = logging.getLogger(__name__)
 
+# The LIVE river solver builds a deeper tree than the blueprint's 3-aggression cap so
+# it can represent (and solve) an uncapped human re-raise war on the river -- the bot
+# can 5-bet/6-bet+ and the human can too (GameSession uncaps re-raises). This is a
+# RUNTIME solve, NOT the blueprint, so it needs no retrain. It does NOT blow up the
+# tree: river_tree only adds aggressive children while a player still has money behind
+# (`opp_behind > 1e-9`), so once stacks commit the node collapses to jam/call/fold on
+# its own -- a deep river spot is near-terminal and cheap. (Nodes past aggression 3
+# have no blueprint warm-start, so they solve from scratch, which is fast at that depth;
+# ranges come from the tracker, not the blueprint.) See BUG-014-era roadmap / #1.
+LIVE_RIVER_MAX_AGGRESSIONS = 5
+
+# Skip the river solve on a HIGH-SPR river (small pot, deep stacks). The river tree's
+# raise depth -- and thus the CFR solve cost -- grows with SPR, because the river_tree
+# `opp_behind` prune only collapses a node once stacks commit; at a small-pot/deep-stack
+# entry many raises fit before commit, so the (depth-5) tree explodes (measured: pot 6 /
+# stacks 197 -> ~1500 nodes, ~20s, which blows the ~5s live budget and returns an
+# UNCONVERGED strategy). These are also the lowest-stakes spots (a tiny pot), so the
+# blueprint is the right call. The all-in guard still fires (it runs before the solver in
+# decide), and a deep river raise-war commits stacks fast -> becomes near-terminal ->
+# guard-covered. SPR = effective_stack / river_entry_pot. Tunable: raise it (toward ~6)
+# to solve more medium pots once depth-5 timing at higher SPR is characterized; lower it
+# for a stricter no-hang guarantee. ~4 keeps the solved tree small enough to converge in
+# budget. (Found by the 2026-06-04 agent audit; matches the user's "skip small pots".)
+#
+# Value chosen from a node-count measurement (depth-5 river tree at 100bb): the live
+# budget only checks time AFTER a full check_every(=40)-iteration block, so the tree must
+# be small enough that one block fits ~5s (~<=275 decision nodes at ~0.45ms/node/iter under
+# training contention). Measured nodes by pot: 14BB(SPR 6.6)=164 / ~3s (fits); 10BB(SPR 9.5)
+# =284 / ~5.2s (OVER -- back to a laggy, unconverged solve); 6BB(SPR 16)=652 (way over).
+# Also, fewer iterations fit as the tree grows, so high-SPR spots barely converge (likely no
+# better than the blueprint). 6.0 = the largest that fits one block in budget (~14BB pots);
+# the solver's value is on bigger/low-SPR pots anyway, and the blueprint handles small ones.
+SOLVER_MAX_SPR = 6.0
+
 
 def blueprint_to_tree_dist(bp_dist, node, postflop_menu=None):
     """Redistribute a blueprint action distribution (over ENGINE actions) onto the
@@ -312,6 +346,13 @@ class RiverSubgameSolver(BlueprintStrategy):
                     'opp_range', 'hero_range', 'riverPath')
         if any(ps.get(k) is None for k in required):
             return None
+        # High-SPR (small-pot, deep-stack) river -> skip the solve (too slow + lowest
+        # stakes); blueprint handles it and the all-in guard already ran. See SOLVER_MAX_SPR.
+        pot_entry = ps['riverEntryPot']
+        stacks = ps['riverEntryStacks']
+        eff = stacks[0] if isinstance(stacks, (list, tuple)) else stacks
+        if pot_entry <= 0 or eff / pot_entry > SOLVER_MAX_SPR:
+            return None
         tracker = ps['opp_range']
         return {
             'board': ps['community'],
@@ -339,7 +380,8 @@ class RiverSubgameSolver(BlueprintStrategy):
         ('check'/'call'/'fold'/'allin') or ('bet'|'raise', chips) for sized."""
         ba = build_board_arrays(board, self._evaluator, self._cards)
         idx = hand_index_map(ba)
-        tree = build_river_tree(pot_entry, stacks, menu=self.menu)
+        tree = build_river_tree(pot_entry, stacks, menu=self.menu,
+                                max_aggressions=LIVE_RIVER_MAX_AGGRESSIONS)
 
         villain = blend_villain(project_tracker(villain_tracker, ba, idx),
                                 confidence, self.temper_beta)

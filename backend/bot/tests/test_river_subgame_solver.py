@@ -241,7 +241,62 @@ def test_decide_river_emits_action_with_ev_gate():
     print(f"PASS test_decide_river_emits_action_with_ev_gate (action={a})")
 
 
+def test_solver_gated_off_on_high_spr_small_pot():
+    """A high-SPR river (small pot, deep stacks) builds a huge tree that blows the live
+    solve budget (~20s, unconverged), so the solver must SKIP it -> blueprint. Only
+    low-SPR (meaningful-pot) spots are solved, where the tree is small + fast. The
+    all-in guard runs earlier in decide(), so jams stay covered regardless."""
+    from src.subgame.river_subgame_solver import RiverSubgameSolver, SOLVER_MAX_SPR
+    solver = RiverSubgameSolver.__new__(RiverSubgameSolver)  # _solver_inputs is pure(ps)
+    base = dict(street='river', community=_BOARD, botSeat=1, hole_cards=_HOLE,
+                opp_range=object(), hero_range=object(), riverPath=[])
+    # high SPR (pot 6, stacks 197 -> SPR ~33) -> skip
+    assert solver._solver_inputs(
+        {**base, 'riverEntryPot': 6.0, 'riverEntryStacks': (197.0, 197.0)}) is None
+    # also a borderline just above the threshold -> skip
+    assert solver._solver_inputs(
+        {**base, 'riverEntryPot': 10.0,
+         'riverEntryStacks': (10.0 * (SOLVER_MAX_SPR + 1), ) * 2}) is None
+    # low SPR (pot 80, stacks 40 -> SPR 0.5) -> solve
+    spec = solver._solver_inputs(
+        {**base, 'riverEntryPot': 80.0, 'riverEntryStacks': (40.0, 40.0)})
+    assert spec is not None and spec['pot_entry'] == 80.0
+    print(f"PASS test_solver_gated_off_on_high_spr_small_pot (SOLVER_MAX_SPR={SOLVER_MAX_SPR})")
+
+
+def test_solve_deep_reraise_war():
+    """#1 fix: a river re-raise war BEYOND the blueprint's 3-aggression cap (now legal
+    via uncapped live re-raises) must SOLVE, not abort to the blueprint. The live solver
+    builds a depth-`LIVE_RIVER_MAX_AGGRESSIONS` tree, so a 4-aggression river path lands
+    on a real decision node instead of raising 'river path did not land on a decision
+    node'. Deep stacks + escalating off-menu raises keep money behind so the 4th
+    aggression is a genuine (non-clamped) node."""
+    from src.subgame.river_subgame_solver import LIVE_RIVER_MAX_AGGRESSIONS
+    assert LIVE_RIVER_MAX_AGGRESSIONS >= 4, LIVE_RIVER_MAX_AGGRESSIONS
+    db = _blueprint_db()
+    if db is None:
+        print("SKIP test_solve_deep_reraise_war (no blueprint)")
+        return
+    villain, hero = _trackers()
+    solver = _solver(db)
+    # bet(OOP,agg1), raise(IP,agg2), raise(OOP,agg3), raise(IP,agg4) -> OOP (seat 1)
+    # bot faces the 4th aggression. Off-menu chips -> injected as real tree edges.
+    path = [('bet', 8.0), ('raise', 16.0), ('raise', 32.0), ('raise', 64.0)]
+    dist, node, info = solver.solve_for_action(
+        board=_BOARD, pot_entry=24.0, stacks=(400.0, 400.0), bot_seat=1, hole=_HOLE,
+        villain_tracker=villain, hero_tracker=hero, confidence=1.0, river_path=path)
+    db.close()
+    assert node.agg >= 4, f"expected a >=4-aggression node (depth fix), got agg={node.agg}"
+    assert node.player == 1, node.player
+    assert set(dist.keys()) == set(node.actions)
+    assert abs(sum(dist.values()) - 1.0) < 1e-9
+    print(f"PASS test_solve_deep_reraise_war (node agg={node.agg}, "
+          f"dist={ {k: round(v,2) for k,v in dist.items()} })")
+
+
 TESTS = [
+    test_solver_gated_off_on_high_spr_small_pot,
+    test_solve_deep_reraise_war,
     test_blueprint_to_tree_dist_mapping,
     test_blueprint_to_tree_dist_reraise_node,
     test_hero_zero_reach_falls_back,

@@ -127,6 +127,17 @@ class RangeTracker:
         """Condition the belief on the opponent having taken `action` here, and
         update confidence by how well that action matched the model."""
         legal = list(legal)
+        if action not in legal:
+            # Off-MENU action: an emergent/custom all-in (or far-off-grid bet) that the
+            # node's ABSTRACT legal set doesn't list. E.g. a capped/deep-stack river jam:
+            # with voluntary_allin=False, 'allin' enters legal only via stack-clamp, so a
+            # player who instead makes a voluntary custom raise-to-stack has it normalized
+            # to 'allin' by apply_action -- which is then NOT in `legal`. The opponent
+            # model has no column for it, so we can't do the Bayesian reweight; keep the
+            # prior range + confidence rather than crash (this previously raised
+            # ValueError and 500'd the live hand). Conditioning on such actions would need
+            # the model to expose an all-in probability at these nodes (future work).
+            return
         ai = legal.index(action)
         mat = self._action_matrix(strategy_fn, street, position, bet_pattern, legal, board)
 

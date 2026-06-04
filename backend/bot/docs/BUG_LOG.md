@@ -10,6 +10,75 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-016 — Sub-stack custom bet mis-snapped to all-in (translation), corrupting the next key
+
+| | |
+|---|---|
+| **Date** | 2026-06-04 |
+| **Area** | Serving / action translation (`game/game_session.py`) |
+| **Severity** | Med (silent — no crash; mis-records the pattern char → wrong next-decision key + range update) |
+| **Status** | Fixed (inference-only, no retrain) |
+
+**Summary.** `_node_grid` put an `'a'` (all-in) edge into the nearest-char snapping grid whenever `allin`
+was legal. A **sub-stack** custom bet (money still behind) whose pot-fraction landed closest to that all-in
+edge got `char='a'` / `snapped_action='allin'` — so `bet_pattern` recorded a shove that didn't happen and
+the range tracker observed `'allin'`, feeding a wrong info-set key into the bot's next decision. Worst near
+the top of the menu (when stack ≈ 2.0× pot, the `'2'` and `'a'` grid edges nearly coincide); broad in the
+control arm (`allin` always legal), narrow in capped (`allin` legal only after a clamp). Found by the
+BUG-015 follow-up audit.
+
+### Fix
+`_node_grid(legal, include_allin=False)` for the sub-stack snap path (an at/above-stack custom is already
+normalized to `'allin'` by `_validate_custom`), so a sub-stack near-shove snaps to the largest **sized**
+char, not `'a'`. Falls back to the full grid only if no sized edge exists. Tests: custom-betting +
+game-session + range-tracker suites (34 pass).
+
+### Residual (deferred, low-consequence)
+A custom/sized bet leaving only a tiny **stub** behind (e.g. 2.0× when stack ≈ 2.0× pot → ~3 BB behind)
+still records as the sized tier rather than all-in. The principled fix is a single "near-all-in" stub
+threshold used in BOTH the engine clamp (`_apply_stack_constraints`, currently exact `cost >= stack`) and
+this translation snap — an abstraction change to bundle with the next retrain. Magnitude is small (rare
+SPR≈2 spot, ~3 BB stub), so it's left for now.
+
+---
+
+## BUG-015 — Range tracker 500'd on an emergent/custom all-in not in the abstract legal menu
+
+| | |
+|---|---|
+| **Date** | 2026-06-04 |
+| **Area** | Serving / range tracker (`game/range_tracker.py`, `evaluation/lbr.py`) |
+| **Severity** | High (500s a live hand mid-pot) |
+| **Status** | Fixed |
+
+**Summary.** `RangeTracker.observe` did `ai = legal.index(action)`. Playing the capped bot, the river
+solver jammed via a **custom raise-to-stack**, which `GameSession.apply_action` normalizes to `'allin'`
+(its char is `'a'`). But at a deep-stack river node under the capped menu (`voluntary_allin=False`),
+`'allin'` enters the engine's `legal` list **only via stack-clamp** — which didn't fire (stacks deep,
+pot small) — so `legal` held only sized raises. `observe` then did `legal.index('allin')` →
+`ValueError: 'allin' is not in list` → `POST /api/game/bot-action` 500.
+
+### Root cause
+The action vocabulary and the abstract `legal` list are inconsistent for a *voluntary* all-in in capped
+mode: a player (bot solver or human) can make an all-in via a custom raise-to-stack even when the node's
+abstract menu has no `'allin'` edge. `observe` assumed the action was always a member of `legal`. A
+capped-era latent bug (the capped menu makes `'allin'` absent from `legal` far more often), surfaced by
+playing the fresh capped blueprint.
+
+### Fix
+`observe` now no-ops when `action not in legal` (keep the prior range + confidence rather than crash) —
+an off-menu action has no opponent-model column to condition on. Applied to **both** `RangeTracker.observe`
+and `lbr.py:BotRange.observe` to preserve the BUG-008 live↔victim lockstep. Tests:
+`test_range_tracker.py:test_offmenu_action_does_not_crash` (+ lbr-range/game-session suites, 30 pass).
+Note: the bot's action wasn't committed (observe raised before `history.append`), so a crashed session is
+recoverable — restart the API and continue/deal next.
+
+### Lessons
+Any `legal.index(action)` on a served path must tolerate an action outside the abstract menu — custom and
+emergent all-ins routinely fall outside it under the capped abstraction.
+
+---
+
 ## BUG-014 — Fix #2 (parallel raw-regret merge) broke CFR+ re-activation → blueprints collapse to "open xlarge with every hand"
 
 | | |

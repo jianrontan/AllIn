@@ -87,6 +87,26 @@ def test_aggression_cap():
     print(f"PASS test_aggression_cap (deepest path has {worst} aggressions)")
 
 
+def test_aggression_cap_is_a_runtime_param():
+    """The aggression cap is a runtime PARAMETER, not fixed at the blueprint's 3. The
+    LIVE solver passes a deeper cap (5) so it can represent an uncapped river re-raise
+    war; a deeper cap must reach deeper. Uses very deep stacks so the CAP binds, not the
+    stack-behind prune. (No retrain: this is the solver's own runtime tree, not the
+    blueprint.)"""
+    deep = (1000.0, 1000.0)
+
+    def deepest(t):
+        return max(sum(1 for a in path if is_sized(a) or a == 'allin')
+                   for _term, path in _walk_terminals(t.root))
+
+    t3 = build_river_tree(pot_entry=20.0, stacks=deep, max_aggressions=3)
+    t5 = build_river_tree(pot_entry=20.0, stacks=deep, max_aggressions=5)
+    assert deepest(t3) == 3, deepest(t3)
+    assert deepest(t5) == 5, "max_aggressions=5 must reach a 5th aggression"
+    print(f"PASS test_aggression_cap_is_a_runtime_param (cap 3 -> {deepest(t3)}, "
+          f"cap 5 -> {deepest(t5)})")
+
+
 def test_no_duplicate_action_amounts():
     """At any node, two actions must never lead to the same chip commitment
     (the all-in dedupe): otherwise the menu and all-in collide."""
@@ -183,6 +203,7 @@ TESTS = [
     test_chip_conservation_all_terminals,
     test_fold_and_showdown_terminals,
     test_aggression_cap,
+    test_aggression_cap_is_a_runtime_param,
     test_no_duplicate_action_amounts,
     test_min_bet_respected,
     test_facing_allin_only_fold_or_call,

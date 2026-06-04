@@ -586,8 +586,33 @@ no-more-exploitable than the blueprint. Background: [1], [2].
   a faced **non-jam** deep raise → a **passive stopgap** (`bot_strategy._distribution` now
   falls back to check/call/fold on an untrained key, never uniform-over-legal — so the uncap
   can't make the bot stray-raise/jam from an untrained node). The bot does **not** yet
-  *propose* its own 5-bets+ (it has ~0 average-strategy mass on beyond-cap raises) — that, and
-  a principled non-jam-deep-raise response, are the remaining solver work below.
+  *propose* its own 5-bets+ on flop/turn (it has ~0 average-strategy mass on beyond-cap raises)
+  — that, and a principled non-jam-deep-raise response there, are the remaining solver work below.
+- *River deep re-raise war — SOLVER side ✅ DONE (2026-06-04), behind an SPR gate.* On the **river**,
+  the subgame solver builds its tree with `LIVE_RIVER_MAX_AGGRESSIONS = 5` (vs the blueprint's 3), so an
+  uncapped human 5-bet/6-bet+ on the river is **solved** (incl. the bot's own re-raise/jam), not declined
+  to the passive stopgap. **Runtime** solve → NO retrain. **CAVEAT (agent audit + live report): depth 5
+  DOES blow up at HIGH SPR.** The `opp_behind > 1e-9` prune only collapses a node once stacks commit, so
+  at a small-pot/deep-stack river entry many raises fit before commit and the tree explodes (measured:
+  pot 6 / stacks 197 → ~1500 nodes, ~20 s, blows the ~5 s budget → unconverged; small pots were already
+  ~6 s at depth 3). FIX: gate the solver on **`SOLVER_MAX_SPR = 6.0`** (skip the solve when
+  effective_stack / river_entry_pot > 6 → blueprint; the all-in guard still fires, and a deep raise-war
+  commits stacks → near-terminal → guard-covered). So the solver runs only on low-SPR (meaningful-pot)
+  rivers where the depth-5 tree is small + fast; a deep war there is cheap (low SPR). Deep nodes have no
+  blueprint warm-start (solve from scratch, fast at that depth; ranges from the tracker). The checkpoint
+  gauges (EV(served)/shape) are now exception-wrapped so a probe bug can't abort a run. Tests:
+  `test_river_tree.test_aggression_cap_is_a_runtime_param`, `test_river_subgame_solver.{test_solve_deep_reraise_war,test_solver_gated_off_on_high_spr_small_pot}`.
+  (Flop/turn deep re-raises still depth-limited — they need the leaf-value function below. A true mid-street
+  re-engage as the pot grows would need re-rooting the subgame at the current node — deferred.)
+
+> **Queued abstraction / retrain items (must ride the next retrain — they change the trained tree):**
+> - **Near-all-in "stub" threshold (BUG-016 residual).** Currently a sized bet/raise clamps to
+>   all-in only at exact `cost >= stack` (`poker_game._apply_stack_constraints`), so a bet leaving a
+>   tiny meaningless stub (e.g. 2.0× when stack ≈ 2.0× pot → ~3 BB behind) stays a sized tier instead
+>   of merging to all-in, adding a degenerate near-all-in node + a pointless later decision. Fix: one
+>   "near-all-in" threshold (`remaining-after-bet < min-raise / ~1-2 BB / SPR≈0`) used in BOTH the
+>   engine clamp AND the translation snap (`game_session._node_grid`), so a near-shove is consistently
+>   `'a'`. Low-consequence (rare SPR≈2 spot), so it rides the next retrain rather than forcing one.
 - *All-in-terminal guard (filed 2026-05-30, user idea) — the cheapest, highest-value entry
   point to this row.* **Why it's cheap:** an all-in that gets called has no further decisions
   — the board just runs out — so its value is pure **equity-vs-range to the river**, the same

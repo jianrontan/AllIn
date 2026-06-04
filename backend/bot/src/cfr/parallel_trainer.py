@@ -76,6 +76,19 @@ def _shape_line(trainer):
     return format_shape_line(rep)
 
 
+def _print_checkpoint_gauges(trainer):
+    """Print the served-EV + strategy-shape gauges at a checkpoint, wrapped so a
+    transient gauge/probe bug can NEVER abort a multi-hour run. The DB is already
+    checkpointed before this is called, so the worst case is a missing gauge line."""
+    try:
+        served_ev = trainer.evaluate_served_ev()
+        print(f"  EV(served, avg strategy): {served_ev:+.4f}  <- served self-play "
+              f"value (seat-balance check, NOT strength -> use LBR)")
+        print(_shape_line(trainer))
+    except Exception as e:                      # noqa: BLE001 -- gauges must never crash training
+        print(f"  [gauge/probe skipped: {type(e).__name__}: {e}]")
+
+
 def _worker_init():
     """Pool-worker initializer: make workers IGNORE SIGINT (Ctrl+C). On Windows,
     Ctrl+C is delivered to the WHOLE process group, so without this every worker
@@ -405,17 +418,10 @@ def train_blueprint_parallel(trainer, iterations, db=None, start_iteration=0,
             if db is not None and since_checkpoint >= checkpoint_every:
                 trainer.checkpoint_to_db(db, cursor - 1)
                 since_checkpoint = 0
-                # Self-play value of the SERVED (average) strategy. Unlike
-                # EV(cum,lagged)/EV(round) above (the CURRENT iterate, which can cycle
-                # at a large value forever), this settles to a small STABLE constant
-                # (the button's game-value edge, ~0). It is a SEAT-BALANCE/convergence
-                # sanity check, NOT a strength metric: a seat-lopsided or unconverged
-                # served strategy reads large, but two equally-bad strategies also
-                # self-play near the constant -- for exploitability/strength use LBR.
-                served_ev = trainer.evaluate_served_ev()
-                print(f"  EV(served, avg strategy): {served_ev:+.4f}  <- served "
-                      f"self-play value (seat-balance check, NOT strength -> use LBR)")
-                print(_shape_line(trainer))
+                # Served-EV (seat-balance/convergence gauge, NOT strength -> use LBR) +
+                # strategy-shape collapse probe. Exception-wrapped: a gauge bug must not
+                # kill the run (the DB is already checkpointed above).
+                _print_checkpoint_gauges(trainer)
 
         # Flush the tail. since_checkpoint advances in round_total units and rarely
         # lands exactly on a checkpoint boundary, so the final rounds' work is
@@ -424,10 +430,7 @@ def train_blueprint_parallel(trainer, iterations, db=None, start_iteration=0,
         if db is not None and since_checkpoint > 0:
             trainer.checkpoint_to_db(db, cursor - 1)
             since_checkpoint = 0
-            served_ev = trainer.evaluate_served_ev()
-            print(f"  EV(served, avg strategy): {served_ev:+.4f}  <- served "
-                  f"self-play value (seat-balance check, NOT strength -> use LBR)")
-            print(_shape_line(trainer))
+            _print_checkpoint_gauges(trainer)
     except KeyboardInterrupt:
         # Ctrl+C: kill the workers IMMEDIATELY (terminate, not close). pool.close()
         # waits for every queued chunk to finish before join() returns -- with 8

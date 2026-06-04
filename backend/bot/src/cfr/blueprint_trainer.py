@@ -494,19 +494,20 @@ class BlueprintTrainer:
 
             if db is not None and (i + 1) % checkpoint_every == 0:
                 self.checkpoint_to_db(db, actual_iteration)
-                # Self-play value of the SERVED (average) strategy -- settles to a
-                # small stable constant (button game-value edge), unlike EV(cum)/
-                # EV(sess) (current iterate). Seat-balance/convergence check, NOT a
-                # strength metric -> use LBR for exploitability.
-                served_ev = self.evaluate_served_ev()
-                print(f"  EV(served, avg strategy): {served_ev:+.4f}  <- served "
-                      f"self-play value (seat-balance check, NOT strength -> use LBR)")
-                # Strategy-shape sanity probe -- screams if the preflop strategy has
-                # collapsed (BUG-014: open one size with 100% of hands, never fold).
-                from .strategy_shape import strategy_shape_report, format_shape_line
-                print(format_shape_line(strategy_shape_report(
-                    lambda k: (self.info_sets[k].cumulative_strategy
-                               if k in self.info_sets else None))))
+                # Served-EV (seat-balance/convergence gauge, NOT strength -> use LBR) +
+                # the strategy-shape collapse probe (BUG-014: open one size with 100% of
+                # hands, never fold). Exception-wrapped: a gauge bug must not kill the run
+                # (the DB is already checkpointed above).
+                try:
+                    served_ev = self.evaluate_served_ev()
+                    print(f"  EV(served, avg strategy): {served_ev:+.4f}  <- served "
+                          f"self-play value (seat-balance check, NOT strength -> use LBR)")
+                    from .strategy_shape import strategy_shape_report, format_shape_line
+                    print(format_shape_line(strategy_shape_report(
+                        lambda k: (self.info_sets[k].cumulative_strategy
+                                   if k in self.info_sets else None))))
+                except Exception as e:           # noqa: BLE001 -- gauges must never crash training
+                    print(f"  [gauge/probe skipped: {type(e).__name__}: {e}]")
 
         total_elapsed = _format_duration(time.time() - t_start)
         print(f"\nTraining completed in {total_elapsed}.")
