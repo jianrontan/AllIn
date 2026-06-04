@@ -138,11 +138,31 @@ def test_all_in_normalisation():
     check('over-stack custom -> all-in', 'allin' in sess.data['history'])
 
 
+def test_substack_custom_not_snapped_to_allin():
+    """BUG-016: a SUB-stack custom bet whose pot-fraction is closest to the all-in edge
+    must NOT be recorded as all-in (char 'a') -- doing so makes the bot's next info-set
+    key + range update wrongly think the opponent shoved while money is still behind. It
+    snaps to a SIZED char instead. (An at/above-stack custom is still normalised to
+    'allin' by _validate_custom -- see test_all_in_normalisation.) Would FAIL pre-fix:
+    the old grid carried an 'a' edge, and a 150-chip open is far above the largest sized
+    open (xlarge=5 BB) and nearest the all-in edge (200), so it snapped to 'a'."""
+    sess = GameSession.new('s', 'p', strategy_fn=_strat_fn)
+    # SB opens to 150 chips (75 BB): 50 chips / 25 BB remain behind -> NOT all-in.
+    sess.apply_action(make_custom_action(False, 150))
+    d = sess.data
+    check('sub-stack near-shove recorded as a custom bet, not all-in',
+          d['history'] == ['bet_custom_150'], d['history'])
+    check('pattern char is sized, not all-in (a)',
+          bool(d['bet_pattern']) and d['bet_pattern'][-1] != 'a', d['bet_pattern'])
+    check('money is still behind (genuinely sub-stack)', d['p0_stack'] > 0, d['p0_stack'])
+
+
 if __name__ == '__main__':
     test_engine_custom_chip_math()
     test_custom_bounds()
     test_translation_blend()
     test_session_custom_and_translation()
     test_all_in_normalisation()
+    test_substack_custom_not_snapped_to_allin()
     print(f"\nResults: {_passed} passed, {_failed} failed out of {_passed + _failed}")
     sys.exit(1 if _failed else 0)
