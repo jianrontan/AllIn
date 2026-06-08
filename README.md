@@ -21,16 +21,15 @@ through a **Flask** API, and exposes it in an interactive **React** platform.
 - **Self-play reinforcement learning**: no human data and no hand-crafted
   heuristics — the strategy emerges purely from **regret minimization**.
 - **Multi-layer abstraction**: a hierarchical state representation built from
-  **15 equity-based preflop buckets + distribution-aware (potential-aware)
-  postflop buckets (12 flop / 12 turn / 10 river)** clustered by Earth Mover's
-  Distance over equity distributions.
+  **decoupled 30-fine / 10-coarse equity-based preflop buckets + distribution-aware
+  (potential-aware) postflop buckets (20 flop / 16 turn / 10 river)** clustered by
+  Earth Mover's Distance over equity distributions.
 
 ### 📊 Trained Blueprint (active model)
 ```
-Active blueprint (analysis/blueprints/blueprint_*.db):
-├── Algorithm:          Monte Carlo CFR+ with external sampling + Linear-CFR-style discount (α=1.5)
-├── Training iterations: 6,500,000
-├── Information sets:    26,052 unique strategic situations
+Served blueprint (capped run, 25M-iteration snapshot — see Deployment):
+├── Algorithm:          Monte Carlo CFR+ with external sampling + Linear-CFR-style discount
+├── Training iterations: 25,000,000 (the least-exploitable snapshot; pinned via ALLIN_BLUEPRINT_DB)
 ├── Game:               Heads-up NLHE, 100 BB effective stacks (SB 1 / BB 2)
 └── Storage:            SQLite (incremental checkpoint + resume)
 ```
@@ -182,10 +181,14 @@ python tests/run_evaluation.py --samples 1000   # exploitability in mbb/hand (lo
 - ✅ **Blueprint training** — Monte Carlo CFR+ with SQLite checkpoint/resume
 - ✅ **Serving + Play-vs-bot** — Flask API + React platform
 - ✅ **Exploitability evaluation** — best-response convergence scoreboard
-- 🚧 **Subgame solving** — real-time re-solving with full pot/stack information
-  (fixes the abstraction's stack-depth blind spot)
-- 📅 **Online 1v1 play on AWS** — Redis/DynamoDB session store, WebSocket
-  transport, unrestricted human bet sizing
+- ✅ **Hand-level Bayesian range tracker** — opponent-range belief with confidence
+- ✅ **River subgame solving** — real-time re-solving of the river with full
+  pot/stack information and the live range (the shippable real-time-solving feature)
+- 🧊 **Turn/flop depth-limited solving** — built and validated in the lab, but
+  **shelved**: it lowered exploitability yet did not beat the blueprint in real
+  games (a cross-street consistency problem needing continual re-solving). See ROADMAP.
+- 📅 **Online 1v1 play on AWS** — DynamoDB session store, Cloudflare Pages frontend,
+  +EV leaderboard (unrestricted human bet sizing already shipped)
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for detail, and
 [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) for the architecture.

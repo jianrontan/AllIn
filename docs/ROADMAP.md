@@ -1,6 +1,6 @@
 # Poker AI Roadmap
 
-Last updated: 2026-06-03
+Last updated: 2026-06-07 (Phase 4: river solver shipped, turn solver shelved after the N0 gate)
 
 Status legend: ✅ done · 🚧 in progress · 📅 planned
 
@@ -210,9 +210,17 @@ opponent's hole cards, which the river solver consumes as its input range.
 
 ---
 
-## Next blueprint redesign — card + betting abstraction 🔄 IN PROGRESS (one fresh retrain)
+## Next blueprint redesign — card + betting abstraction ✅ DONE (shipped as the capped run)
 
-> **SUPERSEDED IN PART (2026-05-29) — see `docs/ABSTRACTION_REDESIGN_HANDOFF.md`.**
+> **STATUS UPDATE (2026-06-08):** this redesign is complete. The decoupled 30-fine/10-coarse
+> preflop + 20·16·10 postflop card abstraction and the capped betting menu (Fix #4) shipped in
+> `blueprint_par_capped_20260604_114512`; the **25M snapshot** (`snap_20260604_114512_25550000.db`)
+> is the least-exploitable point and is the one being served (pinned via `ALLIN_BLUEPRINT_DB` —
+> the auto-resolver would otherwise pick the more-exploitable 30M tail). See the capped-blueprint
+> A/B sweep in Phase 4 below and [DEPLOYMENT.md](DEPLOYMENT.md). The historical design notes
+> follow.
+
+> **SUPERSEDED IN PART (2026-05-29) — for the fine/coarse key contract see `CLAUDE.md`.**
 > The card abstraction below ("preflop 15→40, postflop 12/12/10 unchanged") was
 > revised into a **decoupled imperfect-recall** scheme: **30 fine** preflop buckets
 > (preflop keys only) + **10 coarse** classes (postflop `startBucket`), and postflop
@@ -507,7 +515,40 @@ Implementation notes (`abstractions/postflop_v2.py`, `abstractions/canonical.py:
 
 ---
 
-## Phase 4 — Subgame solving 🚧 IN PROGRESS
+## Phase 4 — Subgame solving 🚧 (river SHIPPED; turn shelved)
+
+> ### ⭐ Engineering decision & case study (2026-06-07): shipped the river solver, shelved the turn solver
+>
+> **Direction:** deploy the bot now = **25M blueprint + river subgame solver** (the one stack
+> that wins on *both* metrics). The depth-limited **turn** solver is **shelved** as a validated
+> *lab* result pending a continual-re-solving rebuild (below). This is the interview story —
+> systems thinking + engineering judgment over sunk cost.
+>
+> - **Built & validated:** a full depth-limited turn solver — turn betting tree, vectorized
+>   CFR+, a reach-conditioned **leaf value function** (M0–M2), reviewed by 3 agents. Proved it
+>   cut *in-abstraction exploitability* **~99%** in the lab.
+> - **Caught cheaply (the key move):** *before* spending weeks on a baked / neural-net leaf to
+>   make it fast enough to serve, a **~14-minute real-game gate** (N0: head-to-head vs the
+>   blueprint) showed the turn solver **did not beat the blueprint** (−611 mbb), while the
+>   river-only stack won clearly (**+1801 mbb**). The gate was deliberately placed *below* the
+>   expensive backend work precisely so a "doesn't actually help" result would stop us early.
+> - **Root cause (not a bug in any layer):** the blueprint, range tracker, and river solver are
+>   each correct *in isolation*. The failure is a **cross-layer consistency break**: each
+>   one-shot subgame solve assumes *"the bot plays the blueprint on every other street"* — valid
+>   only on the **last** street. On the **turn** (non-terminal), the turn solver's deviations
+>   make the bot reach the river with a **different range than the river solver assumes**, so
+>   adding the turn solver **fed a wrong range to the previously-winning river solver and
+>   degraded it.** This is exactly the problem **continual re-solving** (DeepStack / Libratus)
+>   exists to solve; independent per-street solves only work on the final street.
+> - **Lessons (the talking points):** (1) *low exploitability ≠ winning money* — exploitability
+>   is robustness vs a perfect adversary; real opponents aren't, so validate **real-game EV**
+>   too. (2) **Gate real-game value with a cheap test BEFORE building serving infrastructure**
+>   (the bake/NN would have faithfully served a losing strategy). (3) **Multi-street depth-limited
+>   solving needs cross-street consistency** (continual re-solving), not independent solves.
+> - **Revival path (future):** continual re-solving — the turn & river solvers share the *real*
+>   range and continuation values across streets. A genuine architecture rebuild, not a backend
+>   choice; the (also-shelved) NN-leaf plan plugs into it. See
+>   [DEPTH_LIMITED_SOLVER_PLAN.md](DEPTH_LIMITED_SOLVER_PLAN.md) + [NN_LEAF_PLAN.md](NN_LEAF_PLAN.md) §6d.
 
 Improve on the blueprint at runtime by re-solving the current spot with full
 information (real pot, real stacks, the Phase-3 range), fixing the M1 abstraction
@@ -529,8 +570,41 @@ between what we have and what we don't.
 | River endgame solver (v1, *unsafe*) | `src/subgame/river_subgame_solver.py` — small river tree, vectorized CFR+, ranges from `RangeTracker`, blueprint warm-start (`river_cfr.warm_start` + `blueprint_projection.py`), EV-gated; **served live** (`bot_public_state` feeds it river-entry pot/stacks/ranges/path) | ✅ built (~24× less river-exploitable than the blueprint — see caveat below); **already overbets** (menu includes 1.5× pot + all-in) |
 | River nested off-grid sizing | inject the opponent's *exact* bet size as a real tree edge instead of snapping it to the nearest menu size (Libratus nested solving) | ✅ (2026-05-30) `RiverTree.inject_realized_edge` + `_navigate` tries injection before snapping; the bot's decision node now faces the TRUE off-grid pot. Falls back to snapping when the size is really an all-in / below min-raise / already on-grid. Tests in `test_river_tree.py` + end-to-end. |
 | Low-SPR deep-raise / 5-bet+ solving (any street) + **all-in-terminal guard** | reuse the river machinery for near-terminal deep nodes, incl. **preflop non-jam 5-bets+** and any beyond-cap reraise — the bot can re-raise off-abstraction here. **Highest-value slice (file 2026-05-30): guard every all-in.** A flop/turn all-in that gets called runs the board out with no further decisions → it's *near-terminal*, so it solves with the cheap river machinery (equity-vs-range, **no leaf-value function**). | 🔄 **FACING-a-jam DONE (2026-05-30)**; proposing-a-jam + non-jam deep-raise still 📅. `RiverSubgameSolver._facing_allin_guard`: on flop/turn, when the call commits the whole stack (`to_call ≥ bot_stack` — near-terminal regardless of pre-jam SPR), override the blueprint with the pot-odds-correct call/fold from `RangeTracker.hero_equity` vs the live belief. Confidence-gated (`guard_confidence`, defers to blueprint on an off-model/untrusted belief — the high-SPR-overbet safety) + chip-margin gated. Runs BEFORE the river path in `decide()`. Tests: `test_allin_guard.py` (12, incl. high-SPR overbet acts-when-trusted / defers-when-untrusted). Directly kills the stray ~1% blueprint jams that dump a stack. (River all-ins already covered: solver runs on every river decision.) PROPOSING a jam needs the opponent's calling model + a value for the non-jam alternative → deferred. |
-| **Depth-limited turn/flop solving (leaf values)** | blueprint counterfactual values as **multi-valued** leaf states; **this is what lets the bot overbet/5-bet on the flop and turn** | 📅 (the hard lift, gates the rest) |
+| **Depth-limited turn/flop solving (leaf values)** | blueprint counterfactual values as **multi-valued** leaf states; **this is what lets the bot overbet/5-bet on the flop and turn** | 📅 the hard lift, gates the rest. **PLAN → [DEPTH_LIMITED_SOLVER_PLAN.md](DEPTH_LIMITED_SOLVER_PLAN.md)** (turn first; **reach-conditioned** bucketed-CFV leaf — a per-bucket scalar is wrong under range shift; K=1→K=2-4; reviewed by 2 agents). **M-pre measure-first ✅ (2026-06-05, `scripts/measure_turn_value_band.py`, 1200 self-play hands): GO** — addressable band **26%** of turn decisions (>15% bar), turn-entry belief **1.6× vaguer** than river (<2× bar). Scope is bounded: ~65% of turn decisions are high-SPR → gate-skipped (blueprint), 3.5% facing-jam → guard, so the solver improves **~1/4 of turn spots** and the leaf coarseness caps sharpness. **M0 keystone-leaf ✅ (2026-06-05, `src/subgame/cfv.py` + `scripts/validate_cfv*.py`, 4 turn boards × an extreme full→broadway villain-range shift): GO.** (1) The leaf MUST be **reach-conditioned** — a frozen per-bucket scalar CFV is **430–800% wrong** under the shift vs **13–16%** for a hero-bucket×villain-bucket matrix dotted with the *live* reach (~30–50×); this is the single most important finding (D2 confirmed). (2) At the blueprint's own ~11–16 turn buckets the leaf is too coarse (**14–33%**), but **bucket count is a free lever** (the leaf matrix need not use the blueprint's buckets) — a **finer (~128) strength-binned, card-removal-aware** matrix leaf lands at **~9–15% coarseness** (worst 15.4%, paired/high-SPR). **Review follow-up (`scripts/measure_leaf_accuracy.py`, 6 textures × 3 SPRs × 3 shift shapes incl. draw-heavy/polarized that are ORTHOGONAL to the strength partition, via a `FrozenBlueprint` snapshot): worst under-shift stable rel-RMSE = 7.8%, and the orthogonal draw-heavy shift (6.0%) is NOT worse than the easy rank-correlated broadway shift (4.7%)** — so the leaf is robust beyond the easy case (the earlier "13–16%" was narrow-range denominator inflation; the stable metric normalizes that out). Caution: per-pair POT-normalized error reaches ~20–28% on stress textures (flush/paired at high SPR, largely SPR-gate-skipped). (3) Card removal matters at fine resolution (~5% if ignored; inclusion-exclusion recovers it). **v1 leaf = the finer reach-conditioned matrix**; a 2-D feature (strength×potential) is the lever if M2 shows the leaf is the bottleneck (esp. paired boards, where strength-rank is weakest). Cost: built once/solve (~128×46 river-tree walks ≈ 2× a river solve), then a dot per CFR iteration; bakeable if a normalized matrix proves board-independent. **M1 turn tree ✅ (2026-06-05, `src/subgame/turn_tree.py` + `tests/test_turn_tree.py`, 13 green):** mirrors the river betting scaffold (shared label/menu, no drift) but a non-fold close is a **depth-limit leaf** (river to come) carrying `(final_pot, leaf_stacks)` for the M0 leaf; all-in-called → `leaf_stacks=(0,0)` → equity-to-river, no special case; equal-stack invariant propagates to equal leaf stacks. Real gates next: **M2** (depth-limited turn CFR+ K=1 on this tree with the M0 matrix leaf; 4-card `H=1128` basis + leaf in *all* terminal evaluators + budget-granularity fix; GATE = turn exploitability drops vs an *out-of-leaf* adversary) → **M4** (LBR strictly drops, else don't serve live). |
 | Safe / nested subgame solving | adversarial root + opt-out values (gadget) — provably no-more-exploitable than the blueprint, all streets | 📅 |
+
+### Depth-limited TURN solver — milestone status (consolidated, 2026-06-06)
+
+Full detail in [DEPTH_LIMITED_SOLVER_PLAN.md](DEPTH_LIMITED_SOLVER_PLAN.md); the giant cell above has the M0 numbers. Scannable view:
+
+| Milestone | Status | One-line |
+|---|---|---|
+| **M-pre** measure-first | ✅ GO | addressable band ~26%; turn belief 1.6× vaguer than river |
+| **M0** leaf keystone | ✅ GO | reach-conditioned bucket matrix (frozen scalar 430–800% wrong); n≈128 + card-removal; **structural-shift worst stable 7.8%**, orthogonal draw-heavy (6.0%) ≤ broadway (4.7%) |
+| **M1** turn tree | ✅ | `turn_tree.py`, non-fold close = depth-limit leaf; all-in-called → equity-to-river free; 15 tests |
+| **M2** depth-limited CFR+ K=1 | ✅ | **S1 ✅** plumbing (`leaf_value_vec`, `turn_leaf_matrix_both`, M1=−M0ᵀ zero-sum); **S2 ✅** `TurnCFR` (zero-sum exact, converges; 5 tests); **S3 ✅ GATE PASSED full-fidelity** (6/6 boards, 16 rivers/n=128/800 iters: blueprint mean **7244 → solved ~77 mbb (−98.9%)**, solved ≈ unexploitable out-of-bucket on every texture). Budget fix done. **M2 DONE** (out-of-bucket/in-model-river; true-game robustness = M3+M4) |
+| **M3** multi-valued leaf K=2–4 | ⏭️ skipped | measure-first: the frozen-range trap (K=1 ~7722 mbb vs a river-BR adversary) is mostly blueprint-river weakness — at serve time the **river SOLVER** is the continuation robustness K-set would approximate, so K-set is redundant |
+| **M4** `TurnSubgameSolver` live | ⛔ shelved (N0 failed) | **N0 value gate FAILED (2026-06-07):** head-to-head vs blueprint (250 hands, `measure_turn_match.py`) — river-stack **+1801±1363** but turn-stack **−611±1169** at honest fidelity (n=64/500it; −260 at n=20) → two negative runs, ~1.3σ below the river-only stack. No value (lower exploitability ≠ higher EV vs a non-adaptive blueprint; the EV-gate self-grades with the coarse leaf). **Decision: don't serve turn solving; don't build the bake/NN. Ship Rung 1 (25M blueprint + river solver).** M0–M2 stay a validated lab result. Re-run N0 only after a turn-leaf/EV-gate redesign. _Prior:_ | **S1 ✅** `TurnSubgameSolver` (5 tests; river 11/11). **S2 ✅** `turnEntry*` wired into `bot_public_state` (game-session 11/11). **LATENCY WALL: turn solve ~20–54s** (leaf-build-bound, vs river ~8s) → needs **baking** to serve. **B2 head-to-head (servable n=20, 250 hands):** river-stack **+1801±1363** vs blueprint; turn-stack **−260±1469** → **no turn edge over the deployed river stack** (inconclusive ~1σ, but value lives at high/unservable fidelity + M3 says marginal value small). **PAUSED**: high baking cost for uncertain marginal value → pivot to ship-25M + deploy river solver. M0–M2 + the class preserved. |
+| **M5** flop | ⬜ | reuse M1–M4 one street up if measured worth it |
+| **M6** safety gadget (Phase 5a) | ⬜ | provably no-more-exploitable — the last thing |
+
+3-agent review of M0→M2 ✅ (no correctness-critical bugs; keystone math confirmed; all HIGHs + hardening fixed: `FrozenBlueprint` snapshot in all scripts, structural-shift sweep, `exploitability` semantics doc).
+
+### BR / LBR measurement track (capped blueprint convergence A/B)
+
+**BR-specific work done:** vectorized public-tree BR (`run_evaluation.py`, lower bound); **harness fixes** = measures each blueprint on its OWN size grid (auto `menu_mode`, no snapping), `--workers` parallel, seat-0/1 split. **Cost measured 2026-06-05** (corrected the stale ">10 min" note): BR **~316 s/sample serial** (`--workers` parallelizes), LBR **0.23 s/hand**. Snapshots in `analysis/blueprints/snapshots/`.
+
+Sweep of capped run `…114512` (`--seed 42` = common random numbers; LBR 3000 hands; BR 200 boards):
+
+| iters | BR seat0 (IP) | BR seat1 (OOP) | BR total | LBR |
+|---|---|---|---|---|
+| 20M | — | — | — | +19.2 |
+| 23M | — | — | — | −317.0 |
+| 25M | +5726.0 | +8694.2 | **14420.3** ◀min | **−1987.8** ◀peak |
+| 28M | +5782.4 | +8753.7 | **14536.2** | −1356.2 |
+| 30M | +5826.9 | +8794.9 | **14621.8** | −508.8 |
+
+**Read (COMPLETE 2026-06-06):** BR **rises monotonically 25→28→30M** (14420→14536→14622, both seats; EXACT ordering — same 200 boards). LBR is an **inverted-U peaking at 25M** (+19 → −317 → **−1988** → −1356 → −509). **Both agree: 25M is the best snapshot; training past it steadily DEGRADES the served average** — late-iterate drift (γ over-weights the cycling current iterate; a well-behaved CFR average should get *less* exploitable, not more). Small in BR (+1.4% over 5M iters), large in LBR (~1480 mbb less robust). **SHIP 25M** via `ALLIN_BLUEPRINT_DB=analysis/blueprints/snapshots/snap_20260604_114512_25550000.db` — the auto-resolver otherwise serves 30M, the WORST of the three. Future: cut γ / stop ~25M / investigate late-iterate cycling. **OOP/BB is the dominant leak (8.7k of 14.4k)** — exactly the turn solver's target. vs the old pre-redesign run (13.9k BR / **+3114 LBR**, different abstraction + pre BR-harness-fix): the redesign traded a hair more theoretical BR for a large real-game robustness gain (LBR flipped exploitable→robust).
 
 > **Measurement caveat on the "~24×" figure (2026-05-30).** That number came from
 > `scripts/measure_river_exploitability.py` when the measurement tree used the *solver's*

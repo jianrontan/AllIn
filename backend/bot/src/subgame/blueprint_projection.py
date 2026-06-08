@@ -76,19 +76,35 @@ def blueprint_strategy_on_tree(tree, ba, raw_strategy, postflop_menu=None):
     river PATTERN chars and the action-distribution projection use the right size
     set -- pass postflop_menu_for(db_menu_mode(db)). Default = control menu.
     """
+    return _project(tree, ba, raw_strategy, 3, ba['strg'][3], ba['groups'][3],
+                    postflop_menu)
+
+
+def blueprint_turn_strategy_on_tree(tree, ba, raw_strategy, postflop_menu=None):
+    """Turn analogue of blueprint_strategy_on_tree (Stage 3): the blueprint's TURN
+    strategy projected onto a TurnTree, for measuring how exploitable the blueprint's
+    turn play is vs the solved turn strategy. `ba` MUST be
+    build_turn_board_arrays(board4, cards) so it carries pf/strg2/groups2. Keys are
+    street-2 turn keys; the turn pattern resets at the tree root (current-street only),
+    matching the blueprint's turn key format."""
+    return _project(tree, ba, raw_strategy, 2, ba['strg2'], ba['groups2'], postflop_menu)
+
+
+def _project(tree, ba, raw_strategy, street, strg, groups, postflop_menu):
+    """Shared projection: street 3 (river, strg[3]/groups[3]) or 2 (turn,
+    strg2/groups2). _node_patterns + tree_action_char + blueprint_to_tree_dist are
+    street-agnostic (they read node.pot_mid/to_call/actions), so only the key street +
+    bucket arrays differ."""
     patterns = _node_patterns(tree, postflop_menu)
     pf = ba['pf']
-    strg = ba['strg'][3]                 # river strength bucket per hand
-    groups = ba['groups'][3]             # [(mask, rep_idx), ...] by (preflop, strength)
     out = [None] * len(tree.decision_nodes)
-
     for node in tree.decision_nodes:
         nid = node.node_id
         pos = 'oop' if node.player == 1 else 'ip'
         pattern = patterns[nid]
         mat = np.zeros((ba['H'], len(node.actions)))
         for mask, rep in groups:
-            key = make_info_set_key(3, pos, pf[rep], strg[rep], pattern)
+            key = make_info_set_key(street, pos, pf[rep], strg[rep], pattern)
             tree_dist = blueprint_to_tree_dist(raw_strategy(key) or {}, node, postflop_menu)
             mat[mask] = np.array([tree_dist[a] for a in node.actions])
         out[nid] = mat

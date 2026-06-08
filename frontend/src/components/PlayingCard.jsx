@@ -10,14 +10,27 @@ const SUITS = {
 };
 
 function PlayingCard({ card, hidden, small }) {
-    const box = small ? 'w-11 h-16' : 'w-14 h-20';
+    // The card sizes off the `--card-w` CSS variable set on the table container,
+    // which is clamped to the viewport — so the whole board grows/shrinks with the
+    // window. Font size is derived from the width, so the rank/suit scale with the
+    // card. `small` pins a fixed compact size for use outside the table; elsewhere
+    // the variable falls back to 3.5rem (the original size) so other pages are
+    // unchanged.
+    const sizeStyle = small
+        ? { width: '2.5rem', height: '3.6rem', fontSize: '0.62rem' }
+        : {
+            width: 'var(--card-w, 3.5rem)',
+            aspectRatio: '7 / 10',
+            fontSize: 'calc(var(--card-w, 3.5rem) * 0.34)',
+        };
 
     if (hidden || !card) {
         return (
-            <div className={`${box} rounded-lg flex items-center justify-center
-                bg-gradient-to-br from-slate-700 to-slate-900
-                ring-1 ring-inset ring-amber-500/30`}>
-                <div className="w-2.5 h-2.5 rotate-45 bg-amber-500/40" />
+            <div style={sizeStyle}
+                className="rounded-lg flex items-center justify-center
+                    bg-gradient-to-br from-slate-700 to-slate-900
+                    ring-1 ring-inset ring-amber-500/30">
+                <div className="w-[26%] aspect-square rotate-45 bg-amber-500/40" />
             </div>
         );
     }
@@ -26,13 +39,12 @@ function PlayingCard({ card, hidden, small }) {
     const suit = SUITS[card[1]] || { sym: '?', red: false };
 
     return (
-        <div className={`${box} rounded-lg bg-white shadow-md flex flex-col
-            items-center justify-center leading-none
-            ${suit.red ? 'text-rose-600' : 'text-slate-900'}`}>
-            <span className={small ? 'text-base font-bold' : 'text-xl font-bold'}>
-                {rank}
-            </span>
-            <span className={small ? 'text-lg' : 'text-2xl'}>{suit.sym}</span>
+        <div style={sizeStyle}
+            className={`rounded-lg bg-white shadow-md flex flex-col
+                items-center justify-center leading-none
+                ${suit.red ? 'text-rose-600' : 'text-slate-900'}`}>
+            <span className="font-bold" style={{ fontSize: '1em' }}>{rank}</span>
+            <span style={{ fontSize: '1.28em' }}>{suit.sym}</span>
         </div>
     );
 }

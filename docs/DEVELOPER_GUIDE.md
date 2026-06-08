@@ -86,11 +86,13 @@ AllIn/
 │   │   │   ├── bot/
 │   │   │   │   ├── player.py                 # PyPokerEngine player (used by test_player)
 │   │   │   │   └── game_adapter.py           # PyPokerEngine round_state → info-set key
-│   │   │   ├── subgame/                      # Subgame-solving scaffolding (roadmap)
-│   │   │   │   ├── confidence_detector.py
-│   │   │   │   ├── off_tree_detector.py
-│   │   │   │   ├── subgame_detector.py
-│   │   │   │   └── player_blueprint_adapter.py
+│   │   │   ├── subgame/                      # Subgame solving (river shipped; turn shelved)
+│   │   │   │   ├── river_subgame_solver.py    # River endgame solver (served live)
+│   │   │   │   ├── river_tree.py / river_cfr.py  # River betting tree + vectorized CFR+
+│   │   │   │   ├── blueprint_projection.py    # Blueprint→tree projection (EV gate)
+│   │   │   │   ├── range_inputs.py / solve_control.py
+│   │   │   │   ├── cfv.py                      # Leaf value (M0) for depth-limited solving
+│   │   │   │   └── turn_{tree,cfr,subgame_solver}.py  # Turn solver (validated, shelved)
 │   │   │   └── evaluation/                   # Measurement harness (scored, not guessed)
 │   │   │       ├── best_response.py          # In-abstraction exploitability (BR)
 │   │   │       ├── lbr.py                     # Local Best Response — off-tree lower bound (+ BotRange)
@@ -157,8 +159,8 @@ Finer, equity- and texture-driven buckets (the old hand-named buckets are gone):
   `startBucket`. Both are equal-frequency quantilings of the same Monte Carlo equity
   table (`scripts/compute_preflop_equity.py`), derived at import in
   `card_abstractions.py`. The fine→coarse collapse happens in
-  `cfr/keys.make_info_set_key` for postflop streets. See `CLAUDE.md` /
-  `docs/ABSTRACTION_REDESIGN_HANDOFF.md` for the full contract.
+  `cfr/keys.make_info_set_key` for postflop streets. See `CLAUDE.md` for the full
+  fine/coarse key contract.
 - **Distribution-aware (potential-aware) postflop buckets** — integers, **20 flop /
   16 turn / 10 river** (`PostflopV2`). Each hand is described by the *distribution* of
   its equity-vs-uniform-range over board runouts (a 30-bin histogram) and clustered by
@@ -397,7 +399,7 @@ Example: "pf_13_ip_"
 
 Example: "pf_9_5_ip_turn_m"
   preflop_bucket = pf_9      (the starting-hand bucket, fixed for the hand)
-  strength       = 5         (this street's postflop bucket; 0–11 flop/turn, 0–9 river)
+  strength       = 5         (this street's postflop bucket; 0–19 flop, 0–15 turn, 0–9 river)
   position       = ip
   street         = turn
   pattern        = m         (opponent bet medium)
@@ -406,7 +408,9 @@ Example: "pf_9_5_ip_turn_m"
 - `position`: `ip` (button/SB, acts last postflop) or `oop` (BB).
 - `pattern`: betting actions **on the current street only** — it **resets each
   street**. Characters: `k`=check, `c`=call, `f`=fold, `s`=small bet/raise,
-  `m`=medium, `l`=large, `a`=all-in.
+  `m`=medium, `l`=large, `o`=overbet (1.5× pot, postflop), `x`=xlarge open
+  (5 BB, preflop open only), `a`=all-in. (Single source of truth:
+  `cfr/keys.py:ACTION_CHARS`.)
 
 Keeping both the starting-hand bucket and the current strength bucket postflop
 bakes a form of range-awareness into the abstraction (a strong board for a
@@ -502,10 +506,12 @@ to the same key. Consequences:
   many deep-stack visits where it wasn't legal, so its readout probability
   understates how often you'd actually shove in the short spot.
 
-This is **deferred to the subgame-solving phase**: either add a stack-depth/SPR
-bucket to the postflop key, or solve the spot at runtime where the real stacks
-are known. The `subgame/` package and the `BotStrategy` interface exist so this
-is additive, not a rewrite.
+This is **addressed by subgame solving** (Phase 4): solve the spot at runtime
+where the real stacks are known. The **river solver already does this and ships
+live**; the depth-limited turn/flop solver that would extend it to earlier streets
+is built and lab-validated but **shelved** (see [ROADMAP.md](ROADMAP.md) Phase 4).
+The `subgame/` package and the `BotStrategy` interface make this additive, not a
+rewrite.
 
 ### Inference still depends on PyPokerEngine for the test harness
 
@@ -535,6 +541,8 @@ the test harness could drop it too and drive `PokerGame` directly.
 
 ---
 
-*Last updated: 2026-05-22 — rewritten for the SQLite blueprint, equity/texture
-buckets, position-aware keys, the Flask-free `game/` engine, `cfr/keys.py`, and
-the exploitability evaluator.*
+*Last updated: 2026-06-08 — refreshed the `subgame/` package listing (river solver
+shipped, turn solver shelved), the postflop bucket counts (20/16/10) and pattern
+chars, and the Known-Limitations note. Core module reference dates to the 2026-05-22
+rewrite for the SQLite blueprint, equity/texture buckets, position-aware keys, the
+Flask-free `game/` engine, `cfr/keys.py`, and the exploitability evaluator.*

@@ -47,9 +47,22 @@ def solve_river(tree, ba, reach0, reach1, *, max_iters=1000, check_every=50,
     t0 = time.time()
     done = 0
     gap = float('inf')
+    per_iter = None                       # measured cost of one CFR iteration (s)
     while done < max_iters:
         step = min(check_every, max_iters - done)
+        # Budget-granularity: a fixed `check_every` block runs to completion before the
+        # post-block time check, so on a bigger (turn) tree one block can overrun the
+        # budget by a lot. Once we know the per-iteration cost, shrink the next block to
+        # what fits in the remaining budget so the overrun is bounded to ~one iteration.
+        if time_budget is not None:
+            remaining = time_budget - (time.time() - t0)
+            if remaining <= 0:
+                break
+            if per_iter and per_iter > 0:
+                step = max(1, min(step, int(remaining / per_iter)))
+        bt = time.time()
         cfr.run(reach0, reach1, iters=step)
+        per_iter = (time.time() - bt) / step
         done += step
         gap = cfr.exploitability(reach0, reach1)
         if gap <= gap_threshold:

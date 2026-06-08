@@ -1,6 +1,6 @@
 # Ideas / Feature Backlog
 
-Last updated: 2026-05-25
+Last updated: 2026-06-08 (positioning notes §6 updated: river solver shipped, turn/flop shelved)
 
 Speculative features and "could we…" explorations that aren't yet committed phases.
 The committed, sequenced work lives in [ROADMAP.md](ROADMAP.md); this file is the
@@ -235,8 +235,11 @@ Brainstormed 2026-05-26. **You are underselling this** — it's the Libratus/Plu
 - MCCFR+ with Linear-CFR-style discounting, the Libratus/Pluribus algorithm family (honest — same technique family).
 - Potential-aware EMD abstraction (equity-distribution histograms + suit-isomorphism canonicalization).
 - Hand-level Bayesian range tracker with entropy-relative confidence (correct for mixed strategies).
-- **Do NOT** claim a subgame solver yet (Phase 4 unbuilt) — say "architected so a runtime solver drops in
-  via an existing interface" (true, shows design foresight).
+- **The RIVER subgame solver IS built and shipped** (Phase 4) — you can claim real-time river
+  re-solving (Slumbot-class: blueprint + live river solve). Be precise: the **turn/flop** depth-limited
+  solver was built and lab-validated but **shelved** (it didn't beat the blueprint in real games), so
+  don't claim full multi-street solving — "river solving live; turn/flop is a validated lab result
+  pending a continual-re-solving rebuild" is the honest, still-impressive framing.
 
 **LinkedIn posts (hook + why it travels), suggested order:**
 1. *"How do you even know if a poker AI is good? Build the instrument first."* — credibility, converts ML/quant followers.
@@ -255,8 +258,9 @@ material); (5) the live hosted demo. The gap is *presentation and proof, not eng
 → lead transport-agnostic design, WAL read-while-training, interface-driven AWS-readiness. Generalist recruiter
 → "same game-theory family that beat pro players, live and playable, keeps a public record" + the demo link.
 
-**Preempt skeptical questions:** the solver isn't built (don't claim it); ~11,256 mbb/hand BR baseline is
-genuinely exploitable in absolute terms (frame as a *trend you're driving down* — exactly what Phase 4 fixes);
+**Preempt skeptical questions:** the **river** solver is built (claim that); the **turn/flop** solver is
+shelved (a validated lab result, not shipped — say so); the BR baseline is genuinely exploitable in absolute
+terms (frame as a *trend you're driving down*, and note the river solver refines the endgame on top of it);
 the abstraction omits SPR (the documented M1 limitation — naming it first is a senior move); 3-size betting
 abstraction is deliberate; you wrote the CFR/engine/harness yourself (only `phevaluator` for raw hand strength).
 
@@ -337,6 +341,66 @@ fine — solves a problem we don't have), gRPC/Protobuf (tied to the gold-platin
 (Cognito/Auth0 — deliberately chose a lightweight handle; revisit only if the leaderboard needs real identity).
 
 **Top 3 NEW picks for breadth-without-padding:** MCP server, Redis sorted-set leaderboard, LLM eval harness.
+
+---
+
+## 9. Provably-fair deck — cryptographic commit–reveal 🔬
+
+**The problem it solves.** A skeptical player (or recruiter) has no reason to trust that the
+bot isn't cheating. "Cheating" is really **two distinct claims**, and they need different proofs —
+conflating them is the trap:
+
+1. **The deck isn't rigged** — the bot isn't dealt better hole cards, and the turn/river aren't
+   chosen *after* seeing how the human bet. → provable cryptographically (this idea).
+2. **The bot doesn't peek at the human's hole cards** — a property of the *decision code*, not of
+   any data commitment, so no seed can prove it. → already enforced architecturally: the strategy's
+   `decide(info_set_key, legal_actions, public_state)` only ever receives the actor's **own** cards
+   (`game_session.py:bot_public_state` → `'hole_cards': p0/p1 ... # never the opponent's`). The
+   `RangeTracker` is a *Bayesian belief* inferred from public betting — the opposite of peeking. The
+   honest proof of claim 2 is **open-sourcing the repo** and pointing at that one line; the only
+   residual gap (does the deployed binary match the source?) needs remote attestation (TEE/SGX) and
+   is overkill for a portfolio piece — don't claim it. **This idea covers claim 1 only.**
+
+**Why it's cheap here.** The deal path is already 90% plumbed: `cards.py:shuffled_deck(rng=None)`
+takes an injectable RNG ("Pass an rng for reproducibility"). Today `game_session.py:_deal_hand`
+calls it with the global RNG (not reproducible); the change is to feed it a *seeded* RNG and persist
+the seed material in the (already fully-JSON-serializable) session state.
+
+### The commit–reveal scheme
+1. **Hand start** (`/api/game/new`, `/api/game/next-hand`): server generates a fresh random
+   `server_seed`, computes `commit = SHA256(server_seed)`, stores `server_seed` secret, and returns
+   **only** `commit` + `nonce` (= hand number). The client supplies a `client_seed` (random, or
+   user-chosen).
+2. **Deterministic deal**: `deck_seed = HMAC_SHA256(server_seed, client_seed || nonce)`, feed into
+   `random.Random(deck_seed)` and pass as `shuffled_deck(rng=...)`. Same inputs → same deck.
+3. **Hand end** (showdown/fold): server **reveals** `server_seed`. Client checks
+   `SHA256(server_seed) == commit`, then re-derives the shuffle from `(server_seed, client_seed,
+   nonce)` and confirms the dealt cards match what it saw.
+
+**Why each half is load-bearing:**
+- The **commit** (sent before any action) means the server can't change the runout after seeing the
+  human's bets — turn and river were fixed in advance.
+- The **client_seed** means the server can't grind `server_seed`s to pre-pick a deck favorable to the
+  bot, because it doesn't control the human's half of the input.
+- Bonus: the bot's hole cards are just `deck[0:2]` of the committed shuffle, so the **same proof also
+  pins the bot's cards in advance** — it can't be dealt a better hand.
+
+**Gotchas:** fresh `server_seed` per hand; reveal **only after** the hand completes (revealing early
+would let the player compute future board cards); `nonce = hand_number` prevents seed reuse.
+
+### Scope of work (if built)
+Self-contained, touches no training/blueprint code:
+- `cards.py` — seed-derivation helper (HMAC → `random.Random`).
+- `game_session.py` — `commit`/`server_seed`/`client_seed`/`nonce` fields in `self.data`; seed the
+  deal; redact `server_seed` from `public_view()` until `hand_over`, then reveal.
+- API — accept an optional `client_seed`; surface `commit` (live) and `server_seed` (post-hand).
+- `AiGame.jsx` — a "Verify this hand" affordance that re-derives the deck client-side.
+- Pairs with the existing per-hand `bot_debug` trace (`game_session.py`) as a downloadable replay.
+
+**Resume framing:** *"provably-fair deck (cryptographic commit–reveal) + open-source, hole-card-blind
+decision path."* Accurate and defensible — note it proves the **deck**, not the absence of peeking
+(that's the open-source claim). Effort: S. Wattage: ★★★ (trust/credibility, pairs with the
+leaderboard launch where "is the bot honest?" is the obvious question).
 
 ---
 

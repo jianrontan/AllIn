@@ -69,6 +69,29 @@ const FELT = {
     background: 'radial-gradient(ellipse at center, #11815a 0%, #064534 78%)',
 };
 
+// Empty board placeholder, the same fluid size as a PlayingCard (via the shared
+// `--card-w` variable) so the board reserves space for all five cards from the
+// start — the table never resizes as the flop/turn/river land, and empty slots
+// track the cards as the board scales with the window. When `onReveal` is set (a
+// fold left cards undealt) the slot itself becomes the "reveal the run-out" button.
+function EmptySlot({ onReveal }) {
+    const sizeStyle = { width: 'var(--card-w, 3.5rem)', aspectRatio: '7 / 10' };
+    if (onReveal) {
+        return (
+            <button onClick={onReveal} style={sizeStyle}
+                title="Reveal the cards that didn't come out"
+                className="rounded-lg border-2 border-dashed border-amber-500/50
+                           text-amber-300/80 hover:text-amber-200 hover:border-amber-400/80
+                           hover:bg-amber-500/10 flex items-center justify-center
+                           transition-colors">
+                <span className="text-[10px] leading-tight font-semibold">Reveal</span>
+            </button>
+        );
+    }
+    return <div style={sizeStyle}
+        className="rounded-lg border-2 border-dashed border-white/10" />;
+}
+
 function Seat({ name, stackChips, active }) {
     return (
         <div className="flex items-center justify-center gap-2 text-sm">
@@ -99,19 +122,20 @@ function BetChip({ chips }) {
 // blueprint model the bot updates against — it drops if you play unexpectedly.
 // Showing it is safe: it's a guess about the player's OWN cards, and never
 // reveals the bot's cards.
-function BotRead({ read }) {
+function BotRead({ read, final }) {
     if (!read || !read.topHands || read.topHands.length === 0) return null;
     const confPct = Math.round(read.confidence * 100);
     return (
         <div>
             <h4 className="text-xs uppercase tracking-wider text-neutral-500 mb-2">
                 Bot&rsquo;s read of your hand
+                {final && <span className="ml-1.5 text-neutral-600 normal-case">· final</span>}
             </h4>
             <div className="text-sm text-neutral-400 mb-2">
                 Read confidence:{' '}
                 <span className="text-neutral-200 font-medium tabular-nums">{confPct}%</span>
                 <span className="text-neutral-600">
-                    {' '}· top hands it puts you on
+                    {' '}· top hands it {final ? 'put' : 'puts'} you on
                 </span>
             </div>
             <div className="flex flex-wrap gap-1.5">
@@ -217,6 +241,9 @@ function BotDebug({ debug }) {
 function AiGame() {
     const [view, setView] = useState(null);
     const [showDebug, setShowDebug] = useState(false);
+    // When a hand ends by a fold before the river, the player can reveal the
+    // community cards that never came out. Reset each new hand (see effect below).
+    const [showRunout, setShowRunout] = useState(false);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
     const [customAmt, setCustomAmt] = useState('');
@@ -252,6 +279,10 @@ function AiGame() {
         sessionStarted.current = true;
         startSession();
     }, []);
+
+    // Collapse the fold run-out reveal whenever a new hand is dealt.
+    const handNumber = view ? view.handNumber : null;
+    useEffect(() => { setShowRunout(false); }, [handNumber]);
 
     // Animated ellipsis for the "Bot is thinking" indicator: '' -> . -> .. -> ...
     useEffect(() => {
@@ -356,17 +387,31 @@ function AiGame() {
     const handOver = view.status === 'hand_over';
     const yourTurn = view.toAct === 'you';
     const net = view.humanNet;
+    // Fold run-out: community cards remain undealt when the hand ended before the
+    // river. They can be revealed (dimmed) into the empty board slots on request.
+    const canRevealRunout = handOver && view.fullBoard
+        && view.fullBoard.length > view.community.length;
+    const boardCards = (handOver && showRunout && view.fullBoard)
+        ? view.fullBoard : view.community;
+    // True once the fold run-out is revealed: the made-hand labels then show what
+    // each player WOULD have had on the full board ("You would have:" etc.).
+    const runoutShown = canRevealRunout && showRunout;
 
     return (
-        <div className="min-h-screen flex justify-center
-                        bg-[radial-gradient(ellipse_at_top,#0c2a1f_0%,#0a0a0a_62%)]">
-            <div className="w-full max-w-5xl px-6 py-5">
-                {/* Header */}
-                <div className="flex items-center justify-between">
-                    <Link to="/" className="text-sm text-amber-400 hover:text-amber-300">
-                        ← Home
-                    </Link>
-                    <div className="flex items-center gap-3">
+        <div className="min-h-screen bg-[radial-gradient(ellipse_at_center,#0c2a1f_0%,#0a0a0a_62%)]">
+            {/* Full-bleed: the top bar and side columns reach the screen edges
+                (Home top-left, Net/Debug top-right, actions far right) while the
+                board stays centred in the flexible middle column. */}
+            <div className="w-full px-8 py-7 sm:px-10">
+                {/* Top bar: Home + title top-left, debug toggle + net top-right */}
+                <div className="flex items-start justify-between gap-4 mb-6">
+                    <div>
+                        <Link to="/" className="text-sm text-amber-400 hover:text-amber-300">
+                            ← Home
+                        </Link>
+                        <h1 className="mt-1 text-2xl font-bold">Play With AI</h1>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
                         <button onClick={() => setShowDebug((v) => !v)}
                             className={'text-xs px-2 py-1 rounded-lg border transition-colors ' +
                                 (showDebug
@@ -382,21 +427,64 @@ function AiGame() {
                     </div>
                 </div>
 
-                <h1 className="mt-2 text-2xl font-bold">Play With AI</h1>
-                <p className="text-neutral-500 text-sm mb-4">
-                    Hand #{view.handNumber} · you are{' '}
-                    {view.yourSeat === 'button' ? 'on the button (SB)' : 'in the big blind'}
-                </p>
+                {/* Body: left = read/debug/log, centre = table, right = actions.
+                    The centre column flexes so the table sits in the middle of the
+                    screen; equal side columns keep it visually centred. On mobile it
+                    stacks: table, then actions, then the read/debug panel. */}
+                <div className="grid grid-cols-1 lg:grid-cols-[18rem_minmax(0,1fr)_18rem]
+                                gap-6 items-start">
 
-                {/* Two columns on desktop: table + actions on the left, the
-                    bot's read and the action log in a sidebar so they don't push
-                    the table off-screen. Single column (stacked) on mobile. */}
-                <div className="flex flex-col lg:flex-row lg:items-start gap-6">
-                <div className="w-full lg:flex-1 lg:max-w-xl">
+                {/* LEFT: bot read + debug overlay + action log */}
+                <aside className="order-3 lg:order-1 flex flex-col gap-6">
+                    {showDebug && (
+                        <div>
+                            <h4 className="text-xs uppercase tracking-wider text-neutral-500 mb-1">
+                                Bot debug
+                            </h4>
+                            <p className="text-[11px] text-neutral-600 mb-2">
+                                Info-set keys &amp; solver internals — reveals the bot&rsquo;s
+                                hand bucket (spoiler).
+                            </p>
+                            <BotDebug debug={view.botDebug} />
+                        </div>
+                    )}
+                    <BotRead read={view.botRead} final={handOver} />
+                    {view.actionLog.length > 0 && (
+                        <div>
+                            <h4 className="text-xs uppercase tracking-wider text-neutral-500 mb-2">
+                                Action log
+                            </h4>
+                            <div className="text-sm text-neutral-400 space-y-0.5">
+                                {view.actionLog.map((e, i) => (
+                                    <div key={i}>
+                                        <span className={e.seat === 'you'
+                                            ? 'text-emerald-400' : 'text-amber-400'}>
+                                            {e.seat}
+                                        </span>
+                                        {' '}· {e.street} · {logVerb(e.action, e.street)}
+                                        {e.chips > 0 ? ` ${fmtBB(e.chips)} BB` : ''}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </aside>
 
-                {/* Felt table */}
-                <div className="rounded-[2.25rem] ring-4 ring-amber-600/60
-                                shadow-2xl shadow-black/60 px-6 py-4" style={FELT}>
+                {/* CENTRE: felt table (fluid) + caption + result + error.
+                    `containerType: inline-size` makes this column a query container so
+                    the board sizes off the SPACE AVAILABLE here (cqw), not the raw
+                    viewport — a wider screen widens this column and grows the board. */}
+                <main className="order-1 lg:order-2 w-full flex flex-col items-center gap-3"
+                    style={{ containerType: 'inline-size' }}>
+
+                {/* Felt table. `--card-w` drives every card's size. It's the SMALLER
+                    of a width budget (cqw — the centre column) and a height budget
+                    (vh — three card rows must fit a short window), clamped to a sane
+                    min/max so it grows with the screen but never gets comical or
+                    overflows vertically. */}
+                <div className="w-fit rounded-[2.25rem] ring-4 ring-amber-600/60
+                                shadow-2xl shadow-black/60 px-6 py-4"
+                    style={{ ...FELT, '--card-w': 'clamp(2.5rem, min(7.5cqw, 8.5vh), 5rem)' }}>
                     {/* Bot */}
                     <Seat name="Bot" stackChips={view.botStack}
                         active={view.toAct === 'bot'} />
@@ -412,29 +500,49 @@ function AiGame() {
                                          tracking-wide text-amber-100/90 tabular-nums">
                             {thinking
                                 ? <>Bot is thinking<span className="font-semibold">{dots}</span></>
-                                : <>Bot has: <span className="font-semibold">{view.botHand || '???'}</span></>}
+                                : runoutShown
+                                    ? <>Bot would have: <span className="font-semibold">{view.botFullHand}</span></>
+                                    : <>Bot has: <span className="font-semibold">{view.botHand || '???'}</span></>}
                         </span>
                     </div>
                     <div className="h-6 flex items-center justify-center mt-1.5">
                         <BetChip chips={view.botBet} />
                     </div>
 
-                    {/* Pot + board */}
+                    {/* Pot + board. Five fixed-size slots are always rendered, so the
+                        table never resizes as the flop/turn/river land; empty slots
+                        are dashed placeholders. On a fold the run-out fills the empty
+                        slots dimmed (cards that never actually came out). */}
                     <div className="flex flex-col items-center gap-2 py-2
                                     border-y border-white/10">
                         <span className="px-4 py-1 rounded-full bg-black/40 text-sm
                                          text-amber-200 font-medium">
                             Pot {fmtBB(view.totalPot)} BB · {view.street}
                         </span>
-                        <div className="flex justify-center gap-2 min-h-[4.25rem] items-center">
-                            {view.community.length === 0
-                                ? <span className="text-emerald-200/50 text-sm">
-                                    no board yet
-                                  </span>
-                                : view.community.map((c, i) => (
-                                    <PlayingCard key={i} card={c} />
-                                ))}
+                        <div className="flex justify-center gap-2 items-center">
+                            {[0, 1, 2, 3, 4].map((i) => {
+                                const card = boardCards[i];
+                                if (!card) return (
+                                    <EmptySlot key={i}
+                                        onReveal={canRevealRunout && !showRunout
+                                            ? () => setShowRunout(true) : undefined} />
+                                );
+                                // A revealed run-out card (beyond what was actually
+                                // dealt) is dimmed so it reads as "would-have-come".
+                                const isRunout = i >= view.community.length;
+                                return (
+                                    <div key={i}
+                                        className={isRunout ? 'opacity-40 grayscale' : ''}>
+                                        <PlayingCard card={card} />
+                                    </div>
+                                );
+                            })}
                         </div>
+                        {/* Hand / seat caption, right below the board */}
+                        <p className="text-xs text-neutral-300/70 tracking-wide text-center">
+                            Hand #{view.handNumber} · you are{' '}
+                            {view.yourSeat === 'button' ? 'on the button (SB)' : 'in the big blind'}
+                        </p>
                     </div>
 
                     {/* You */}
@@ -447,7 +555,10 @@ function AiGame() {
                     <div className="flex justify-center my-1.5">
                         <span className="px-3 py-0.5 rounded-full bg-black/30 text-xs
                                          tracking-wide text-emerald-100/90">
-                            You have: <span className="font-semibold">{view.yourHand}</span>
+                            {runoutShown ? 'You would have: ' : 'You have: '}
+                            <span className="font-semibold">
+                                {runoutShown ? view.yourFullHand : view.yourHand}
+                            </span>
                         </span>
                     </div>
                     <Seat name="You" stackChips={view.yourStack} active={yourTurn} />
@@ -484,112 +595,83 @@ function AiGame() {
                     </div>
                 )}
 
-                {/* Actions */}
-                <div className="mt-3 flex flex-wrap gap-2.5">
+                </main>
+
+                {/* RIGHT: actions, ordered by bet size, custom bet at the end */}
+                <aside className="order-2 lg:order-3 flex flex-col gap-2.5">
+                    <h4 className="text-xs uppercase tracking-wider text-neutral-500">
+                        {yourTurn ? 'Your action' : handOver ? 'Hand over' : 'Bot to act'}
+                    </h4>
+
                     {handOver && (
                         <button onClick={dealNext} disabled={busy}
-                            className="px-7 py-2.5 rounded-xl font-semibold bg-amber-500
+                            className="w-full px-5 py-3 rounded-xl font-semibold bg-amber-500
                                        text-neutral-950 hover:bg-amber-400
                                        disabled:opacity-50 transition-colors">
                             Next hand
                         </button>
                     )}
-                    {!handOver && yourTurn && sortedActions(view.legalActions).map((la) => (
-                        <button key={la.action} onClick={() => doAction(la.action)}
-                            disabled={busy}
-                            className={'px-5 py-2 rounded-xl text-white text-center ' +
-                                'min-w-[5.5rem] disabled:opacity-50 transition-colors ' +
-                                actionClasses(la.action)}>
-                            <span className="block font-semibold text-sm leading-tight">
-                                {actionVerb(la.action, view.street)}
-                            </span>
-                            {la.chips > 0 && (
-                                <span className="block text-xs opacity-80 tabular-nums">
-                                    {fmtBB(la.chips)} BB
-                                </span>
-                            )}
-                        </button>
-                    ))}
+
                     {!handOver && !yourTurn && (
-                        <span className="text-neutral-500 text-sm py-3">
-                            Bot is acting…
-                        </span>
+                        <div className="text-neutral-500 text-sm py-2">Bot is acting…</div>
                     )}
-                </div>
 
-                {/* Custom (unrestricted) bet/raise box */}
-                {!handOver && yourTurn && view.customBounds && (
-                    <div className="mt-3 flex items-center gap-2">
-                        <span className="text-sm text-neutral-400">
-                            {(facingBet || view.street === 'preflop') ? 'Raise to' : 'Bet'}
-                        </span>
-                        <input
-                            type="number" inputMode="decimal"
-                            min={view.customBounds.minBb}
-                            max={view.customBounds.maxBb}
-                            step="0.5"
-                            value={customAmt}
-                            onChange={(e) => setCustomAmt(e.target.value)}
-                            onBlur={clampCustom}
-                            onKeyDown={(e) => { if (e.key === 'Enter') doCustom(); }}
-                            placeholder={`${view.customBounds.minBb}–${view.customBounds.maxBb}`}
-                            className="w-24 px-3 py-2 rounded-xl bg-neutral-800 text-white text-sm
-                                       border border-neutral-700 focus:border-amber-500
-                                       outline-none tabular-nums" />
-                        <span className="text-sm text-neutral-400">BB</span>
-                        <button onClick={doCustom} disabled={busy || !customValid}
-                            className="px-5 py-2 rounded-xl text-white text-sm font-semibold
-                                       bg-sky-700 hover:bg-sky-600 disabled:opacity-40
-                                       transition-colors">
-                            Confirm
-                        </button>
-                    </div>
-                )}
-
-                </div>{/* end main column */}
-
-                {/* Sidebar: bot read + action log (+ debug overlay when toggled) */}
-                <aside className="w-full lg:w-80 lg:flex-shrink-0 flex flex-col gap-7">
-
-                {/* Bot debug overlay — info-set keys + river-solver internals */}
-                {showDebug && (
-                    <div>
-                        <h4 className="text-xs uppercase tracking-wider text-neutral-500 mb-1">
-                            Bot debug
-                        </h4>
-                        <p className="text-[11px] text-neutral-600 mb-2">
-                            Info-set keys &amp; solver internals — reveals the bot&rsquo;s
-                            hand bucket (spoiler).
-                        </p>
-                        <BotDebug debug={view.botDebug} />
-                    </div>
-                )}
-
-                {/* Bot's read of your hand (range tracker) */}
-                {!handOver && <BotRead read={view.botRead} />}
-
-                {/* Action log */}
-                {view.actionLog.length > 0 && (
-                    <div>
-                        <h4 className="text-xs uppercase tracking-wider text-neutral-500 mb-2">
-                            Action log
-                        </h4>
-                        <div className="text-sm text-neutral-400 space-y-0.5">
-                            {view.actionLog.map((e, i) => (
-                                <div key={i}>
-                                    <span className={e.seat === 'you'
-                                        ? 'text-emerald-400' : 'text-amber-400'}>
-                                        {e.seat}
+                    {/* Compact action grid, ascending by bet size (two per row). */}
+                    {!handOver && yourTurn && (
+                        <div className="grid grid-cols-2 gap-2">
+                            {sortedActions(view.legalActions).map((la) => (
+                                <button key={la.action} onClick={() => doAction(la.action)}
+                                    disabled={busy}
+                                    className={'rounded-lg px-3 py-2 text-center leading-tight ' +
+                                        'text-white disabled:opacity-50 transition-colors ' +
+                                        actionClasses(la.action)}>
+                                    <span className="block text-sm font-semibold">
+                                        {actionVerb(la.action, view.street)}
                                     </span>
-                                    {' '}· {e.street} · {logVerb(e.action, e.street)}
-                                    {e.chips > 0 ? ` ${fmtBB(e.chips)} BB` : ''}
-                                </div>
+                                    {la.chips > 0 && (
+                                        <span className="block text-[11px] opacity-80 tabular-nums">
+                                            {fmtBB(la.chips)} BB
+                                        </span>
+                                    )}
+                                </button>
                             ))}
                         </div>
-                    </div>
-                )}
-                </aside>{/* end sidebar */}
-                </div>{/* end two-column row */}
+                    )}
+
+                    {/* Custom (unrestricted) bet/raise — at the end of the action list */}
+                    {!handOver && yourTurn && view.customBounds && (
+                        <div className="mt-1 rounded-xl border border-neutral-800 p-3">
+                            <div className="text-xs text-neutral-400 mb-1.5">
+                                {(facingBet || view.street === 'preflop')
+                                    ? 'Raise to a custom size' : 'Bet a custom size'}
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="number" inputMode="decimal"
+                                    min={view.customBounds.minBb}
+                                    max={view.customBounds.maxBb}
+                                    step="0.5"
+                                    value={customAmt}
+                                    onChange={(e) => setCustomAmt(e.target.value)}
+                                    onBlur={clampCustom}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') doCustom(); }}
+                                    placeholder={`${view.customBounds.minBb}–${view.customBounds.maxBb}`}
+                                    className="w-full px-3 py-2 rounded-lg bg-neutral-800 text-white text-sm
+                                               border border-neutral-700 focus:border-amber-500
+                                               outline-none tabular-nums" />
+                                <span className="text-sm text-neutral-400">BB</span>
+                            </div>
+                            <button onClick={doCustom} disabled={busy || !customValid}
+                                className="mt-2 w-full px-4 py-2 rounded-lg text-white text-sm font-semibold
+                                           bg-sky-700 hover:bg-sky-600 disabled:opacity-40
+                                           transition-colors">
+                                Confirm bet
+                            </button>
+                        </div>
+                    )}
+                </aside>
+
+                </div>{/* end body grid */}
             </div>
         </div>
     );

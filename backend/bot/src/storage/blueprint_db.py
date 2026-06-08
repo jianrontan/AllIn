@@ -226,3 +226,30 @@ class BlueprintDB:
 
     def close(self):
         self.conn.close()
+
+
+class FrozenBlueprint:
+    """Memoizing read snapshot of a BlueprintDB's average strategy.
+
+    The FIRST read of each info-set key is cached; all later reads return that same
+    value. This makes a measurement that does MULTIPLE passes over the blueprint
+    (e.g. building an exact-leaf reference and a bucketed leaf matrix in separate
+    passes) internally CONSISTENT even when a training process is still checkpointing
+    the same .db underneath -- without it, two passes seconds apart can read DIFFERENT
+    blueprint values and silently disagree (a live-training artifact, not a real
+    error). Use it for any OFFLINE measurement against a possibly-being-trained DB.
+
+    Wraps only `get_average_strategy` (the sole method the leaf/subgame builders use);
+    `db_menu_mode`/`postflop_menu_for` etc. read the underlying db directly. Not for
+    training (which needs regrets), and unnecessary for live inference against a
+    served, quiescent blueprint."""
+
+    def __init__(self, db):
+        self.db = db
+        self._cache = {}
+
+    def get_average_strategy(self, key):
+        c = self._cache
+        if key not in c:
+            c[key] = self.db.get_average_strategy(key)
+        return c[key]

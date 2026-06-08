@@ -175,24 +175,10 @@ class RiverSubgameSolver(BlueprintStrategy):
     def decide(self, info_set_key, legal_actions, public_state):
         ps = public_state or {}
         self.last_debug = None
-        # Near-terminal all-in guard runs FIRST: facing a jam that commits the
-        # whole stack is a pure equity decision (the river solver path below only
-        # fires on the river). See _facing_allin_guard. Wrapped like the solver
-        # path: a guard defect (hero_equity does real numpy/sampling work, and a
-        # malformed public_state could raise) must DEFER, never crash a live hand
-        # -- advance_bot_turns only catches GameError, so an unguarded raise here
-        # would 500 the turn and lose the hand state.
-        try:
-            guard = self._facing_allin_guard(legal_actions, ps)
-        except Exception:
-            self._fallback_count += 1
-            self.stats['fallback'] += 1
-            self.last_debug = {'mode': 'guard_error', 'street': ps.get('street')}
-            guard = None
+        # Near-terminal all-in guard runs FIRST (facing a jam that commits the whole
+        # stack is a pure equity decision). _run_guard is shared with the turn solver.
+        guard = self._run_guard(legal_actions, ps)
         if guard is not None:
-            self.stats['allin_guard'] += 1
-            self.last_debug = {'mode': 'allin_guard', 'street': ps.get('street'),
-                               'action': guard}
             return guard
         spec = self._solver_inputs(ps)
         if spec is None:
@@ -201,34 +187,8 @@ class RiverSubgameSolver(BlueprintStrategy):
         self.stats['river_calls'] += 1
         try:
             dist, node, info = self.solve_for_action(**spec)
-            # EV gate: deviate to the solved strategy only if it beats the
-            # blueprint baseline (mapped onto the tree) by self.ev_margin chips.
-            bp_engine = self._state_distribution(info_set_key, legal_actions, ps)
-            baseline = blueprint_to_tree_dist(bp_engine, node, self._postflop_menu)
-            row = hand_row(info['ba'], spec['hole'], info['idx'])
-            evs = hand_action_evs(info['cfr'], node, row, info['reach0'], info['reach1'])
-            chosen, _gate = ev_gate(node.actions, dist, baseline, evs, self.ev_margin)
-            self.stats['solved'] += 1
-            deviated = _gate['used'] == 'solved'
-            self.stats['deviated' if deviated else 'kept_blueprint'] += 1
-            self.last_debug = {
-                'mode': 'river_solver',
-                'street': 'river',
-                'solved': True,
-                'deviated': deviated,
-                'nodeActions': list(node.actions),
-                'solvedStrategy': {a: round(float(p), 4) for a, p in dist.items()},
-                'baseline': {a: round(float(p), 4) for a, p in baseline.items()},
-                'evSolved': round(float(_gate['ev_solved']), 3),
-                'evBaseline': round(float(_gate['ev_baseline']), 3),
-                'evDelta': round(float(_gate['delta']), 3),
-                'evMargin': float(self.ev_margin),
-                'iters': int(info.get('iters', 0)),
-                'gap': (round(float(info['gap']), 4)
-                        if info.get('gap') is not None else None),
-                'converged': bool(info.get('converged', False)),
-            }
-            return self._pick_engine_action(chosen, legal_actions, spec, node)
+            return self._gate_and_pick(dist, node, info, info_set_key,
+                                       legal_actions, ps, spec, 'river_solver', 'river')
         except Exception:
             # Never crash a live hand -- but LOG (rate-limited, with traceback) so a
             # genuine defect surfaces instead of silently degrading to the blueprint
@@ -242,6 +202,53 @@ class RiverSubgameSolver(BlueprintStrategy):
                 _LOG.warning("RiverSubgameSolver fell back to blueprint (#%d)",
                              n, exc_info=True)
             return super().decide(info_set_key, legal_actions, public_state)
+
+    # -- shared guard + gate/pick (reused by TurnSubgameSolver) ----------------
+    def _run_guard(self, legal_actions, ps):
+        """Run the near-terminal all-in guard, swallowing any defect into a DEFER
+        (never crash a live hand: advance_bot_turns only catches GameError, so an
+        unguarded raise here would 500 the hand). Returns the guard action or None,
+        and records guard stats / debug. Shared by river decide() and the turn solver."""
+        try:
+            guard = self._facing_allin_guard(legal_actions, ps)
+        except Exception:
+            self._fallback_count += 1
+            self.stats['fallback'] += 1
+            self.last_debug = {'mode': 'guard_error', 'street': ps.get('street')}
+            return None
+        if guard is not None:
+            self.stats['allin_guard'] += 1
+            self.last_debug = {'mode': 'allin_guard', 'street': ps.get('street'),
+                               'action': guard}
+        return guard
+
+    def _gate_and_pick(self, dist, node, info, info_set_key, legal_actions, ps, spec,
+                       mode, street):
+        """EV-gate the solved strategy against the blueprint baseline (mapped onto the
+        tree), record diagnostics, and emit the engine action. Shared by the river and
+        turn solve paths -- both produce (dist, node, info) of the same shape."""
+        bp_engine = self._state_distribution(info_set_key, legal_actions, ps)
+        baseline = blueprint_to_tree_dist(bp_engine, node, self._postflop_menu)
+        row = hand_row(info['ba'], spec['hole'], info['idx'])
+        evs = hand_action_evs(info['cfr'], node, row, info['reach0'], info['reach1'])
+        chosen, gate = ev_gate(node.actions, dist, baseline, evs, self.ev_margin)
+        self.stats['solved'] += 1
+        deviated = gate['used'] == 'solved'
+        self.stats['deviated' if deviated else 'kept_blueprint'] += 1
+        self.last_debug = {
+            'mode': mode, 'street': street, 'solved': True, 'deviated': deviated,
+            'nodeActions': list(node.actions),
+            'solvedStrategy': {a: round(float(p), 4) for a, p in dist.items()},
+            'baseline': {a: round(float(p), 4) for a, p in baseline.items()},
+            'evSolved': round(float(gate['ev_solved']), 3),
+            'evBaseline': round(float(gate['ev_baseline']), 3),
+            'evDelta': round(float(gate['delta']), 3),
+            'evMargin': float(self.ev_margin),
+            'iters': int(info.get('iters', 0)),
+            'gap': (round(float(info['gap']), 4) if info.get('gap') is not None else None),
+            'converged': bool(info.get('converged', False)),
+        }
+        return self._pick_engine_action(chosen, legal_actions, spec, node)
 
     # -- facing-an-all-in terminal guard (preflop / flop / turn) ---------------
     def _facing_allin_guard(self, legal_actions, ps):

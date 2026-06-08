@@ -53,28 +53,29 @@ _HAND_TYPE_LABEL = {
 def _read_group_label(hand, relevant):
     """Poker-shorthand label for a hole-card combo (two engine SuitRank cards,
     e.g. ('HA','CK')), collapsing strategically-equivalent suits. `relevant` is
-    the set of flush-relevant board suits ('H'/'D'/'C'/'S'). A card's suit is
-    shown only if it's flush-relevant; suited/offsuit is always preserved.
+    the set of flush-relevant board suits ('H'/'D'/'C'/'S'). Ranks come first
+    (high then low); any flush-suit letter is appended at the END, so the label
+    reads cleanly and consistently (never a suit wedged between the ranks):
 
-      rainbow board:  AhAc/AhAs/... -> 'AA'   AhKh -> 'AKs'   AhKc -> 'AKo'
-      two-heart board: Ah-anything-A -> 'AhA' (holds the heart ace, a blocker),
-                       AhKh -> 'AhKh' (the flush draw), AhKc -> 'AhK'.
+      rainbow board:  AcAs -> 'AA'   AhKh -> 'AKs'   AhKc -> 'AKo'
+      flush (e.g. heart) board:
+        AhKh -> 'AKh'    suited in the flush suit (a flush / flush draw)
+        AhKc -> 'AKoh'   offsuit, holding one heart (a flush card / blocker)
+        AcKs -> 'AKo'    offsuit, no heart
+        AsKs -> 'AKs'    suited, but not the flush suit
+        AhAc -> 'AAh'    pair holding the heart ace (a blocker)
     """
     (s1, r1), (s2, r2) = sorted(((c[0], c[1]) for c in hand),
                                 key=lambda sr: -RANK_MAP[sr[1]])
-
-    def disp(rank, suit):
-        return rank + suit.lower() if suit in relevant else rank
-
-    if r1 == r2:                                   # pair
-        toks = sorted([disp(r1, s1), disp(r2, s2)], key=len, reverse=True)
-        return ''.join(toks)                       # 'AA' or 'AhA' or 'AhAs'
+    # Flush-suit letter(s) actually held, sorted for a stable label (a board can
+    # carry two draws), appended at the very end of the token.
+    suit_tag = ''.join(sorted(s.lower() for s in {s1, s2} if s in relevant))
+    if r1 == r2:                                   # pair: 'AA', or 'AAh'
+        return f"{r1}{r2}{suit_tag}"
     if s1 == s2:                                   # suited
-        return f"{disp(r1, s1)}{disp(r2, s2)}" if s1 in relevant else f"{r1}{r2}s"
-    d1, d2 = disp(r1, s1), disp(r2, s2)            # offsuit
-    if len(d1) == 1 and len(d2) == 1:              # no flush-relevant suit shown
-        return f"{r1}{r2}o"
-    return f"{d1}{d2}"                              # which exact flush card(s) held
+        # 'AKh' when it IS the flush suit (draw/flush); plain 'AKs' otherwise.
+        return f"{r1}{r2}{s1.lower()}" if s1 in relevant else f"{r1}{r2}s"
+    return f"{r1}{r2}o{suit_tag}"                  # offsuit: 'AKo', or 'AKoh'
 
 
 class GameError(Exception):
@@ -182,10 +183,12 @@ class GameSession:
         else:
             d['opp_range'] = None
             d['bot_range'] = None
-        # River-entry snapshots of both beliefs (frozen before river betting) that
-        # the subgame solver consumes; filled when the river is dealt.
+        # Turn/river-entry snapshots of both beliefs (frozen before that street's
+        # betting) that the subgame solvers consume; filled when the street is dealt.
         d['river_entry_opp'] = None
         d['river_entry_bot'] = None
+        d['turn_entry_opp'] = None
+        d['turn_entry_bot'] = None
         self._settle()
 
     # ------------------------------------------------------------------
@@ -213,7 +216,7 @@ class GameSession:
         GROUPS. Strategically-equivalent combos are merged given the board: suits
         are hidden unless flush-relevant, so e.g. all 6 pocket-aces collapse to
         'AA' on a rainbow board, but on a two-heart board the heart aces split out
-        ('AhA'), and a heart flush draw shows 'AhKh'. None when tracking is off."""
+        ('AAh'), and a heart flush draw shows 'AKh'. None when tracking is off."""
         tracker = self._load_range()
         if tracker is None:
             return None
@@ -296,13 +299,14 @@ class GameSession:
                 grid['a'] = frac
         return sorted(grid.items(), key=lambda cf: cf[1])
 
-    def _river_path_specs(self):
-        """The realized river actions as RiverSubgameSolver navigation specs:
-        a plain label ('check'/'call'/'fold'/'allin') or ('bet'|'raise', chips)
-        for a sized action (chips = the additional cost when it was taken). Used
-        to walk the solver's tree to the bot's current decision node."""
+    def _street_path_specs(self, street):
+        """Realized CURRENT-street actions as subgame-solver navigation specs: a plain
+        label ('check'/'call'/'fold'/'allin') or ('bet'|'raise', chips) for a sized
+        action (chips = the additional cost when taken). d['history'] holds only the
+        current street's actions, so this works for any postflop street; `street`
+        selects the cost / acting-player convention. Returns [] off `street`."""
         d = self.data
-        if d['street'] != 3:
+        if d['street'] != street:
             return []
         specs, hist = [], d['history']
         for i, a in enumerate(hist):
@@ -310,10 +314,18 @@ class GameSession:
                 specs.append(a)
             else:
                 cost = self.game._action_cost(
-                    a, 3, hist[:i], d['starting_pot'],
-                    self.game._acting_player(i, 3), d['p0_invested'], d['p1_invested'])
+                    a, street, hist[:i], d['starting_pot'],
+                    self.game._acting_player(i, street), d['p0_invested'], d['p1_invested'])
                 specs.append(('raise' if a.startswith('raise') else 'bet', cost))
         return specs
+
+    def _river_path_specs(self):
+        """Realized river actions as solver navigation specs (street 3)."""
+        return self._street_path_specs(3)
+
+    def _turn_path_specs(self):
+        """Realized turn actions as solver navigation specs (street 2)."""
+        return self._street_path_specs(2)
 
     def custom_bounds(self):
         """Min/max legal raise-to TOTAL (CHIPS) for a custom bet/raise by the
@@ -508,9 +520,12 @@ class GameSession:
             bt.reveal(board_now)
             d['bot_range'] = bt.to_dict()
 
-        # Entering the river: snapshot both beliefs (post card-removal, before any
-        # river betting) as the subgame solver's frozen inputs -- this is what
-        # avoids re-modelling river actions the live trackers will keep absorbing.
+        # Entering the turn / river: snapshot both beliefs (post card-removal, before
+        # THIS street's betting) as the subgame solver's frozen inputs -- avoids
+        # re-modelling the street's actions the live trackers will keep absorbing.
+        if d['street'] == 2:
+            d['turn_entry_opp'] = d.get('opp_range')
+            d['turn_entry_bot'] = d.get('bot_range')
         if d['street'] == 3:
             d['river_entry_opp'] = d.get('opp_range')
             d['river_entry_bot'] = d.get('bot_range')
@@ -612,6 +627,20 @@ class GameSession:
             if d.get('river_entry_opp') is not None:
                 state['opp_range'] = RangeTracker.from_dict(d['river_entry_opp'], self.cards)
             state['riverPath'] = self._river_path_specs()
+        # On the TURN, the same inputs for the depth-limited turn solver: turn-entry
+        # pot + (equal) behind stacks, both frozen turn-entry ranges, and the realized
+        # turn path. d['starting_pot'] / d['p0_invested'] are turn-entry values (this
+        # street's bets live in d['history'], folded into invested only at the next
+        # street), so they are the turn-ENTRY pot/stacks, not the mid-turn ones.
+        if street == 2 and d.get('turn_entry_bot') is not None:
+            state['botSeat'] = actor
+            state['turnEntryPot'] = d['starting_pot']
+            state['turnEntryStacks'] = (STARTING_STACK - d['p0_invested'],
+                                        STARTING_STACK - d['p1_invested'])
+            state['hero_range'] = RangeTracker.from_dict(d['turn_entry_bot'], self.cards)
+            if d.get('turn_entry_opp') is not None:
+                state['opp_range'] = RangeTracker.from_dict(d['turn_entry_opp'], self.cards)
+            state['turnPath'] = self._turn_path_specs()
 
         # If the opponent just made an off-grid bet, hand the bot the bracketing
         # blueprint keys + pseudo-harmonic weights so it blends the responses to
@@ -721,7 +750,19 @@ class GameSession:
             # Bot's made-hand label, only once its cards are revealed at showdown.
             'botHand': (self.describe_hand(bot_cards, d['community'][:board_n])
                         if hand_over else None),
+            # Made-hand labels against the FULL 5-card board, for the fold run-out
+            # reveal ("what each player WOULD have had if the hand had run out").
+            # Only when the hand is over; the UI shows them only after Reveal.
+            'yourFullHand': (self.describe_hand(human_cards, d['community'])
+                             if hand_over else None),
+            'botFullHand': (self.describe_hand(bot_cards, d['community'])
+                            if hand_over else None),
             'community': to_display_list(d['community'][:board_n]),
+            # The full 5-card board, only once the hand is over. When a hand ends
+            # by a fold before the river, the remaining community cards never came
+            # out -- but they were dealt up front, so the UI can offer to reveal
+            # "what would have run out". None during play (no peeking).
+            'fullBoard': to_display_list(d['community']) if hand_over else None,
             'pot': round(pot, 2),
             # Grand total in the pot INCLUDING chips wagered this street (what the
             # players are contesting right now); `pot` excludes the live bets.
@@ -741,8 +782,10 @@ class GameSession:
             'result': d['result'],
             # The bot's belief about the human's hand (confidence + top hands).
             # Safe to show: it's a guess about the human's OWN cards and never
-            # reveals the bot's cards. None when tracking is disabled.
-            'botRead': None if hand_over else self.opponent_read(6),
+            # reveals the bot's cards. None when tracking is disabled. Kept after
+            # the hand ends so the player can still see the FINAL read/confidence
+            # (the tracker holds its last state until the next hand is dealt).
+            'botRead': self.opponent_read(6),
             # Per-decision bot trace for the optional debug overlay: the info-set
             # key the blueprint was queried with, its strategy there, and (river
             # solver only) the subgame-solve diagnostics. SPOILER: the info-set key

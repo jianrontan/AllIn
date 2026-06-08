@@ -237,7 +237,7 @@ Never add, commit, or push code in this repository, or any commands that is unsa
 
 ## Roadmap Notes
 
-The overall build plan is a phased dependency chain (status as of 2026-05-24). The key
+The overall build plan is a phased dependency chain (status as of 2026-06-08). The key
 constraint is **Phase 3 must precede Phase 4**: the river solver needs a hand-level range
 as input, so the range tracker has to exist before the solver.
 
@@ -255,24 +255,26 @@ as input, so the range tracker has to exist before the solver.
   (engine stores the raise-to total; `{action, amountBb}` API contract; custom-BB box in the UI
   beside the size buttons). Result: LBR **3609 → 1670 mbb/hand** (~54% cut) on the v2 9.15M
   snapshot. Tests: `tests/test_custom_betting.py`.
-- **Phase 2 — Potential-aware postflop buckets** 🔄 in progress. This is the distribution-aware
-  abstraction work, tracked internally as sub-phases A (cluster centroids) ✅ / B (bake
-  canonical→bucket tables + migrate `CardAbstraction` to `PostflopV2`) 🔄 / C (retrain
-  blueprint on v2 + re-measure BR/LBR) ⬜. Replaces the old 8-bucket heuristic with 12/12/10.
-- **Phase 3 — Hand-level Bayesian range tracker** ⬜. Hand-level (not bucket-level) range,
-  hooked into `GameSession` JSON state, with a confidence score that decays on off-tree
-  actions. **Prerequisite for Phase 4.** (A bucket-level prototype already exists in
-  `evaluation/lbr.py`'s `BotRange`.)
-- **Phase 4 — River endgame solver (unsafe, no gadget)** ⬜. The flagship: `RiverSubgameSolver(BotStrategy)`
-  builds the small river betting tree, takes both ranges from Phase 3, runs vectorized CFR+,
-  reads off the action for the bot's actual hand; falls back to the blueprint on flop/turn.
-  Requires injecting the bot's hole cards into `decide()` (`bot_strategy.py:21` does not
-  currently receive them) via a per-hand `hand_getter`. v1 is *unsafe* (theoretically
-  exploitable via the frozen-range trap); accept that for v1.
-- **Phase 5 — Safety + depth** ⬜ (multi-week; only after 0–4 prove out). 5a: reach/gadget
-  for the river solver (provably no-more-exploitable than the blueprint). 5b: turn/flop
-  depth-limited solving with **blueprint counterfactual values as the leaf value function**
-  (needs storing those values — new data — plus the 5a gadget).
+- **Phase 2 — Potential-aware postflop buckets** ✅ done. The distribution-aware abstraction:
+  decoupled 30-fine/10-coarse preflop + **20 flop / 16 turn / 10 river** EMD-clustered postflop
+  buckets (`PostflopV2`), baked into the capped run. Replaced the old 8-bucket heuristic.
+- **Phase 3 — Hand-level Bayesian range tracker** ✅ done. Hand-level (not bucket-level) range
+  (`game/range_tracker.py`), hooked into `GameSession` JSON state, with a confidence score that
+  decays on off-tree actions. **Prerequisite for Phase 4.**
+- **Phase 4 — Subgame solving** ✅ RIVER shipped / 🧊 turn shelved. The **river** endgame solver
+  (`subgame/river_subgame_solver.py`, unsafe v1, no gadget) builds the small river tree, takes both
+  ranges from Phase 3, runs vectorized CFR+, reads off the bot's action, and is **served live**
+  (EV-gated; falls back to the blueprint pre-river). The bot's hole cards flow through `decide()`'s
+  public state. The depth-limited **turn/flop** solver (`subgame/turn_*.py`, `cfv.py`) was built and
+  lab-validated (M0–M2, ~98.6% less exploitable in-abstraction) but **SHELVED**: the N0 real-game
+  gate failed (lower exploitability did not beat the blueprint head-to-head — a cross-street
+  consistency break needing continual re-solving, an architecture rebuild). See
+  [docs/DEPTH_LIMITED_SOLVER_PLAN.md](docs/DEPTH_LIMITED_SOLVER_PLAN.md) and
+  [docs/NN_LEAF_PLAN.md](docs/NN_LEAF_PLAN.md) (both on hold).
+- **Phase 5 — Safety + depth** ⬜ (multi-week; deferred). 5a: reach/gadget for the river solver
+  (provably no-more-exploitable than the blueprint). 5b: continual-re-solving turn/flop depth-limited
+  solving with **blueprint counterfactual values as the leaf value function** — the revival path for
+  the shelved turn solver.
 
 Dependency chain: **0 → 1 → 2 → 3 → 4 → 5** (1a and 1b are independent quick wins; 2 is
 high-leverage but technically optional before 3; 3 strictly gates 4).

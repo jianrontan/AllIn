@@ -114,6 +114,49 @@ def build_board_arrays(board, evaluator, cards):
     }
 
 
+def build_turn_board_arrays(board4, cards=None):
+    """4-card TURN basis for the depth-limited turn solver (M2).
+
+    Unlike build_board_arrays (which assumes a 5-card board: H=1081, and whose
+    showdown ranks / strength groups / `board[:5]` river bucket are only meaningful
+    with 5 cards), the turn is NOT a showdown -- the river is still to come and is
+    valued by the leaf value function (src/subgame/cfv.py). So the SOLVER only needs
+    the hand list and per-hand card ids for card removal (compatible_mass) and the
+    card-removal-aware leaf reconstruction. H = C(48,2) = 1128. (Addresses landmine #1:
+    build_board_arrays silently mishandles a 4-card board.)
+
+    If `cards` (a CardAbstraction) is given, ALSO compute the blueprint-key buckets the
+    TURN PROJECTION needs (Stage 3): `pf` (preflop bucket), `strg2` (TURN strength
+    bucket = get_bucket on the 4-card board), and `groups2` (hands sharing a
+    (preflop, turn-strength) key -> the blueprint is queried once per group). No
+    showdown raw/g/strg3 -- those are meaningless on the turn. The leaf partition the
+    SOLVER uses is separate + finer (cfv.turn_strength); these buckets are only for
+    blueprint key lookup."""
+    board_set = set(board4)
+    pool = [c for c in _FULL_DECK if c not in board_set]
+    hands = list(combinations(pool, 2))
+    H = len(hands)
+    c1 = np.fromiter((_CARD_ID[a] for a, _ in hands), dtype=np.int64, count=H)
+    c2 = np.fromiter((_CARD_ID[b] for _, b in hands), dtype=np.int64, count=H)
+    out = {'hands': hands, 'H': H, 'c1': c1, 'c2': c2}
+    if cards is not None:
+        pf = np.empty(H, dtype=object)
+        s2 = np.empty(H, dtype=object)
+        for i, (a, b) in enumerate(hands):
+            hl = [a, b]
+            pf[i] = cards.get_bucket(hl, None)
+            s2[i] = cards.get_bucket(hl, list(board4))     # turn bucket (4-card board)
+        labels = np.array([f"{pf[i]}|{s2[i]}" for i in range(H)], dtype=object)
+        groups2 = []
+        for lab in set(labels.tolist()):
+            mask = labels == lab
+            groups2.append((mask, int(np.argmax(mask))))
+        out['pf'] = pf
+        out['strg2'] = s2
+        out['groups2'] = groups2
+    return out
+
+
 def compatible_mass(ba, rv):
     """
     Per-hero-hand reach of villain hands sharing NO card with the hero hand:

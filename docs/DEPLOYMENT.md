@@ -1,6 +1,15 @@
 # Deployment
 
-Last updated: 2026-05-30
+Last updated: 2026-06-07 (was 2026-05-30; this update folds in the M0–M4 turn-solver
+findings, fresh cost/WASM research, and the bake decision).
+
+> **⚠️ SUPERSEDED LATER THE SAME DAY (2026-06-07) — read this first.** The "Update 2026-06-07"
+> section below committed to building a **baked n=64 turn solver**. That decision was **reversed**
+> hours later when the turn solver's **N0 real-game gate FAILED** (it lowered exploitability but
+> did NOT beat the blueprint head-to-head). **The turn bake and the NN leaf are NOT being built.**
+> The shipped plan is **Rung 1 = the 25M blueprint + the river subgame solver only** (see the
+> "Sequencing" section below and ROADMAP Phase 4 / NN_LEAF_PLAN.md). Treat the turn-bake bullets
+> in the next section as historical, not the plan of record.
 
 How AllIn goes from a local Flask + Vite dev setup to a public, online heads-up game
 with a live "+EV counter" — the planned LinkedIn launch. For how the system works see
@@ -8,6 +17,52 @@ with a live "+EV counter" — the planned LinkedIn launch. For how the system wo
 for not-yet-committed ideas (WASM client-offload) see [IDEAS.md](IDEAS.md).
 
 Status legend: ✅ done · 🚧 in progress · 📅 planned
+
+---
+
+## Update 2026-06-07 — what's changed since the original plan
+
+- **The deployable bot = blueprint + RIVER solver (Slumbot-class).** Measured serving
+  footprint **~200 MB** (river solve incl. the 126 MB postflop tables). Turn-based, mostly
+  cheap blueprint lookups, no per-user state → exactly the cheap-to-serve profile (Slumbot
+  is the same blueprint+real-time-solver shape, served free online). **Ready now**; the
+  cost section below holds.
+- **Ship the 25M blueprint, NOT the auto-resolved 30M.** The capped 30M run *over-trained*
+  past its best point; 25M is least exploitable on BR+LBR. Pin
+  `ALLIN_BLUEPRINT_DB=analysis/blueprints/snapshots/snap_20260604_114512_25550000.db`
+  (see the `capped-blueprint-ship-25m` memory).
+- **The TURN solver is PAUSED.** It's proven in the lab (M0–M2: ~99% less exploitable at
+  high fidelity) but a *live* turn solve is **~20–54 s** (building the leaf value table
+  dominates), vs the river solver's ~8 s. Serving it needs one of:
+  - **Bake the leaf matrices offline → live lookup** (live solve drops to ~1–2 s). Use
+    **n=64** (~5 GB; passed the gate as well as n=128's ~18 GB). **Key cost point: the bake
+    is MEMORY-MAPPED from SSD, so the box does NOT need 5 GB of RAM** — only the ~12 leaves
+    a solve touches page in (a few ms of disk read, then cached). So a **~$5/mo Hetzner CX22
+    (4 GB RAM / 40 GB SSD)** or a ~$10–20/mo Lightsail serves it — NOT a $74/mo big-RAM box.
+    One-time bake: ~5 GB, parallelizable + resumable → free-but-slow on an 8-core laptop
+    (~a few days, run in chunks) or ~$20–60 fast on a rented many-core spot box.
+  - **A neural-net (DeepStack-style CFV) leaf** — small + instant + WASM-able; the proper
+    long-term fix (enables turn-in-browser), but a real ML project. See
+    `poker-bot-deployment-feasibility` memory.
+  - **DECISION (2026-06-07, user) — REVERSED same day.** The original call was to pursue the
+    BAKED n=64 turn solver on a cheap SSD box. It was abandoned hours later when the turn solver
+    **failed the N0 real-game gate** (−611 mbb vs the blueprint, while the river-only stack won
+    +1801 mbb). **No turn bake, no NN leaf.** The "residual value risk" flagged here is exactly
+    what N0 confirmed: lower exploitability did not translate to real-game EV. Ship Rung 1 (25M
+    blueprint + river solver) instead. See the "Sequencing" section below.
+- **WASM is feasible (precedent found): WASM Postflop** is an open-source CFR Hold'em
+  solver running in-browser (Rust→WASM, ~2× native, multithreaded, ~16 GB browser limit).
+  So a **river-WASM** bot (solve client-side, zero server cost, ~infinite scale) is real —
+  but the prior tradeoff stands: **client results are tamperable**, so they can't power a
+  *trustworthy* +EV leaderboard (keep that server-side / exclude client-solved hands). The
+  ~5–18 GB turn bake can't ship to a browser → WASM turn solving needs the NN leaf. See the
+  WASM section below.
+
+**Decisions (2026-06-07, user):** budget **~$10–15/mo sustained, ~$30–40 launch month** max;
+host at **allin.jianrontan.com** (+ ~$10/yr domain). **Server-side** (keeps the +EV leaderboard
+trustworthy). **WASM deferred.** ~~Turn solver IN v1 via a baked n=64 leaf~~ — **REVERSED the same
+day after the N0 gate failed; v1 = the 25M blueprint + the river solver only** (no turn bake). The
+turn/flop solver is shelved pending a continual-re-solving redesign. See "Sequencing" below.
 
 ---
 
@@ -56,12 +111,17 @@ defined in **Terraform**.
 
 ---
 
-## Sequencing: solver-first
+## Sequencing: deploy the river bot NOW (don't wait for turn/flop)
 
-Deploy **after the Phase-4 river solver ships**, not before. The LinkedIn launch is built
-around the *strongest* bot plus a live public **+EV counter** of the bot's lifetime record
-vs the field — so the launch waits for the solver (~2–3 weeks out), and the leaderboard is
-built in parallel during the fine-tuning + frontend week.
+**Resolved 2026-06-07:** the river subgame solver is the solver we ship — it's done and
+wins on both exploitability and real-game EV. The **turn/flop** solver is **deferred** (it
+failed the N0 real-game gate — see ROADMAP Phase 4 case study — and needs a continual-re-
+solving rebuild). So **do NOT wait for more solver work**; deploy `25M blueprint + river
+solver` now. The LinkedIn launch is built around this bot plus the live **+EV counter**;
+the leaderboard is built in parallel during the fine-tuning + frontend week.
+
+(Original note, still valid: deploy *after the river solver ships, not before* — which is
+now satisfied.)
 
 This accepts that **solver-under-burst is the harder scaling case** (CPU/GIL-bound CFR+
 solves, up to a 10s/decision ceiling). Blueprint inference is a cheap SQLite lookup; the
@@ -81,8 +141,10 @@ rewrite**.
   `.npz` — they're git-ignored (the turn table is ~126 MB). A fresh box without them falls
   back to slow lazy bucketing. **This is the main deploy gotcha.** (River is runtime-cached
   by design — fine.)
-- **Ship the blueprint `.db`** into the image/instance; confirm `resolve_blueprint_path()`
-  picks it, or pin `ALLIN_BLUEPRINT_DB`.
+- **Ship the blueprint `.db`** into the image/instance, and **pin
+  `ALLIN_BLUEPRINT_DB` to the 25M snapshot** (`snap_20260604_114512_25550000.db`) — the
+  auto-resolver picks the highest-iteration DB, which is the *over-trained, more-exploitable*
+  30M (see the 2026-06-07 update + `capped-blueprint-ship-25m`).
 - **Real WSGI** (gunicorn), not the Flask dev server. In-memory sessions only survive one
   worker — another reason for the persistent session store (D2).
 - Set **`ALLIN_CORS_ORIGINS`** to the real frontend domain; terminate **HTTPS** at the host
