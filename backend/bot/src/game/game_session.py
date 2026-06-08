@@ -22,14 +22,13 @@ import math
 from ..cfr.poker_game import (
     PokerGame, STARTING_STACK, _is_custom, _custom_total, make_custom_action)
 from ..cfr.keys import action_char, make_info_set_key
+from ..cfr.keys import STREET_NAMES as _STREET_NAMES, BOARD_COUNT as _BOARD_COUNT
 from ..cfr import translation
 from ..abstractions.card_abstractions import CardAbstraction
 from ..abstractions.hand_evaluator import HandEvaluator, RANK_MAP
 from .cards import shuffled_deck, to_display_list
 from .range_tracker import RangeTracker
 
-_STREET_NAMES = ['preflop', 'flop', 'turn', 'river']
-_BOARD_COUNT = [0, 3, 4, 5]              # community cards visible per street
 BIG_BLIND = 2
 
 _RANK_NAMES = {
@@ -632,6 +631,10 @@ class GameSession:
         # turn path. d['starting_pot'] / d['p0_invested'] are turn-entry values (this
         # street's bets live in d['history'], folded into invested only at the next
         # street), so they are the turn-ENTRY pot/stacks, not the mid-turn ones.
+        # NOTE: inert under the live (river-only) bot -- the turn solver is SHELVED
+        # (failed the N0 real-game gate; see ROADMAP Phase 4). Kept wired so the
+        # revival path doesn't have to re-thread this through the session. The turn
+        # snapshot above (d['turn_entry_*']) exists only to feed this.
         if street == 2 and d.get('turn_entry_bot') is not None:
             state['botSeat'] = actor
             state['turnEntryPot'] = d['starting_pot']

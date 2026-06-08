@@ -4,5 +4,14 @@ numpy==1.26.4
 phevaluator==0.5.3.1
 PyPokerEngine==1.0.1
 
+# Production WSGI servers (the dev server in strategy_api.py is local-only):
+#   gunicorn -> Linux deploy box; waitress -> cross-platform (incl. Windows).
+gunicorn==23.0.0
+waitress==3.0.2
+
+# DynamoDB session store (ALLIN_SESSION_STORE=dynamodb). Optional for local dev,
+# which defaults to the in-memory store.
+boto3==1.35.76
+
 # Testing
 hypothesis==6.152.9

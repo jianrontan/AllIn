@@ -6,7 +6,7 @@
 // All amounts are shown in big blinds (the backend works in chips; 1 BB = 2).
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { newGame, sendGameAction, sendBotAction, nextHand, getGameState } from '../api';
+import { newGame, sendGameAction, sendBotAction, nextHand, getGameState, setPlayerId } from '../api';
 import { fmtBB, fmtBBSigned } from '../format';
 import PlayingCard from '../components/PlayingCard';
 
@@ -263,9 +263,15 @@ function AiGame() {
         setBusy(true);
         setError(null);
         try {
-            const playerId = localStorage.getItem(PLAYER_ID_KEY) || undefined;
-            const v = await newGame(playerId);
-            if (v.playerId) localStorage.setItem(PLAYER_ID_KEY, v.playerId);
+            // Send any saved player id so the backend reuses it; it echoes back
+            // the authoritative id, which we persist and keep for the ownership
+            // check on every later request (see api.setPlayerId).
+            setPlayerId(localStorage.getItem(PLAYER_ID_KEY) || null);
+            const v = await newGame();
+            if (v.playerId) {
+                localStorage.setItem(PLAYER_ID_KEY, v.playerId);
+                setPlayerId(v.playerId);
+            }
             setView(v);
         } catch (e) {
             setError(e.message);
@@ -401,15 +407,16 @@ function AiGame() {
         <div className="min-h-screen bg-[radial-gradient(ellipse_at_center,#0c2a1f_0%,#0a0a0a_62%)]">
             {/* Full-bleed: the top bar and side columns reach the screen edges
                 (Home top-left, Net/Debug top-right, actions far right) while the
-                board stays centred in the flexible middle column. */}
-            <div className="w-full px-8 py-7 sm:px-10">
+                board stays centred in the flexible middle column. Tight padding on
+                phones, roomier margins from the `sm:` breakpoint up. */}
+            <div className="w-full px-3 py-4 sm:px-8 sm:py-7">
                 {/* Top bar: Home + title top-left, debug toggle + net top-right */}
-                <div className="flex items-start justify-between gap-4 mb-6">
+                <div className="flex items-start justify-between gap-3 mb-4 sm:mb-6">
                     <div>
                         <Link to="/" className="text-sm text-amber-400 hover:text-amber-300">
                             ← Home
                         </Link>
-                        <h1 className="mt-1 text-2xl font-bold">Play With AI</h1>
+                        <h1 className="mt-1 text-xl sm:text-2xl font-bold">Play With AI</h1>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                         <button onClick={() => setShowDebug((v) => !v)}
@@ -432,7 +439,7 @@ function AiGame() {
                     screen; equal side columns keep it visually centred. On mobile it
                     stacks: table, then actions, then the read/debug panel. */}
                 <div className="grid grid-cols-1 lg:grid-cols-[18rem_minmax(0,1fr)_18rem]
-                                gap-6 items-start">
+                                gap-5 lg:gap-6 items-start">
 
                 {/* LEFT: bot read + debug overlay + action log */}
                 <aside className="order-3 lg:order-1 flex flex-col gap-6">
@@ -482,9 +489,9 @@ function AiGame() {
                     (vh — three card rows must fit a short window), clamped to a sane
                     min/max so it grows with the screen but never gets comical or
                     overflows vertically. */}
-                <div className="w-fit rounded-[2.25rem] ring-4 ring-amber-600/60
-                                shadow-2xl shadow-black/60 px-6 py-4"
-                    style={{ ...FELT, '--card-w': 'clamp(2.5rem, min(7.5cqw, 8.5vh), 5rem)' }}>
+                <div className="w-fit rounded-[1.75rem] sm:rounded-[2.25rem] ring-4 ring-amber-600/60
+                                shadow-2xl shadow-black/60 px-3 py-3 sm:px-6 sm:py-4"
+                    style={{ ...FELT, '--card-w': 'clamp(2.75rem, min(7.5cqw, 8.5vh), 5rem)' }}>
                     {/* Bot */}
                     <Seat name="Bot" stackChips={view.botStack}
                         active={view.toAct === 'bot'} />
@@ -622,7 +629,7 @@ function AiGame() {
                             {sortedActions(view.legalActions).map((la) => (
                                 <button key={la.action} onClick={() => doAction(la.action)}
                                     disabled={busy}
-                                    className={'rounded-lg px-3 py-2 text-center leading-tight ' +
+                                    className={'rounded-lg px-3 py-2.5 sm:py-2 text-center leading-tight ' +
                                         'text-white disabled:opacity-50 transition-colors ' +
                                         actionClasses(la.action)}>
                                     <span className="block text-sm font-semibold">

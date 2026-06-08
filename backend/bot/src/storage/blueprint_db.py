@@ -1,6 +1,7 @@
 # backend/bot/src/storage/blueprint_db.py
 import sqlite3
 import json
+import threading
 from ..cfr.information_set import InformationSet
 
 
@@ -11,21 +12,55 @@ class BlueprintDB:
         connection can never write, so it is safe to point at a blueprint while
         a separate training process holds it open. Inference (API, bot) should
         always use read_only=True; training uses the default read/write mode.
+
+        Connections are THREAD-LOCAL. The Flask API serves requests from a thread
+        pool, and a single sqlite3.Connection shared across threads is NOT safe
+        for concurrent use (interleaved cursors / "recursive use of cursors", and
+        result corruption under load) even for read-only queries. Each thread
+        lazily gets its own connection via the `conn` property; every connection
+        opened is tracked so `close()` can dispose of all of them.
         """
         self.db_path = str(db_path)
         self.read_only = read_only
+        self._local = threading.local()
+        self._all_conns = []
+        self._all_conns_lock = threading.Lock()
 
-        if read_only:
-            # check_same_thread=False: the Flask API serves requests from a
-            # thread pool. Read-only queries across threads are safe here.
-            self.conn = sqlite3.connect(
+        if not read_only:
+            # Eagerly open the writable connection (and create the schema) in the
+            # calling thread. Training is single-threaded, so this thread's
+            # thread-local connection is the sole writer.
+            self._open_connection()
+
+    def _open_connection(self):
+        """Open a fresh connection for the CURRENT thread, register it for
+        close(), apply pragmas + ensure the schema for a writable handle, and
+        return it. Called lazily by the `conn` property the first time each
+        thread touches the DB."""
+        if self.read_only:
+            conn = sqlite3.connect(
                 f"file:{self.db_path}?mode=ro", uri=True, check_same_thread=False)
         else:
-            self.conn = sqlite3.connect(self.db_path)
+            # check_same_thread=False only so close() can run from another thread;
+            # actual queries stay on the single (training) thread that opened it.
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
             # WAL mode: allows reads while a write is in progress
-            self.conn.execute("PRAGMA journal_mode=WAL")
-            self.conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+        self._local.conn = conn
+        with self._all_conns_lock:
+            self._all_conns.append(conn)
+        if not self.read_only:
             self._create_tables()
+        return conn
+
+    @property
+    def conn(self):
+        """This thread's connection, opened on first use in that thread."""
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = self._open_connection()
+        return conn
 
     def _create_tables(self):
         self.conn.executescript("""
@@ -225,7 +260,16 @@ class BlueprintDB:
         self.conn.commit()
 
     def close(self):
-        self.conn.close()
+        """Close every per-thread connection this DB opened."""
+        with self._all_conns_lock:
+            conns = list(self._all_conns)
+            self._all_conns.clear()
+        for c in conns:
+            try:
+                c.close()
+            except Exception:
+                pass
+        self._local.conn = None
 
 
 class FrozenBlueprint:

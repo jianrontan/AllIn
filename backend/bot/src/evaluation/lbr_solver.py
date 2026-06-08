@@ -34,8 +34,6 @@ from ..cfr.keys import make_info_set_key
 from ..cfr import translation
 from ..game.range_tracker import RangeTracker
 
-_BOARD_COUNT = {0: 0, 1: 3, 2: 4, 3: 5}
-
 
 def _grid_action_for_char(char, to_call):
     """Map a pattern char to the blueprint GRID action the bot models the opponent

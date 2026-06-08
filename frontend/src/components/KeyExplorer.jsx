@@ -11,6 +11,12 @@ const SELECT = 'px-3 py-2 rounded-lg bg-black/60 border border-neutral-700 ' +
 const chip = 'px-3 py-1.5 rounded-lg text-sm bg-neutral-800 text-neutral-200 ' +
     'hover:bg-neutral-700 transition-colors';
 
+// Pattern chars that are LEGAL per street, so the builder can't offer a char that
+// makes an impossible key (BUG-018): 'o'/'2' are postflop-only (overbets), 'x' is a
+// preflop open only. 'f' (fold) is excluded everywhere (a fold ends the hand).
+const PREFLOP_CHARS = new Set(['k', 'c', 's', 'm', 'l', 'x', 'a']);
+const POSTFLOP_CHARS = new Set(['k', 'c', 's', 'm', 'l', 'o', '2', 'a']);
+
 // Parse a raw info-set key back into dropdown fields, so hand-editing the key
 // keeps the dropdowns in sync (otherwise the next dropdown change silently
 // rebuilds the key from stale state and clobbers the edit). Returns null for an
@@ -66,20 +72,38 @@ function KeyExplorer() {
     const bucketsForStreet = (s) =>
         (s === 'preflop' ? [] : (abstractions?.postflopBuckets?.[s] || []));
 
+    // Start-bucket vocabulary per street: FINE (pf_0..29) preflop, COARSE (pf_0..9)
+    // postflop. Used to clamp the selected bucket on a street switch (BUG-017).
+    const startBucketsForStreet = (s) =>
+        s === 'preflop'
+            ? (abstractions?.preflopBuckets || [])
+            : (abstractions?.preflopStartBuckets || abstractions?.preflopBuckets || []);
+
     // Any dropdown change rewrites the key text field.
     const sync = (next) => {
         const s = next.street ?? street;
-        const b = next.bucket ?? bucket;
+        let b = next.bucket ?? bucket;
         let st = next.strength ?? strength;
         const pos = next.position ?? position;
-        const pat = next.pattern ?? pattern;
+        // The pattern is the CURRENT street's betting, so reset it on a street switch
+        // (otherwise a postflop 'o'/'2' could carry into a preflop key, etc.).
+        let pat = next.pattern ?? pattern;
+        if (next.street !== undefined && next.street !== street) pat = '';
+        // Clamp the start bucket into the new street's vocabulary, so a fine preflop
+        // bucket (e.g. pf_27) can't leak into a coarse postflop key + desync the
+        // dropdown when switching streets (BUG-017).
+        const validBuckets = startBucketsForStreet(s);
+        if (validBuckets.length && !validBuckets.includes(b)) {
+            const idx = parseInt(String(b).split('_')[1], 10);
+            b = validBuckets[Math.min(Number.isFinite(idx) ? idx : 0, validBuckets.length - 1)];
+        }
         const buckets = bucketsForStreet(s);
         if (buckets.length && st > buckets.length - 1) st = buckets.length - 1;
         if (next.street !== undefined) setStreet(next.street);
-        if (next.bucket !== undefined) setBucket(next.bucket);
+        if (next.bucket !== undefined || b !== bucket) setBucket(b);
         if (next.strength !== undefined || st !== strength) setStrength(st);
         if (next.position !== undefined) setPosition(next.position);
-        if (next.pattern !== undefined) setPattern(next.pattern);
+        if (next.pattern !== undefined || pat !== pattern) setPattern(pat);
         setKeyText(composeKey(s, b, st, pos, pat));
     };
 
@@ -124,10 +148,12 @@ function KeyExplorer() {
         );
     }
 
-    // Exclude fold: a fold ends the hand, so 'f' never appears in a queryable
-    // info-set pattern (heads-up: no one acts after a fold).
+    // Offer only the pattern chars LEGAL on the selected street (BUG-018): excludes
+    // fold everywhere, overbets ('o'/'2') preflop, and the 'x' open postflop -- so the
+    // builder can't compose a structurally impossible key.
+    const allowedChars = street === 'preflop' ? PREFLOP_CHARS : POSTFLOP_CHARS;
     const patternChars = Object.entries(abstractions.patternChars)
-        .filter(([ch]) => ch !== 'f');
+        .filter(([ch]) => ch !== 'f' && allowedChars.has(ch));
 
     return (
         <div>

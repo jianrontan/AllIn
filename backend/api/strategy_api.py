@@ -3,6 +3,7 @@ from flask_cors import CORS
 import math
 import sys
 import os
+import threading
 import uuid
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -15,14 +16,15 @@ print(f"DEBUG: Backend dir: {backend_dir}")
 # --- Shared backend resources (loaded once at startup) -----------------------
 from bot.src.config import resolve_blueprint_path
 from bot.src.storage.blueprint_db import BlueprintDB
-from bot.src.game.bot_strategy import BlueprintStrategy, ConfidenceAwareStrategy
-from bot.src.game.session_store import InMemorySessionStore
+from bot.src.game.session_store import make_session_store, SessionLockTimeout
 from bot.src.game.game_session import GameSession, advance_bot_turns, GameError, BIG_BLIND
 from bot.src.game.cards import to_engine
 from bot.src.cfr.poker_game import make_custom_action, STARTING_STACK
 from bot.src.cfr import translation
 from bot.src.abstractions.sizing import PREFLOP_RAISE_MULT, preflop_open_chips
 from bot.src.subgame.river_subgame_solver import RiverSubgameSolver
+from bot.src.game.range_tracker import RangeTracker, _FULL_DECK
+from bot.src.subgame.river_tree import is_sized, sized_chips
 
 # The blueprint DB is opened read-only so a concurrent training run is safe.
 _BLUEPRINT_PATH = resolve_blueprint_path()
@@ -34,6 +36,11 @@ BLUEPRINT_DB = BlueprintDB(_BLUEPRINT_PATH, read_only=True)
 # pre-stamp DB defaults to 'control'.
 from bot.src.abstractions.sizing import db_menu_mode
 BLUEPRINT_MENU_MODE = db_menu_mode(BLUEPRINT_DB)
+# Postflop action-translation grid for the SERVED blueprint's menu (capped adds the
+# 2.0x 'overbet2' tier). The Hand Explorer must translate off-grid bets onto THIS
+# grid, or a 1.75-2.0x bet clamps to 'o' (1.5x) and the explorer shows a different
+# line than the live bot (which translates against the same menu). See BUG-019.
+_POSTFLOP_GRID = translation.postflop_grid_for(BLUEPRINT_MENU_MODE)
 # Phase-4 bot: the river subgame solver. Off the river (or whenever the solve
 # inputs are missing) it delegates to the blueprint exactly like
 # ConfidenceAwareStrategy; on the river it solves the actual subgame and plays the
@@ -44,39 +51,75 @@ BLUEPRINT_MENU_MODE = db_menu_mode(BLUEPRINT_DB)
 # ALLIN_BLUEPRINT_DB to a CURRENT-sizing blueprint/snapshot if the auto-resolved
 # one predates the active abstraction (see the serve note in the river-solver docs).
 BOT = RiverSubgameSolver(BLUEPRINT_DB, max_iters=200, check_every=40, time_budget=5.0)
+# A separate solver for the Strategy Explorer's on-demand river solve. It is NOT
+# latency-critical (an explicit "solve" click, not a live turn), so it gets more
+# iterations for a better-converged answer and a slightly larger time budget; the
+# smaller check_every bounds a deep-stack/small-pot (high-SPR) solve closer to the
+# budget. Shares the same read-only blueprint DB.
+EXPLORER_BOT = RiverSubgameSolver(BLUEPRINT_DB, max_iters=2000, check_every=25,
+                                  time_budget=8.0)
 # Opponent model for the hand-level range tracker (Phase 3); injected into every
 # GameSession so the bot maintains a belief over the human's hand as it plays.
 BOT_RANGE_FN = BOT.range_model_fn()
 
-# SessionStore: in-memory for now. Swap for a Redis/DynamoDB-backed store to
-# run multiple backend processes (see session_store.py).
-SESSIONS = InMemorySessionStore()
+# SessionStore: chosen by ALLIN_SESSION_STORE (default 'memory'). Set it to
+# 'dynamodb' for a multi-worker / multi-box deploy so games are shared and
+# survive restarts (see session_store.py / make_session_store).
+SESSIONS = make_session_store()
+
+# River-solve concurrency cap: a single river decision can burn several seconds
+# of CFR (BOT.time_budget), so without a bound N simultaneous solves pin every
+# core and stall the whole server. This BoundedSemaphore caps how many bot turns
+# run a solve at once PER PROCESS (under gunicorn, total = workers x this). Sized
+# to leave one core free. Acquired around advance_bot_turns (see _run_bot).
+_SOLVE_PERMITS = max(1, (os.cpu_count() or 2) - 1)
+_SOLVE_SEMAPHORE = threading.BoundedSemaphore(_SOLVE_PERMITS)
+# How long a request will wait for a solve permit before giving up with 503.
+_SOLVE_WAIT_SECONDS = 30.0
 
 print(f"DEBUG: Blueprint: {_BLUEPRINT_PATH.name} "
       f"({BLUEPRINT_DB.get_metadata('total_iterations', 0):,} iterations)")
 
 app = Flask(__name__)
 
+# Cap request bodies: every endpoint takes a tiny JSON object, so a few KB is
+# plenty. This rejects oversized/garbage bodies (a cheap DoS vector) with 413
+# before Flask buffers them. 64 KB is generous headroom.
+app.config['MAX_CONTENT_LENGTH'] = 64 * 1024
+
 # CORS origins are env-driven (ALLIN_CORS_ORIGINS, comma-separated) so the same
-# code serves localhost in dev and the real domain once deployed.
+# code serves localhost in dev and the real domain once deployed. No credentials
+# mode: auth is stateless (session id + playerId in the request, no cookies), so
+# supports_credentials would be a needless risk amplifier.
 _origins_env = os.environ.get("ALLIN_CORS_ORIGINS")
 ALLOWED_ORIGINS = ([o.strip() for o in _origins_env.split(",") if o.strip()]
                    if _origins_env
                    else ['http://localhost:5173', 'http://localhost:5174'])
-CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=True)
+CORS(app, origins=ALLOWED_ORIGINS)
+
+
+@app.errorhandler(413)
+def _too_large(_e):
+    return jsonify({"error": "request body too large"}), 413
+
+
+@app.errorhandler(SessionLockTimeout)
+@app.errorhandler(TimeoutError)
+def _server_busy(_e):
+    # Couldn't get a session lock or a river-solve permit in time: shed load.
+    return jsonify({"error": "server busy, please retry"}), 503
 
 
 @app.before_request
 def handle_preflight():
     if request.method == "OPTIONS":
         response = Response()
-        # Echo the Origin only if it's in the allow-list (a wildcard "*" is both
-        # invalid alongside credentials and contradicts the restricted allow-list
-        # flask-cors applies to the actual response).
+        # Echo the Origin only if it's in the allow-list (a wildcard "*"
+        # contradicts the restricted allow-list flask-cors applies to the
+        # actual response).
         origin = request.headers.get("Origin")
         if origin in ALLOWED_ORIGINS:
             response.headers.add("Access-Control-Allow-Origin", origin)
-            response.headers.add("Access-Control-Allow-Credentials", "true")
         response.headers.add('Access-Control-Allow-Headers', "Content-Type")
         response.headers.add('Access-Control-Allow-Methods', "GET, POST, OPTIONS")
         return response
@@ -158,8 +201,8 @@ def _postflop_pattern(actions):
                     return None, None, "bet fraction must be a number"
                 if not math.isfinite(frac) or frac <= 0:
                     return None, None, "bet fraction must be a positive, finite number"
-                tb = translation.translate_bet(frac, translation.POSTFLOP_GRID)
-                char = translation.nearest_char(frac, translation.POSTFLOP_GRID)
+                tb = translation.translate_bet(frac, _POSTFLOP_GRID)
+                char = translation.nearest_char(frac, _POSTFLOP_GRID)
                 if len(tb) > 1:
                     blend = tb
             else:
@@ -243,7 +286,7 @@ def strategy_from_hand():
     Hand Explorer: take real cards + a betting line, derive the info-set key,
     and return the blueprint strategy. One round-trip.
     """
-    data = request.get_json(force=True) or {}
+    data = request.get_json(silent=True) or {}
     hole = [c for c in data.get('holeCards', []) if c]
     community_in = [c for c in data.get('communityCards', []) if c]
     actions = data.get('actions', [])
@@ -251,6 +294,8 @@ def strategy_from_hand():
 
     if position not in ('ip', 'oop'):
         return jsonify({"error": "position must be 'ip' or 'oop'"}), 400
+    if not isinstance(actions, list):
+        return jsonify({"error": "'actions' must be a list"}), 400
     if len(hole) != 2:
         return jsonify({"error": "exactly two hole cards required"}), 400
     if len(community_in) not in (0, 3, 4, 5):
@@ -267,11 +312,12 @@ def strategy_from_hand():
         return jsonify({"error": "duplicate cards in hand"}), 400
 
     from bot.src.bot.game_adapter import GameAdapter
-    from bot.src.cfr.keys import make_info_set_key, STREET_NAMES
+    from bot.src.cfr.keys import make_info_set_key, STREET_NAMES, street_from_board_count
     adapter = GameAdapter()
 
-    street = determine_street(community_e)
-    street_idx = STREET_NAMES.index(street)
+    # community length was validated to 0/3/4/5 above, so this never raises.
+    street_idx = street_from_board_count(len(community_e))
+    street = STREET_NAMES[street_idx]
     is_preflop = (street_idx == 0)
 
     card_bucket = adapter.card_abstractions.get_bucket(hole_e, None)
@@ -335,6 +381,187 @@ def strategy_from_hand():
     })
 
 
+# =============================================================================
+# River subgame solver (on-demand, for the Strategy Explorer)
+# =============================================================================
+
+def _river_action_label(a, node, bot_seat):
+    """Friendly label (in BB) for a river-tree action token."""
+    if a in ('check', 'call', 'fold', 'allin'):
+        return a.capitalize() if a != 'allin' else 'All-in'
+    if is_sized(a):
+        add = sized_chips(a)
+        if a.startswith('raise:'):
+            total = node.sc[bot_seat] + add            # raise-TO street total
+            return f"Raise to {total / BIG_BLIND:g} BB"
+        return f"Bet {add / BIG_BLIND:g} BB"
+    return a
+
+
+def _engine_action_for_replay(a, session):
+    """Convert one explorer action ({action, fraction|bb}) into an engine action
+    string for GameSession.apply_action, using the session's live pot / to_call. A
+    bet/raise becomes a custom raise-to total (full custom sizing, snapped onto the
+    trained grid by apply_action's pseudo-harmonic translation, exactly like the
+    live bot). Raises ValueError on a malformed size."""
+    act = a.get('action')
+    if act in ('check', 'call', 'fold', 'allin'):
+        return act
+    if act not in ('bet', 'raise'):
+        raise ValueError(f"unsupported action {act!r}")
+    facing = 'call' in session.legal_actions()         # a raise iff there's a bet to call
+    bb = a.get('bb')
+    if bb is not None:                                  # preflop: absolute BB raise-to total
+        total = float(bb) * BIG_BLIND
+    else:                                               # postflop: pot-fraction sized
+        frac = float(a.get('fraction'))
+        if not math.isfinite(frac) or frac <= 0:
+            raise ValueError("bet/raise fraction must be positive and finite")
+        pot = session._current_pot()
+        to_call = session._action_cost('call') if facing else 0.0
+        total = frac * (pot + to_call) + to_call if facing else frac * pot
+    return make_custom_action(facing, round(float(total), 2))
+
+
+def _explorer_session(hole_e, board_e, position):
+    """A GameSession rigged for the explorer: the bot seat (= the user's position)
+    holds the user's hole cards, the opponent holds throwaway (unused) cards, and
+    the board is the user's five cards. Range tracking is on (BOT_RANGE_FN), so
+    replaying the line builds both blueprint-projected ranges exactly as live play
+    does. Returns (session, bot_seat)."""
+    session = GameSession.new('explorer', 'explorer', strategy_fn=BOT_RANGE_FN,
+                              menu_mode=BLUEPRINT_MENU_MODE)
+    d = session.data
+    bot_seat = 0 if position == 'ip' else 1            # ip = SB/button = seat 0
+    used = set(hole_e) | set(board_e)
+    dummy = [c for c in _FULL_DECK if c not in used][:2]   # opponent's (unused) cards
+    d['human_seat'] = 1 - bot_seat                      # the opponent is the "human"
+    d['p0_cards'], d['p1_cards'] = ((hole_e, dummy) if bot_seat == 0
+                                    else (dummy, hole_e))
+    d['community'] = list(board_e)
+    # Reset both trackers to the rigged bot cards (new() seeded them off a random deal).
+    d['opp_range'] = RangeTracker(hole_e, session.cards).to_dict()
+    d['bot_range'] = RangeTracker((), session.cards).to_dict()
+    return session, bot_seat
+
+
+def _replay_history(session, history, river_actions):
+    """Replay the scripted pre-river streets + the river line (before the bot's
+    decision) through the session, in action order. Each pre-river street's betting
+    must CLOSE before the next begins (the engine advances streets automatically).
+    Returns an error string, or None on success (the session then sits at a river
+    decision)."""
+    streets = [('preflop', 0, history.get('preflop', [])),
+               ('flop', 1, history.get('flop', [])),
+               ('turn', 2, history.get('turn', [])),
+               ('river', 3, river_actions or [])]
+    for name, idx, line in streets:
+        for a in line:
+            if session.data['status'] != 'in_hand':
+                return f"the betting line ends the hand before the river (in the {name})"
+            if session.data['street'] != idx:
+                return (f"too many actions before the {name} — each street's betting "
+                        "must complete before the next")
+            try:
+                session.apply_action(_engine_action_for_replay(a, session))
+            except GameError as e:
+                return f"illegal action in the {name} line: {e}"
+            except (ValueError, TypeError) as e:
+                return f"bad {name} action: {e}"
+        if name != 'river' and session.data['status'] == 'in_hand' \
+                and session.data['street'] == idx:
+            return f"the {name} betting is incomplete (it never closed)"
+    if session.data['status'] != 'in_hand' or session.data['street'] != 3:
+        return "the line does not reach a river decision"
+    return None
+
+
+@app.route('/api/strategy/river-solve', methods=['POST'])
+def strategy_river_solve():
+    """Run the river subgame solver for a concrete spot and return its SOLVED
+    strategy -- UNGATED (no SPR skip, no EV gate, unlike live play).
+
+    The previous-streets betting (`history`: preflop/flop/turn) plus the river line
+    (`actions`, before the bot's decision) are REPLAYED through a GameSession, so
+    both players' ranges are the blueprint-projected beliefs the live bot would
+    hold at river entry -- not uniform. The river-entry pot, behind stacks, and
+    realized river path all come from that replay. Bets are full-custom-sized and
+    snapped onto the trained grid exactly as the live bot does.
+    """
+    data = request.get_json(silent=True) or {}
+    hole = [c for c in data.get('holeCards', []) if c]
+    community_in = [c for c in data.get('communityCards', []) if c]
+    river_actions = data.get('actions', [])
+    history = data.get('history') or {}
+    position = data.get('position', 'ip')
+
+    if position not in ('ip', 'oop'):
+        return jsonify({"error": "position must be 'ip' or 'oop'"}), 400
+    if not isinstance(river_actions, list) or not isinstance(history, dict) \
+            or any(not isinstance(v, list) for v in history.values()):
+        return jsonify({"error": "'actions' and each 'history' street must be lists"}), 400
+    if len(hole) != 2:
+        return jsonify({"error": "exactly two hole cards required"}), 400
+    if len(community_in) != 5:
+        return jsonify({"error": "the river solver needs all five community cards"}), 400
+
+    try:
+        hole_e = [to_engine(c) for c in hole]
+        community_e = [to_engine(c) for c in community_in]
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    all_cards = hole_e + community_e
+    if len(set(all_cards)) != len(all_cards):
+        return jsonify({"error": "duplicate cards in hand/board"}), 400
+
+    session, bot_seat = _explorer_session(hole_e, community_e, position)
+    err = _replay_history(session, history, river_actions)
+    if err:
+        return jsonify({"error": err}), 400
+    if session.current_player() != bot_seat:
+        return jsonify({"error": "the betting line must end on your turn on the river "
+                                 "(it currently lands on the opponent)"}), 400
+
+    ps = session.bot_public_state()
+    if ps.get('riverEntryPot') is None or ps.get('hero_range') is None:
+        return jsonify({"error": "could not assemble the river solve inputs"}), 400
+
+    if not _SOLVE_SEMAPHORE.acquire(timeout=_SOLVE_WAIT_SECONDS):
+        raise TimeoutError("server busy: no solver permit available")
+    try:
+        dist, node, info = EXPLORER_BOT.solve_for_action(
+            board=ps['community'], pot_entry=ps['riverEntryPot'],
+            stacks=ps['riverEntryStacks'], bot_seat=ps['botSeat'],
+            hole=ps['hole_cards'], villain_tracker=ps['opp_range'],
+            hero_tracker=ps['hero_range'],
+            confidence=getattr(ps['opp_range'], 'confidence', 1.0),
+            river_path=ps['riverPath'])
+    except ValueError as e:
+        # A spot the solver can't represent (hole collides with the board, the
+        # bot's hand has ~zero blueprint reach for this line, ...) -> clean 400.
+        return jsonify({"error": f"river solve not applicable: {e}"}), 400
+    finally:
+        _SOLVE_SEMAPHORE.release()
+
+    strategy = {}
+    for a, p in dist.items():
+        lbl = _river_action_label(a, node, bot_seat)
+        strategy[lbl] = strategy.get(lbl, 0.0) + float(p)
+
+    villain = ps['opp_range']
+    return jsonify({
+        "solver": {
+            "strategy": strategy,
+            "converged": bool(info.get('converged', False)),
+            "iters": int(info.get('iters', 0)),
+            "gap": (round(float(info['gap']), 4) if info.get('gap') is not None else None),
+            "potEntryBb": ps['riverEntryPot'] / BIG_BLIND,
+            "effectiveStackBb": ps['riverEntryStacks'][0] / BIG_BLIND,
+            "confidence": round(float(getattr(villain, 'confidence', 1.0)), 3),
+        },
+    })
+
+
 @app.route('/api/abstractions', methods=['GET'])
 def get_abstractions():
     """Vocabulary the frontend Key Explorer dropdowns are built from."""
@@ -367,15 +594,39 @@ def get_abstractions():
 # Play against the bot
 # =============================================================================
 
-def _load_session(session_id):
-    """Return a GameSession or (None, error_response)."""
+def _load_session(session_id, claimed_player_id):
+    """Return a GameSession or (None, error_response).
+
+    Ownership check (C3): the session id alone is an unguessable bearer
+    capability, but we additionally require the caller to present the playerId
+    the session was created with. A mismatch (or a missing playerId) is rejected
+    so a leaked/guessed session id can't be read or acted on by someone else.
+    """
     if not session_id:
         return None, (jsonify({"error": "session id required"}), 400)
     data = SESSIONS.get(session_id)
     if data is None:
         return None, (jsonify({"error": "session not found or expired"}), 404)
+    if not claimed_player_id or claimed_player_id != data.get('player_id'):
+        # 404 (not 403) so we don't confirm a session id exists to a non-owner.
+        return None, (jsonify({"error": "session not found or expired"}), 404)
     return GameSession.from_dict(data, strategy_fn=BOT_RANGE_FN,
                                  menu_mode=BLUEPRINT_MENU_MODE), None
+
+
+def _run_bot(session, **kwargs):
+    """Advance the bot's turn(s) under the river-solve concurrency cap (H2).
+
+    advance_bot_turns may run a multi-second river solve; the BoundedSemaphore
+    limits how many run at once so concurrent requests can't pin every core.
+    Raises SessionLockTimeout-style 503 handling is done by the caller; here we
+    surface a permit timeout as a RuntimeError the caller maps to 503."""
+    if not _SOLVE_SEMAPHORE.acquire(timeout=_SOLVE_WAIT_SECONDS):
+        raise TimeoutError("server busy: no solver permit available")
+    try:
+        advance_bot_turns(session, BOT, **kwargs)
+    finally:
+        _SOLVE_SEMAPHORE.release()
 
 
 @app.route('/api/game/new', methods=['POST'])
@@ -389,7 +640,7 @@ def game_new():
     with SESSIONS.lock(session_id):
         session = GameSession.new(session_id, player_id, strategy_fn=BOT_RANGE_FN,
                                   menu_mode=BLUEPRINT_MENU_MODE)
-        advance_bot_turns(session, BOT)      # bot may act first (when it is SB)
+        _run_bot(session)                    # bot may act first (when it is SB)
         SESSIONS.put(session_id, session.to_dict())
         view = session.public_view()
     view['playerId'] = player_id
@@ -400,8 +651,9 @@ def game_new():
 def game_state():
     """Current redacted state. The frontend reads bot moves from here."""
     session_id = request.args.get('id')
+    player_id = request.args.get('playerId')
     with SESSIONS.lock(session_id):          # serialize with any in-flight writer
-        session, err = _load_session(session_id)
+        session, err = _load_session(session_id, player_id)
         if err:
             return err
         return jsonify(session.public_view())
@@ -411,13 +663,14 @@ def game_state():
 def game_action():
     """Apply the human's action only. The bot responds in a separate
     /api/game/bot-action call so the client can reveal the new card first."""
-    data = request.get_json(force=True) or {}
+    data = request.get_json(silent=True) or {}
     session_id = data.get('id')
+    player_id = data.get('playerId')
     # One lock per session for the whole load-modify-put: concurrent requests for
     # the same session (double-click, retry, or a /bot-action racing this) can't
     # clobber each other or double-apply.
     with SESSIONS.lock(session_id):
-        session, err = _load_session(session_id)
+        session, err = _load_session(session_id, player_id)
         if err:
             return err
 
@@ -455,17 +708,18 @@ def game_bot_action():
     """Run the bot's pending turn(s). Split out from /action so the client can
     render the freshly-dealt board and a 'thinking' indicator before the (possibly
     slow) river solve. A no-op if it isn't the bot's turn."""
-    data = request.get_json(force=True) or {}
+    data = request.get_json(silent=True) or {}
     session_id = data.get('id')
+    player_id = data.get('playerId')
     with SESSIONS.lock(session_id):
-        session, err = _load_session(session_id)
+        session, err = _load_session(session_id, player_id)
         if err:
             return err
         try:
             # Pause when a bot action deals a new board card so the client can
             # render it before the bot's (possibly slow, river-solve) decision on
             # the new street; the client's bot-turn loop calls back to resume.
-            advance_bot_turns(session, BOT, stop_on_new_card=True)
+            _run_bot(session, stop_on_new_card=True)
         except GameError as e:
             return jsonify({"error": str(e)}), 400
         SESSIONS.put(session.data['session_id'], session.to_dict())
@@ -475,15 +729,16 @@ def game_bot_action():
 @app.route('/api/game/next-hand', methods=['POST'])
 def game_next_hand():
     """Deal the next hand in an existing session."""
-    data = request.get_json(force=True) or {}
+    data = request.get_json(silent=True) or {}
     session_id = data.get('id')
+    player_id = data.get('playerId')
     with SESSIONS.lock(session_id):
-        session, err = _load_session(session_id)
+        session, err = _load_session(session_id, player_id)
         if err:
             return err
         try:
             session.start_next_hand()
-            advance_bot_turns(session, BOT)
+            _run_bot(session)
         except GameError as e:
             return jsonify({"error": str(e)}), 400
         SESSIONS.put(session.data['session_id'], session.to_dict())
@@ -503,28 +758,29 @@ def test():
     })
 
 
-def determine_street(community_cards):
-    if len(community_cards) == 0:
-        return "preflop"
-    elif len(community_cards) == 3:
-        return "flop"
-    elif len(community_cards) == 4:
-        return "turn"
-    elif len(community_cards) == 5:
-        return "river"
-    else:
-        return "preflop"
-
-
 if __name__ == "__main__":
-    print("Starting Flask server...")
+    # DEVELOPMENT server only. This path is for local work; it is NOT for
+    # production (the Werkzeug debugger is a remote-code-execution risk and the
+    # dev server is not built for real load). Deploy via the WSGI entrypoint
+    # instead -- gunicorn on Linux, waitress on Windows -- which imports `app`
+    # from wsgi.py and never runs this block. See docs/DEPLOYMENT.md.
+    #
+    # Defaults are safe-ish for dev: bind loopback (not 0.0.0.0) and gate the
+    # debugger behind ALLIN_DEBUG (default on for convenience). Override host via
+    # ALLIN_DEV_HOST if you really need LAN access.
+    debug = os.environ.get("ALLIN_DEBUG", "1") == "1"
+    host = os.environ.get("ALLIN_DEV_HOST", "127.0.0.1")
+    port = int(os.environ.get("ALLIN_DEV_PORT", "5000"))
+
+    print("Starting Flask DEVELOPMENT server (do not use in production)...")
     print(f"Working directory: {os.getcwd()}")
     print(f"CORS origins: {ALLOWED_ORIGINS}")
+    print(f"Session store: {type(SESSIONS).__name__} · solve permits: {_SOLVE_PERMITS}")
 
     print("\nRoutes registered:")
     for rule in app.url_map.iter_rules():
         methods = list(rule.methods) if rule.methods else []
         print(f"  {rule.endpoint}: {rule.rule} {methods}")
 
-    print(f"\nServer starting on http://localhost:5000")
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    print(f"\nServer starting on http://{host}:{port} (debug={debug})")
+    app.run(host=host, port=port, debug=debug)

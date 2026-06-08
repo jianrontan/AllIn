@@ -130,6 +130,27 @@ package "subgame — Phase 4 river solver" {
   }
 }
 
+package "subgame - turn (built + validated, SHELVED)" {
+  class TurnSubgameSolver {
+    + decide(info_set_key, legal_actions, public_state) : str
+    + solve_turn_for_action(board, pot_entry, stacks, args) : str
+  }
+  class TurnTree
+  class TurnCFR {
+    + run(reach0, reach1, iters)
+  }
+  class "cfv (module)" as cfv {
+    + turn_leaf_matrix_both(args) : tuple
+    + leaf_value_vec(args) : ndarray
+    -- reach-conditioned leaf, M1 = -M0 transpose --
+  }
+  note bottom of TurnSubgameSolver
+    Cut in-abstraction exploitability ~99% (M0-M2)
+    but failed the real-game N0 gate; shelved
+    pending continual re-solving. NOT served.
+  end note
+}
+
 package "storage" {
   class BlueprintDB {
     + __init__(db_path, read_only)
@@ -180,6 +201,12 @@ RangeTracker --> CardAbstraction : buckets / equity
 RiverSubgameSolver --> RiverTree : builds
 RiverSubgameSolver --> RiverCFR : runs vectorized CFR+
 RiverSubgameSolver ..> RangeTracker : consumes both ranges
+
+RiverSubgameSolver <|-- TurnSubgameSolver : (shelved, adds turn path)
+RiverCFR <|-- TurnCFR
+TurnSubgameSolver --> TurnTree : builds
+TurnSubgameSolver --> TurnCFR : runs vectorized CFR+
+TurnCFR ..> cfv : leaf value at depth limit
 
 SessionStore <|-- InMemorySessionStore
 BestResponseEvaluator --> BlueprintDB : scores (ro)

@@ -2,7 +2,7 @@
 """
 TEST-2 (C measurement) -- jam-fingerprint COMPARISON across two blueprint arms.
 
-The original scripts/_tmp_spr_fingerprint.py filters `if 'allin' not in legal:
+An earlier throwaway probe filtered `if 'allin' not in legal:
 continue`, which is UNFAIR across the Fix-#4 A/B: the capped arm has no voluntary
 all-in in its menu (all-in only EMERGES at low SPR), so that filter would skip every
 high-SPR capped node and under-sample it. This script measures menu-agnostic,

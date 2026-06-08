@@ -145,8 +145,9 @@ rewrite**.
   `ALLIN_BLUEPRINT_DB` to the 25M snapshot** (`snap_20260604_114512_25550000.db`) — the
   auto-resolver picks the highest-iteration DB, which is the *over-trained, more-exploitable*
   30M (see the 2026-06-07 update + `capped-blueprint-ship-25m`).
-- **Real WSGI** (gunicorn), not the Flask dev server. In-memory sessions only survive one
-  worker — another reason for the persistent session store (D2).
+- **Real WSGI** (gunicorn/waitress), not the Flask dev server. ✅ **Done in code** —
+  `backend/api/wsgi.py` (see "Security & runtime hardening" below). In-memory sessions only
+  survive one worker — another reason for the persistent session store (D2).
 - Set **`ALLIN_CORS_ORIGINS`** to the real frontend domain; terminate **HTTPS** at the host
   (Lightsail/Pages both bundle it).
 
@@ -165,7 +166,9 @@ into the same Terraform — more AWS IaC signal, slightly more setup.)
 
 **AWS Lightsail Containers/instance** (flat-rate, bundled HTTPS, no ALB/NAT cost traps) + a
 **`DynamoDBSessionStore`** behind the existing `SessionStore` interface → a stateless API that
-scales horizontally safely. In-memory single-box is **off the table** because the public counter
+scales horizontally safely. ✅ **`DynamoDBSessionStore` is implemented** (TTL + lease lock,
+`ALLIN_SESSION_STORE=dynamodb`; see "Security & runtime hardening"); what remains is
+provisioning the table and setting the env vars. In-memory single-box is **off the table** because the public counter
 must survive restarts. DynamoDB on-demand is ~free at this scale. **Why Lightsail over Fargate:**
 the box is kept always-warm (min-instance = 1) for the live counter + solver, and always-on
 favors flat-rate over pay-per-use — Lightsail is cheaper *and* simpler here, and is still
@@ -175,7 +178,10 @@ value champion: a Hetzner CX22, 2 vCPU/4 GB ~$5/mo, runs the full solver too.)
 
 ### D3 — Polish 📅
 Health checks, request logging, a per-IP rate limit on new-session creation (anti-farm), a
-per-session hand cap, and a landing-page "what is this" for LinkedIn visitors.
+per-session hand cap, and a landing-page "what is this" for LinkedIn visitors. (Body-size cap,
+the river-solve concurrency cap, and stateless ownership checks already shipped — see "Security
+& runtime hardening"; the **per-IP rate limit** is the remaining anti-farm item, best done at
+the Cloudflare edge.)
 
 ### D4 — Accounts (v1.1, fast-follow) 📅
 **Deliberately after launch.** Add the Tier-2 account layer (see Identity tiers below): managed
@@ -335,8 +341,61 @@ Two caveats that are design constraints, not stack changes:
 
 ---
 
+## Security & runtime hardening (implemented 2026-06-08)
+
+A read-only security review (C1–C3 critical, H1–H4 high, M1–M4 medium) was actioned. What
+shipped, and how it changes deployment:
+
+- **C1 — real WSGI entrypoint.** `backend/api/wsgi.py` exposes `app` (and a `create_app()`
+  factory). `python strategy_api.py` is now **dev-only**: it binds **loopback** (`127.0.0.1`)
+  and gates the Werkzeug debugger behind `ALLIN_DEBUG` (default on for dev). Production never
+  runs that block — it imports `wsgi:app`. Run commands:
+  ```bash
+  # Linux deploy box:
+  gunicorn --chdir backend/api wsgi:app --workers 2 --threads 4 --timeout 120 --bind 0.0.0.0:5000
+  # Windows / cross-platform (test the prod server locally):
+  waitress-serve --listen=0.0.0.0:5000 --call wsgi:create_app   # or: python backend/api/wsgi.py
+  ```
+  Worker sizing: a river solve is CPU-bound (a few seconds), so keep `--workers ≈ CPUs` with
+  threads and a generous `--timeout`. A per-process semaphore caps concurrent solves (H2).
+- **C2 — persistent, multi-worker session store.** `DynamoDBSessionStore` + a
+  `make_session_store()` factory selected by `ALLIN_SESSION_STORE` (`memory` default for
+  dev/tests, `dynamodb` for prod). Native DynamoDB **TTL** on the `expiry` attribute expires
+  stale games; a **lease-based conditional-write lock** preserves the `with SESSIONS.lock(...)`
+  contract across workers/boxes. **You MUST set `ALLIN_SESSION_STORE=dynamodb` whenever you run
+  >1 worker** — the in-memory store is per-process and would split games across workers.
+  One-time table provisioning: `DynamoDBSessionStore.create_table_if_missing(table, region)`
+  (on-demand billing, TTL enabled on `expiry`). Test locally without AWS via DynamoDB Local +
+  `ALLIN_DYNAMODB_ENDPOINT=http://localhost:8000`.
+- **C3 — session ownership.** Every game request must carry the `playerId` the session was
+  created with; a mismatch returns 404 (we don't confirm a session id to a non-owner). The
+  frontend sends it automatically (`api.setPlayerId`, persisted in localStorage).
+- **H1/H2/H3 hardening.** `get_json(silent=True)` everywhere (malformed body → 400, never a
+  500/traceback); `MAX_CONTENT_LENGTH=64 KB` (oversized → 413); a river-solve **semaphore**
+  (`max(1, CPUs−1)` permits/process, 503 when saturated); dropped `supports_credentials` from
+  CORS (auth is stateless). Per-IP **rate limiting** is still expected at the **Cloudflare**
+  edge (D3) — not done in-app.
+- **M3** — `BlueprintDB` now uses **thread-local** SQLite connections (the Flask thread pool no
+  longer shares one connection). **M4** — frontend error message uses `API_BASE`, not a
+  hardcoded `:5000`. **M2** (the debug overlay leaking the bot's bucket) is **intentionally left
+  in** as an inspection feature — gate it before a competitive deploy.
+- **M1** — `requirements.txt` now includes `gunicorn`, `waitress`, and `boto3` (it was already
+  pinned; the review's "unpinned" flag was wrong).
+
+This closes the D0 "real WSGI" gap and the D2 "DynamoDBSessionStore (mandatory)" gap in code;
+provisioning the table + setting the env vars below is what remains at deploy time.
+
 ## Environment variables (deploy-relevant)
 
-- `ALLIN_BLUEPRINT_DB` — explicit path to the blueprint DB (overrides auto-resolution).
+- `ALLIN_BLUEPRINT_DB` — explicit path to the blueprint DB (overrides auto-resolution). **Pin
+  this to the 25M snapshot** in prod (the auto-resolver picks the over-trained 30M).
 - `ALLIN_CORS_ORIGINS` — comma-separated allowed CORS origins (set to the real frontend domain).
+- `ALLIN_SESSION_STORE` — `memory` (default) or `dynamodb`. **Must be `dynamodb` for >1 worker.**
+- `ALLIN_DYNAMODB_TABLE` — DynamoDB table name (default `allin-sessions`).
+- `ALLIN_DYNAMODB_ENDPOINT` — override endpoint for DynamoDB Local testing (e.g.
+  `http://localhost:8000`); unset in prod.
+- `AWS_REGION` / `AWS_DEFAULT_REGION` — region for the DynamoDB store.
+- `ALLIN_DEBUG` — dev server only: `1` (default) enables the Werkzeug debugger, `0` disables.
+  Irrelevant under gunicorn/waitress (that code path never runs).
+- `ALLIN_DEV_HOST` / `ALLIN_DEV_PORT` — dev server bind (default `127.0.0.1:5000`).
 - `VITE_API_BASE` — frontend API base URL (set at build time).

@@ -15,9 +15,10 @@ through a **Flask** API, and exposes it in an interactive **React** platform.
 - **Monte Carlo CFR+ with external sampling**: each iteration samples chance and
   opponent actions, walking one trajectory through the game tree instead of the
   full exponential tree — making millions of training iterations tractable.
-- **Discounted CFR+ (Linear-CFR-style)**: time-discounted regret updates (α = 1.5)
-  for faster, more stable convergence toward a Nash equilibrium. (CFR+ with a
-  `((t-1)/t)^α` discount on floored regrets — not the canonical DCFR α/β/γ scheme.)
+- **Discounted CFR+ (Linear-CFR-style)**: time-discounted updates — regret discount
+  **α = 1.5**, strategy-sum discount **γ = 2.0** — for faster, more stable convergence
+  toward a Nash equilibrium. (CFR+ with a `((t-1)/t)^α` discount on floored regrets and
+  a separate `t^γ`-weighted average strategy — not the canonical DCFR α/β/γ scheme.)
 - **Self-play reinforcement learning**: no human data and no hand-crafted
   heuristics — the strategy emerges purely from **regret minimization**.
 - **Multi-layer abstraction**: a hierarchical state representation built from
@@ -29,7 +30,8 @@ through a **Flask** API, and exposes it in an interactive **React** platform.
 ```
 Served blueprint (capped run, 25M-iteration snapshot — see Deployment):
 ├── Algorithm:          Monte Carlo CFR+ with external sampling + Linear-CFR-style discount
-├── Training iterations: 25,000,000 (the least-exploitable snapshot; pinned via ALLIN_BLUEPRINT_DB)
+├── Training iterations: 25,550,000 (the least-exploitable snapshot; pinned via ALLIN_BLUEPRINT_DB)
+├── Info sets:          128,177 (trained situations stored)
 ├── Game:               Heads-up NLHE, 100 BB effective stacks (SB 1 / BB 2)
 └── Storage:            SQLite (incremental checkpoint + resume)
 ```

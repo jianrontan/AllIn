@@ -11,6 +11,22 @@ If the key format ever changes, it changes here and everywhere stays in sync.
 
 STREET_NAMES = ['preflop', 'flop', 'turn', 'river']
 
+# Community cards visible per street, indexed by street index (0=preflop..3=river).
+# Single source of truth: the game core, the LBR/eval harness, and the API all map
+# street<->board-count through this (previously duplicated in three places).
+BOARD_COUNT = [0, 3, 4, 5]
+_BOARD_COUNT_TO_STREET = {n: i for i, n in enumerate(BOARD_COUNT)}
+
+
+def street_from_board_count(n):
+    """Street index (0=preflop .. 3=river) from the number of community cards.
+    The inverse of BOARD_COUNT. Raises ValueError for a count that is not a legal
+    board size (0, 3, 4, or 5)."""
+    try:
+        return _BOARD_COUNT_TO_STREET[n]
+    except KeyError:
+        raise ValueError(f"not a legal board size: {n} (expected 0, 3, 4, or 5)")
+
 # Fine preflop bucket -> coarse preflop class, for the postflop startBucket collapse
 # (imperfect recall). Imported lazily inside make_info_set_key to avoid any import
 # order coupling (card_abstractions imports nothing from cfr). See

@@ -10,6 +10,77 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-018 — Hand Explorer off-grid postflop translation ignores the served menu mode → shows a different line than the live bot
+
+| | |
+|---|---|
+| **Date** | 2026-06-08 |
+| **Area** | Strategy explorer API (`backend/api/strategy_api.py:196-197`) |
+| **Severity** | High (silent — explorer reports a *wrong* strategy vs what the bot actually plays, for the capped blueprint that is being served) |
+| **Status** | Open — fix pending |
+
+**Summary.** `_postflop_pattern` translates an off-grid human bet against the bare
+`translation.POSTFLOP_GRID` (tops out at `'o'` = 1.5× pot), hardcoded — it ignores `BLUEPRINT_MENU_MODE`.
+The module already exposes `translation.postflop_grid_for(menu_mode)` (→ `POSTFLOP_GRID_CAPPED` with the
+`'2'` = 2.0× tier), and the *game* endpoints use the menu-aware path (`menu_mode=BLUEPRINT_MENU_MODE` at
+lines 423/451) — but the explorer's from-hand path does not.
+
+### Walkthrough
+`BLUEPRINT_MENU_MODE = db_menu_mode(BLUEPRINT_DB)` resolves to `'capped'` for the served 25M snapshot
+(memory: capped-blueprint-ship-25m). A Hand-Explorer query with a postflop bet between 1.5× and 2.0× pot
+is mapped to `'o'` only — it never blends toward / queries the trained `'2'` keys. So the explorer reports
+a different blend than the live bot (whose translation *does* use the `'2'` tier). The explorer's entire
+purpose is "show what the bot does," so a silent divergence here defeats the feature.
+
+### Proposed fix
+`grid = translation.postflop_grid_for(BLUEPRINT_MENU_MODE)` once, pass it to both `translate_bet` and
+`nearest_char`. Inference/UI only — no retrain.
+
+**Why not caught.** The capped menu and `postflop_grid_for` helper were added for *serving*; the explorer's
+own pattern builder predates the menu split and was never re-pointed at the menu-aware grid. No test
+asserts explorer-translation == live-bot-translation.
+
+**Lesson.** When a "single source of truth" helper is introduced (`postflop_grid_for`), grep for every
+hardcoded use of the thing it replaced (`POSTFLOP_GRID`) — one stale call site reintroduces the drift the
+helper was meant to kill. Same failure class as the key-format drift fixed in commit 9a85056.
+
+---
+
+## BUG-017 — Key Explorer leaks a fine preflop bucket into postflop keys on street switch
+
+| | |
+|---|---|
+| **Date** | 2026-06-08 |
+| **Area** | Strategy explorer frontend (`frontend/src/components/KeyExplorer.jsx:70-83`) |
+| **Severity** | Med (silent — builds an invalid postflop key → always `found:false`, plus a desynced dropdown) |
+| **Status** | Open — fix pending |
+
+**Summary.** `sync()` re-clamps the postflop `strength` bucket on a street change but **not** `bucket`
+(the start/preflop bucket). The bucket dropdown offers the **fine** list (pf_0..pf_29) preflop and the
+**coarse** list (pf_0..pf_9) postflop, but `bucket` state is shared across streets. So: pick `pf_27`
+preflop → switch Street to flop → `composeKey` emits `pf_27_<strength>_ip_flop_` — a postflop key carrying
+a **fine** id the coarse-keyed blueprint never wrote. The `<select value="pf_27">` also renders blank
+(value outside the coarse `<option>` list), desyncing the visible dropdown from the composed key.
+
+### Walkthrough
+Postflop keys must carry the coarse class (pf_0..pf_9) — the fine→coarse collapse happens server-side in
+`keys.py:make_info_set_key`, but the Key Explorer builds the key string client-side, so it must enforce the
+same legality. It clamps `strength` (line 77) but forgot `bucket`.
+
+### Proposed fix
+In `sync`, on a preflop↔postflop transition clamp/reset `bucket` into the target street's list (reset to a
+valid coarse default, or map fine→coarse), mirroring the existing `strength` clamp. Frontend only — no
+retrain.
+
+**Why not caught.** The `strength` clamp made it *look* handled; the bucket list silently swaps fine↔coarse
+between streets and nobody re-validated the carried value. No test composes a key across a street switch.
+
+**Lesson.** When two dropdowns swap their option sets based on a third control (street), every dependent
+value must be re-validated on that control's change — clamping one and not its sibling is the classic
+half-fix. Flagged independently by all 3 review agents (backend, frontend, and the fix-audit pass).
+
+---
+
 ## BUG-016 — Sub-stack custom bet mis-snapped to all-in (translation), corrupting the next key
 
 | | |

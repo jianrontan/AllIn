@@ -58,7 +58,16 @@ package "Phase-4 Subgame (subgame/)" {
   [RiverSubgameSolver]
   [RiverTree]
   [RiverCFR]
+  component "TurnSubgameSolver\n(TurnTree / TurnCFR / cfv leaf)\nbuilt + validated, SHELVED" as TURN #LightGray
 }
+note bottom of TURN
+  Turn solver (M0-M2) cut in-abstraction
+  exploitability ~99% but FAILED the
+  real-game gate (cross-street range
+  inconsistency); shelved pending a
+  continual re-solving rebuild. The
+  RIVER solver is the served one.
+end note
 
 package "Evaluation (evaluation/)" {
   [BestResponseEvaluator]
@@ -112,7 +121,7 @@ database "blueprint_<ts>.db\n(SQLite, WAL)" as BP #LightYellow
 
 ' ---- Storage resolution ----
 DB --> BP : read/write (training) / mode=ro (inference)
-CFG --> BP : pick highest total_iterations\n(or ALLIN_BLUEPRINT_DB)
+CFG --> BP : ALLIN_BLUEPRINT_DB pins the 25M snapshot\n(else: highest total_iterations)
 [Player\n(PyPokerEngine path)] --> CFG : load on init
 [BestResponseEvaluator] --> DB : score exploitability (mbb/hand)
 

@@ -9,24 +9,55 @@ const ACTION_LABELS = {
     bet_large: 'Bet — large (≈ pot)',
     bet_xlarge: 'Open — xlarge (5 BB)',
     bet_overbet: 'Bet — overbet (1.5× pot)',
+    bet_overbet2: 'Bet — overbet2 (2× pot)',
     raise_small: 'Raise — small', raise_medium: 'Raise — medium',
     raise_large: 'Raise — large',
     raise_overbet: 'Raise — overbet (1.5× pot)',
+    raise_overbet2: 'Raise — overbet2 (2× pot)',
 };
 
 const actionLabel = (a) => ACTION_LABELS[a] || a;
 
 // Bracket size chars (action translation) -> human label.
-const CHAR_LABEL = { s: '⅓ pot', m: '⅔ pot', l: 'pot', o: '1.5× pot', x: '5 BB open', a: 'all-in' };
+const CHAR_LABEL = {
+    s: '⅓ pot', m: '⅔ pot', l: 'pot', o: '1.5× pot', '2': '2× pot',
+    x: '5 BB open', a: 'all-in',
+};
 
+// Colour for both engine action names (blueprint) and the river solver's
+// friendly labels ("Bet 10 BB", "Raise to 30 BB", "Check", "All-in", ...).
 const barColor = (a) => {
-    if (a === 'fold') return 'bg-rose-500';
-    if (a === 'call' || a === 'check') return 'bg-sky-500';
-    if (a === 'allin') return 'bg-violet-500';
+    if (a === 'fold' || a === 'Fold') return 'bg-rose-500';
+    if (['call', 'check', 'Call', 'Check'].includes(a)) return 'bg-sky-500';
+    if (a === 'allin' || a === 'All-in') return 'bg-violet-500';
     return 'bg-emerald-500';
 };
 
 const PANEL = 'mt-5 rounded-2xl border border-neutral-800 bg-neutral-900/70 p-5';
+
+// One {action: prob} distribution as a sorted stack of labelled bars.
+function StrategyBars({ strategy }) {
+    return (
+        <div className="space-y-3">
+            {Object.entries(strategy)
+                .sort((a, b) => b[1] - a[1])
+                .map(([action, prob]) => (
+                    <div key={action}>
+                        <div className="flex justify-between text-sm mb-1">
+                            <span className="text-neutral-300">{actionLabel(action)}</span>
+                            <span className="font-semibold tabular-nums">
+                                {(prob * 100).toFixed(1)}%
+                            </span>
+                        </div>
+                        <div className="h-3 rounded-full bg-neutral-800 overflow-hidden">
+                            <div className={`h-full rounded-full ${barColor(action)}`}
+                                style={{ width: `${Math.max(prob * 100, 0.5)}%` }} />
+                        </div>
+                    </div>
+                ))}
+        </div>
+    );
+}
 
 function StrategyResult({ result, loading, error }) {
     if (error) {
@@ -49,7 +80,7 @@ function StrategyResult({ result, loading, error }) {
     }
 
     const { key, found, strategy, visitCount, cardBucket, strengthBucket,
-        translated, brackets } = result;
+        translated, brackets, showSolver, solver, solverError } = result;
 
     return (
         <div className={PANEL}>
@@ -73,6 +104,35 @@ function StrategyResult({ result, loading, error }) {
                         <span>Postflop strength bucket:{' '}
                             <b className="text-neutral-200">{strengthBucket}</b></span>
                     )}
+                </div>
+            )}
+
+            {/* River subgame solver (when the toggle was on for a river spot). Shown
+                FIRST — it's the exact-card answer; the blueprint follows for context. */}
+            {showSolver && (
+                <div className="mb-5 rounded-xl border border-fuchsia-800/50 bg-fuchsia-950/20 p-4">
+                    <h4 className="text-sm uppercase tracking-wider text-fuchsia-300 mb-1">
+                        River solver strategy
+                    </h4>
+                    {solverError ? (
+                        <div className="text-sm text-rose-300">
+                            Solve unavailable: {solverError}
+                        </div>
+                    ) : solver ? (
+                        <>
+                            <p className="text-[11px] text-neutral-500 mb-3">
+                                Real-time CFR+ solve of the exact board &amp; line — ungated
+                                (no SPR/EV gate). Ranges built by replaying the entered hand
+                                through the blueprint · pot {solver.potEntryBb} BB · stacks{' '}
+                                {solver.effectiveStackBb} BB
+                                {solver.confidence != null ? ` · range confidence ${Math.round(solver.confidence * 100)}%` : ''} ·{' '}
+                                {solver.iters} iters
+                                {solver.gap != null ? ` · gap ${solver.gap}` : ''}
+                                {solver.converged ? ' · converged' : ' · budget-capped'}.
+                            </p>
+                            <StrategyBars strategy={solver.strategy} />
+                        </>
+                    ) : null}
                 </div>
             )}
 
@@ -104,30 +164,9 @@ function StrategyResult({ result, loading, error }) {
             {found && strategy && (
                 <>
                     <h4 className="text-sm uppercase tracking-wider text-neutral-500 mb-3">
-                        Blueprint strategy
+                        {showSolver ? 'Blueprint strategy (for comparison)' : 'Blueprint strategy'}
                     </h4>
-                    <div className="space-y-3">
-                        {Object.entries(strategy)
-                            .sort((a, b) => b[1] - a[1])
-                            .map(([action, prob]) => (
-                                <div key={action}>
-                                    <div className="flex justify-between text-sm mb-1">
-                                        <span className="text-neutral-300">
-                                            {actionLabel(action)}
-                                        </span>
-                                        <span className="font-semibold tabular-nums">
-                                            {(prob * 100).toFixed(1)}%
-                                        </span>
-                                    </div>
-                                    <div className="h-3 rounded-full bg-neutral-800 overflow-hidden">
-                                        <div
-                                            className={`h-full rounded-full ${barColor(action)}`}
-                                            style={{ width: `${Math.max(prob * 100, 0.5)}%` }}
-                                        />
-                                    </div>
-                                </div>
-                            ))}
-                    </div>
+                    <StrategyBars strategy={strategy} />
                     <div className="mt-4 text-xs text-neutral-500">
                         {visitCount != null
                             ? `Trained on ${visitCount.toLocaleString()} visits to this info set.`
