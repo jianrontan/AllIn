@@ -1,0 +1,34 @@
+# Keep the build context (and image) small. Docker honors THIS file, not
+# .gitignore, so blueprint DBs (git-ignored but present on disk) must be excluded
+# here explicitly -- except the one pinned snapshot the image serves.
+
+.git
+.gitignore
+.github
+node_modules
+frontend
+docs
+*.md
+**/__pycache__
+*.pyc
+*.pyo
+*.log
+
+# SQLite sidecars
+*.db-wal
+*.db-shm
+
+# Blueprint DBs: exclude ALL, then re-include ONLY the pinned 25M snapshot.
+backend/bot/analysis/blueprints/**/*.db
+!backend/bot/analysis/blueprints/snapshots/snap_20260604_114512_25550000.db
+
+# Regenerable / large artifacts not needed in the image:
+#  - baked postflop tables are rebuilt in-image from the committed centroids
+#  - training curves, perf baseline, archived runs
+backend/bot/analysis/abstractions/postflop_table_*.npz
+backend/bot/analysis/training_curve
+backend/bot/analysis/archive
+backend/bot/perf_baseline.pkl
+
+# Tests aren't needed at runtime
+backend/bot/tests

@@ -215,8 +215,9 @@ opponent's hole cards, which the river solver consumes as its input range.
 > **STATUS UPDATE (2026-06-08):** this redesign is complete. The decoupled 30-fine/10-coarse
 > preflop + 20·16·10 postflop card abstraction and the capped betting menu (Fix #4) shipped in
 > `blueprint_par_capped_20260604_114512`; the **25M snapshot** (`snap_20260604_114512_25550000.db`)
-> is the least-exploitable point and is the one being served (pinned via `ALLIN_BLUEPRINT_DB` —
-> the auto-resolver would otherwise pick the more-exploitable 30M tail). See the capped-blueprint
+> is the least-exploitable point and is the one being served (it is the top-level
+> `blueprint_final.db`, served by default; the more-exploitable 30M tail is kept in `snapshots/`,
+> which the resolver doesn't search, so no pin is needed). See the capped-blueprint
 > A/B sweep in Phase 4 below and [DEPLOYMENT.md](DEPLOYMENT.md). The historical design notes
 > follow.
 
@@ -604,7 +605,7 @@ Sweep of capped run `…114512` (`--seed 42` = common random numbers; LBR 3000 h
 | 28M | +5782.4 | +8753.7 | **14536.2** | −1356.2 |
 | 30M | +5826.9 | +8794.9 | **14621.8** | −508.8 |
 
-**Read (COMPLETE 2026-06-06):** BR **rises monotonically 25→28→30M** (14420→14536→14622, both seats; EXACT ordering — same 200 boards). LBR is an **inverted-U peaking at 25M** (+19 → −317 → **−1988** → −1356 → −509). **Both agree: 25M is the best snapshot; training past it steadily DEGRADES the served average** — late-iterate drift (γ over-weights the cycling current iterate; a well-behaved CFR average should get *less* exploitable, not more). Small in BR (+1.4% over 5M iters), large in LBR (~1480 mbb less robust). **SHIP 25M** via `ALLIN_BLUEPRINT_DB=analysis/blueprints/snapshots/snap_20260604_114512_25550000.db` — the auto-resolver otherwise serves 30M, the WORST of the three. Future: cut γ / stop ~25M / investigate late-iterate cycling. **OOP/BB is the dominant leak (8.7k of 14.4k)** — exactly the turn solver's target. vs the old pre-redesign run (13.9k BR / **+3114 LBR**, different abstraction + pre BR-harness-fix): the redesign traded a hair more theoretical BR for a large real-game robustness gain (LBR flipped exploitable→robust).
+**Read (COMPLETE 2026-06-06):** BR **rises monotonically 25→28→30M** (14420→14536→14622, both seats; EXACT ordering — same 200 boards). LBR is an **inverted-U peaking at 25M** (+19 → −317 → **−1988** → −1356 → −509). **Both agree: 25M is the best snapshot; training past it steadily DEGRADES the served average** — late-iterate drift (γ over-weights the cycling current iterate; a well-behaved CFR average should get *less* exploitable, not more). Small in BR (+1.4% over 5M iters), large in LBR (~1480 mbb less robust). **SHIP 25M** — it is now the top-level `blueprint_final.db`, served by default; the 30M (the WORST of the three) is kept in `snapshots/`, which the resolver doesn't search (pin `ALLIN_BLUEPRINT_DB` only to override). Future: cut γ / stop ~25M / investigate late-iterate cycling. **OOP/BB is the dominant leak (8.7k of 14.4k)** — exactly the turn solver's target. vs the old pre-redesign run (13.9k BR / **+3114 LBR**, different abstraction + pre BR-harness-fix): the redesign traded a hair more theoretical BR for a large real-game robustness gain (LBR flipped exploitable→robust).
 
 > **Measurement caveat on the "~24×" figure (2026-05-30).** That number came from
 > `scripts/measure_river_exploitability.py` when the measurement tree used the *solver's*
@@ -706,17 +707,110 @@ no-more-exploitable than the blueprint. Background: [1], [2].
 
 ---
 
-## Phase 5 — Online 1v1 play on AWS 📅 PLANNED
+## Phase 5 — Online 1v1 play on AWS 🚧 IN PROGRESS
 
-Deploy for real-time online heads-up play.
+Deploy for real-time online public heads-up play. Full plan in
+[DEPLOYMENT.md](DEPLOYMENT.md); the code-prep work stream is briefed in
+[HANDOFF_DEPLOYMENT_PREP.md](HANDOFF_DEPLOYMENT_PREP.md).
 
-- Swap `InMemorySessionStore` for a Redis/DynamoDB-backed store (multi-process).
-- Consider a WebSocket transport for live play (the `game/` engine is already
+**v1 scope (decided 2026-06-08):** 25M blueprint + river solver, public +EV
+counter + ranked leaderboard, anonymous play **plus** Google OAuth accounts via
+Cognito. Repo to go **public** for portfolio visibility. Originally Google login
+was scoped as v1.1 fast-follow — promoted into v1 for launch credibility.
+
+### 5a — Code prep (the handoff stream)
+
+What ships in the API + Docker image before infrastructure provisioning.
+
+**Done ✅**
+- `BlueprintSource` abstraction (`storage/blueprint_source.py`): `local` today,
+  `s3` stub for later — swap via `ALLIN_BLUEPRINT_SOURCE`. `BlueprintDB`
+  untouched; only the resolution step is pluggable.
+- `Dockerfile` + `.dockerignore`: python:3.12-slim, bakes both postflop tables,
+  pins the 25M snapshot, gunicorn 2×4. Image ~200–250 MB.
+- Logging cleanup: module-load `print()` → `_LOG`, `logging.basicConfig()` once
+  in `wsgi.py`, env-driven `ALLIN_LOG_LEVEL`.
+- `/api/healthz` (+ `/api/test` alias): blueprint, iterations, postflop-table
+  presence, session-store class, `ALLIN_GIT_SHA`, debug-overlay state. The
+  rolling-deploy probe.
+- `_redact_view()` strips `botDebug` from every game response unless
+  `ALLIN_DEBUG_OVERLAY=1`. Defense-in-depth on top of the existing frontend
+  toggle (M2 closure for a public repo).
+- `.gitignore` extended for `.env*`, `*.pem`, `terraform.tfstate*`,
+  `.terraform/`, `aws-credentials.json`.
+- ~~**Unrestricted human bet sizing**~~ ✅ (2026-05-26). `{action:'bet_custom'|
+  'raise_custom', amountBb}`; off-grid bets translated onto the trained grid
+  by `cfr/translation.py`.
+- **Hand-recap capture** ✅ (2026-06-09, the "cheap capture step"). `HandStore`
+  + `recap_from_session()` write one row per completed hand from inside the
+  existing `_record_hand_end` hook. **Write-only in v1** — no UI/coach
+  consumer yet; the point is that launch-window hands aren't lost forever
+  when those features ship post-launch.
+
+**Pending — must land before deploy 🚧**
+1. **`PlayerStore` + `GlobalStatsStore`** (interface + `InMemory*` + `DynamoDB*`).
+   Schema is account-ready: `playerId` PK, optional `{email, authProvider,
+   providerSub, isRegistered}`. `link_account()` is the non-destructive merge.
+2. **Per-hand result hook** at the API layer (not in `GameSession`). Fires on
+   the `status != 'hand_over' → status == 'hand_over'` transition inside the
+   session lock — idempotent against retried requests.
+3. **Leaderboard endpoints:** `GET /api/stats`, `GET /api/leaderboard`,
+   `POST /api/player`, `POST /api/auth/google`. The ranked board filters
+   `accounts_only=True`; redact `playerId`/`email`.
+4. **Google OAuth via Cognito** (`backend/api/auth.py`): JWKS fetch + cache,
+   ID-token validation (signature, `iss`, `aud`, `exp`, `token_use`),
+   `@require_account` decorator (stubbed for v1, used by saved-hands in v1.1).
+5. **Frontend identity + counter + login:** localStorage UUID, handle prompt,
+   `<EvCounter />`, `<Leaderboard />` (Ranked + Most-active cuts), Cognito
+   Hosted UI redirect + `/auth/callback`, non-destructive account upgrade.
+
+**Decisions settled after the original handoff doc went out (must be reflected
+in 5a code):**
+- **Handles:** `^[A-Za-z0-9_-]{1,20}$`, profanity-blocklist (small curated list
+  via `better-profanity` or similar). Not unique.
+- **Hand cap:** 500 hands per rolling 1-hour window, per `playerId`. Store
+  `{window_start, count}` on the player row; reset window when > 1h elapsed.
+- **Session TTL:** 24 h (`ALLIN_SESSION_TTL_SECONDS=86400`).
+- **First-time popup:** 5-bullet "how this works" (heads-up vs AI, 100 BB
+  fresh each hand but cross-hand P/L tracked, custom bet sizing welcome,
+  trained-not-scripted + river re-solve, your record feeds the +EV counter).
+  Gated on `allin.introDismissed=true` in localStorage. Reopenable via a `?`
+  icon in the header.
+- **M2 (bot-bucket leak)** — already gated in the frontend toggle (default
+  off) **and** at the API via `_redact_view()`. No further work needed.
+
+### 5b — Infrastructure (user does this, post-5a)
+
+- **Domain + DNS at Cloudflare** (bought ✅): `allin.jianrontan.com` →
+  Cloudflare Pages (auto-proxied), `api.allin.jianrontan.com` → Lightsail
+  (DNS-only / gray cloud). Apex left empty for the future portfolio landing.
+- **AWS in `ap-southeast-1`** (user in Singapore). IAM admin user ✅.
+  Provision: ECR repo, Lightsail container service, DynamoDB tables
+  (`allin-sessions`, `allin-players`, `allin-global`), Cognito User Pool +
+  Google IdP, IAM role for GitHub OIDC. Default Cognito domain
+  (`<prefix>.auth.ap-southeast-1.amazoncognito.com`) at launch; custom
+  `auth.jianrontan.com` deferred.
+- **Terraform** (state in S3 + DynamoDB lock); **GitHub Actions** for image
+  build → ECR push → Lightsail rolling deploy via OIDC.
+- **Cloudflare Pages** for the frontend; build env injects `VITE_API_BASE`,
+  `VITE_COGNITO_*`. Per-IP rate limit at the CF edge for `/api/game/new`,
+  `/api/player`, `/api/game/action`, `/api/auth/google`.
+
+### 5c — Launch polish
+
+Landing copy ([draft in conversation, not yet committed]), LinkedIn launch
+post, the launch-month Lightsail bump (Containers Medium 2 vCPU ~$40/mo →
+scale back to residency tier).
+
+### Deferred to v1.1
+
+- **Saved hands + hand review** (the persisted recap object from
+  [IDEAS.md §3](IDEAS.md)).
+- **AI coach** ([IDEAS.md §7](IDEAS.md)).
+- **WASM hybrid solve** ([IDEAS.md §1](IDEAS.md)) — load pressure-valve only,
+  contingent on real concurrency measurements.
+- **WebSocket transport** for live play (the `game/` engine is already
   transport-agnostic).
-- ~~**Unrestricted human bet sizing**~~ ✅ done (2026-05-26). The human can bet any
-  legal chip amount: `{action:'bet_custom'|'raise_custom', amountBb}`; the engine
-  stores the raise-to total in `history`, and off-grid bets are mapped onto the
-  trained grid by pseudo-harmonic action translation (`cfr/translation.py`).
 
 ---
 

@@ -47,3 +47,17 @@ backend/bot/analysis/training_curve/
 # Cache
 __pycache__/
 *.pyc
+
+# Secrets & infrastructure state — NEVER commit these (see the deploy security
+# checklist in docs/DEPLOYMENT.md). Secrets live in Lightsail env vars / AWS
+# Secrets Manager, not the repo. Terraform state holds resource IDs + sometimes
+# embedded secrets.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+aws-credentials.json
+terraform.tfstate
+terraform.tfstate.*
+.terraform/

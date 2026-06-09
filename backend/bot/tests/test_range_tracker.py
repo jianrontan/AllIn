@@ -226,8 +226,11 @@ def test_gamesession_tracks_and_serializes():
 
 def test_read_group_label():
     """The bot's-read grouping: suit-equivalent combos collapse, suits show only
-    when flush-relevant, suited/offsuit stays distinct, and the specific flush
-    card held (blocker) is distinguished."""
+    when flush-relevant, suited/offsuit stays distinct, and any flush-suit letter
+    held is appended at the END of the token (ranks first, suit never wedged
+    between them). An offsuit combo that holds one flush card is tagged once
+    (e.g. 'AKoh') without distinguishing WHICH card is the flush card -- the
+    trailing format trades that blocker detail for a consistently readable label."""
     from src.game.game_session import _read_group_label
     # Rainbow board (no flush-relevant suit): suits vanish, suited/offsuit kept.
     assert _read_group_label(('HA', 'CA'), set()) == 'AA'
@@ -235,12 +238,12 @@ def test_read_group_label():
     assert _read_group_label(('HA', 'HK'), set()) == 'AKs'
     assert _read_group_label(('HA', 'CK'), set()) == 'AKo'
     assert _read_group_label(('H2', 'D2'), set()) == '22'
-    # Hearts flush-relevant: heart-holders split out; non-heart still collapses.
-    assert _read_group_label(('HA', 'CA'), {'H'}) == 'AhA'
+    # Hearts flush-relevant: a held heart shows as a trailing 'h'; no heart collapses.
+    assert _read_group_label(('HA', 'CA'), {'H'}) == 'AAh'     # pair holding Ah (blocker)
     assert _read_group_label(('CA', 'SA'), {'H'}) == 'AA'
-    assert _read_group_label(('HA', 'HK'), {'H'}) == 'AhKh'    # the flush draw
-    assert _read_group_label(('HA', 'CK'), {'H'}) == 'AhK'     # holds Ah (nut blocker)
-    assert _read_group_label(('CA', 'HK'), {'H'}) == 'AKh'     # holds Kh (diff blocker)
+    assert _read_group_label(('HA', 'HK'), {'H'}) == 'AKh'     # suited in hearts (flush draw)
+    assert _read_group_label(('HA', 'CK'), {'H'}) == 'AKoh'    # offsuit, holds one heart (Ah)
+    assert _read_group_label(('CA', 'HK'), {'H'}) == 'AKoh'    # offsuit, holds one heart (Kh)
     print("PASS test_read_group_label")
 
 

@@ -62,25 +62,29 @@ class InMemorySessionStore(SessionStore):
     def __init__(self, ttl_seconds=3600):
         self._ttl = ttl_seconds
         self._data = {}        # session_id -> (expiry_epoch, session_dict)
+        self._data_guard = threading.Lock()   # protects _data (cross-session)
         self._locks = {}       # session_id -> threading.RLock
         self._locks_guard = threading.Lock()
 
     def get(self, session_id):
-        entry = self._data.get(session_id)
-        if entry is None:
-            return None
-        expiry, data = entry
-        if time.time() > expiry:
-            del self._data[session_id]
-            return None
-        return data
+        with self._data_guard:           # _data mutated cross-session; guard reads too
+            entry = self._data.get(session_id)
+            if entry is None:
+                return None
+            expiry, data = entry
+            if time.time() > expiry:
+                del self._data[session_id]
+                return None
+            return data
 
     def put(self, session_id, data):
-        self._sweep()
-        self._data[session_id] = (time.time() + self._ttl, data)
+        with self._data_guard:
+            self._sweep_locked()
+            self._data[session_id] = (time.time() + self._ttl, data)
 
     def delete(self, session_id):
-        self._data.pop(session_id, None)
+        with self._data_guard:
+            self._data.pop(session_id, None)
         with self._locks_guard:
             self._locks.pop(session_id, None)
 
@@ -94,13 +98,17 @@ class InMemorySessionStore(SessionStore):
         with lk:
             yield
 
-    def _sweep(self):
+    def _sweep_locked(self):
+        # Caller holds _data_guard. Snapshot keys before deleting (no mutate-during-
+        # iterate). Pop per-session locks under their own guard.
         now = time.time()
-        expired = [sid for sid, (exp, _) in self._data.items() if now > exp]
+        expired = [sid for sid, (exp, _) in list(self._data.items()) if now > exp]
         for sid in expired:
-            del self._data[sid]
+            self._data.pop(sid, None)
+        if expired:
             with self._locks_guard:
-                self._locks.pop(sid, None)
+                for sid in expired:
+                    self._locks.pop(sid, None)
 
 
 class DynamoDBSessionStore(SessionStore):
@@ -248,15 +256,19 @@ def make_session_store():
     'dynamodb' -> DynamoDBSessionStore (prod; needs boto3 + AWS creds, or
                   DynamoDB Local via ALLIN_DYNAMODB_ENDPOINT)
     """
+    # Sessions live 24h by default (ALLIN_SESSION_TTL_SECONDS); the InMemory store
+    # sweeps on expiry, the DynamoDB store writes it to the TTL `expiry` attribute.
+    ttl = int(os.environ.get('ALLIN_SESSION_TTL_SECONDS', '86400'))
     backend = os.environ.get('ALLIN_SESSION_STORE', 'memory').strip().lower()
     if backend in ('', 'memory', 'inmemory'):
-        return InMemorySessionStore()
+        return InMemorySessionStore(ttl_seconds=ttl)
     if backend in ('dynamodb', 'dynamo'):
         return DynamoDBSessionStore(
             table_name=os.environ.get('ALLIN_DYNAMODB_TABLE', 'allin-sessions'),
             region=(os.environ.get('AWS_REGION')
                     or os.environ.get('AWS_DEFAULT_REGION')),
             endpoint_url=os.environ.get('ALLIN_DYNAMODB_ENDPOINT') or None,
+            ttl_seconds=ttl,
         )
     raise ValueError(
         f"Unknown ALLIN_SESSION_STORE={backend!r} (use 'memory' or 'dynamodb')")

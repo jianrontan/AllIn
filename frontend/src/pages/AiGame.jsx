@@ -6,9 +6,16 @@
 // All amounts are shown in big blinds (the backend works in chips; 1 BB = 2).
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { newGame, sendGameAction, sendBotAction, nextHand, getGameState, setPlayerId } from '../api';
+import { newGame, sendGameAction, sendBotAction, nextHand, getGameState, setPlayerId,
+    getPlayerId, getAccount } from '../api';
 import { fmtBB, fmtBBSigned } from '../format';
 import PlayingCard from '../components/PlayingCard';
+import EvCounter from '../components/EvCounter';
+import IntroModal from '../components/IntroModal';
+import LoginPrompt from '../components/LoginPrompt';
+import GoogleSignInButton from '../components/GoogleSignInButton';
+
+const INTRO_KEY = 'allin.introDismissed';
 
 const PLAYER_ID_KEY = 'allin_player_id';
 
@@ -28,7 +35,7 @@ const ACTION_VERB = {
 // Canonical display order. The backend's stack-constraint logic inserts
 // 'allin' wherever it lands in its list; this pins a stable order with
 // all-in always last, bets/raises ascending by size (overbet after large,
-// xlarge — the 4th preflop open — after large too).
+// xlarge - the 4th preflop open - after large too).
 const ACTION_ORDER = {
     fold: 0, check: 1, call: 2,
     bet_small: 3, bet_medium: 4, bet_large: 5, bet_xlarge: 6, bet_overbet: 7,
@@ -41,7 +48,7 @@ const sortedActions = (actions) =>
         (a, b) => (ACTION_ORDER[a.action] ?? 99) - (ACTION_ORDER[b.action] ?? 99));
 
 // Preflop the blinds are already posted, so the first aggressive action is a
-// raise over the big blind — the backend models it as `bet_*`, but we show it
+// raise over the big blind - the backend models it as `bet_*`, but we show it
 // as "Raise". Postflop, `bet_*` is a genuine bet.
 const actionVerb = (action, street) => {
     if (street === 'preflop' && action.startsWith('bet_')) {
@@ -71,7 +78,7 @@ const FELT = {
 
 // Empty board placeholder, the same fluid size as a PlayingCard (via the shared
 // `--card-w` variable) so the board reserves space for all five cards from the
-// start — the table never resizes as the flop/turn/river land, and empty slots
+// start - the table never resizes as the flop/turn/river land, and empty slots
 // track the cards as the board scales with the window. When `onReveal` is set (a
 // fold left cards undealt) the slot itself becomes the "reveal the run-out" button.
 function EmptySlot({ onReveal }) {
@@ -119,7 +126,7 @@ function BetChip({ chips }) {
 
 // The bot's hand-level Bayesian belief about the human's hole cards (Phase 3
 // range tracker). `confidence` is how well the human's actions have matched the
-// blueprint model the bot updates against — it drops if you play unexpectedly.
+// blueprint model the bot updates against - it drops if you play unexpectedly.
 // Showing it is safe: it's a guess about the player's OWN cards, and never
 // reveals the bot's cards.
 function BotRead({ read, final }) {
@@ -153,7 +160,7 @@ function BotRead({ read, final }) {
 
 // One {action: prob} distribution as a stack of labelled bars (debug overlay).
 function DistBars({ rows }) {
-    if (!rows || rows.length === 0) return <div className="text-neutral-700">—</div>;
+    if (!rows || rows.length === 0) return <div className="text-neutral-700">-</div>;
     return (
         <div className="space-y-0.5">
             {rows.map(([a, p]) => (
@@ -174,7 +181,7 @@ function DistBars({ rows }) {
 
 // Debug overlay: the bot's per-decision trace this hand. For each bot action it
 // shows the blueprint info-set key the bot was queried with, the strategy stored
-// there, the action chosen, and — on the river — the subgame solver's solved
+// there, the action chosen, and - on the river - the subgame solver's solved
 // strategy + EV gate. SPOILER: the info-set key encodes the bot's card bucket, so
 // this lives behind a toggle and is meant for inspection, not mid-hand peeking.
 function BotDebug({ debug }) {
@@ -258,6 +265,29 @@ function AiGame() {
     // double-click can fire two requests before the buttons disable; this blocks
     // the second immediately (and avoids the server's spurious 409 banner).
     const inFlight = useRef(false);
+    // Identity + first-visit popup + optional login nudge.
+    const [account, setAccountState] = useState(null);
+    const [showIntro, setShowIntro] = useState(false);
+    const [showLogin, setShowLogin] = useState(false);
+    const loginAsked = useRef(false);
+
+    useEffect(() => {
+        getPlayerId();                       // ensure the anonymous id exists
+        setAccountState(getAccount());
+        if (localStorage.getItem(INTRO_KEY) !== 'true') setShowIntro(true);
+    }, []);
+
+    // Closing the first-visit popup: persist the "don't show again" flag, then
+    // (once) nudge an un-signed-in player to log in for the leaderboard. The
+    // LoginPrompt self-hides when Cognito isn't configured, so dev sees nothing.
+    const closeIntro = (dontShow) => {
+        setShowIntro(false);
+        if (dontShow) localStorage.setItem(INTRO_KEY, 'true');
+        if (!loginAsked.current && !getAccount()?.isRegistered) {
+            loginAsked.current = true;
+            setShowLogin(true);
+        }
+    };
 
     const startSession = async () => {
         setBusy(true);
@@ -315,9 +345,13 @@ function AiGame() {
             // the hand ends. The backend also pauses the bot whenever ITS action
             // deals a new board card (stop_on_new_card), so each loop pass renders
             // that card before the bot's next (possibly slow river-solve) decision
-            // — i.e. you see the river, then the bot thinks, never the reverse.
+            // - i.e. you see the river, then the bot thinks, never the reverse.
+            // Cap generously so a legitimate hand (multi-street, board-pause stops,
+            // an uncapped re-raise war) never strands at the limit; it only bounds a
+            // runaway from a backend bug. If it ever trips, the Reconnect button
+            // re-fetches authoritative state.
             let guard = 0;
-            while (v && v.status === 'in_hand' && v.toAct === 'bot' && guard < 8) {
+            while (v && v.status === 'in_hand' && v.toAct === 'bot' && guard < 24) {
                 setThinking(true);
                 v = await sendBotAction(v.sessionId);
                 setView(v);
@@ -351,7 +385,7 @@ function AiGame() {
 
     // Unrestricted custom bet/raise: it's a raise when there's a bet to call,
     // otherwise a bet. amountBb is the raise-to TOTAL in big blinds.
-    const facingBet = !!view && view.legalActions.some((la) => la.action === 'call');
+    const facingBet = !!view && (view.legalActions || []).some((la) => la.action === 'call');
     const customAmtNum = parseFloat(customAmt);
     const customValid = !!(view && view.customBounds) && !isNaN(customAmtNum)
         && customAmtNum >= view.customBounds.minBb
@@ -395,10 +429,11 @@ function AiGame() {
     const net = view.humanNet;
     // Fold run-out: community cards remain undealt when the hand ended before the
     // river. They can be revealed (dimmed) into the empty board slots on request.
+    const community = view.community || [];
     const canRevealRunout = handOver && view.fullBoard
-        && view.fullBoard.length > view.community.length;
+        && view.fullBoard.length > community.length;
     const boardCards = (handOver && showRunout && view.fullBoard)
-        ? view.fullBoard : view.community;
+        ? view.fullBoard : community;
     // True once the fold run-out is revealed: the made-hand labels then show what
     // each player WOULD have had on the full board ("You would have:" etc.).
     const runoutShown = canRevealRunout && showRunout;
@@ -419,6 +454,10 @@ function AiGame() {
                         <h1 className="mt-1 text-xl sm:text-2xl font-bold">Play With AI</h1>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
+                        <span className="hidden sm:inline"><EvCounter compact /></span>
+                        <button onClick={() => setShowIntro(true)} title="What is this?"
+                            className="text-xs w-6 h-6 rounded-full border border-neutral-700
+                                       text-neutral-400 hover:text-neutral-200">?</button>
                         <button onClick={() => setShowDebug((v) => !v)}
                             className={'text-xs px-2 py-1 rounded-lg border transition-colors ' +
                                 (showDebug
@@ -426,6 +465,8 @@ function AiGame() {
                                     : 'border-neutral-700 text-neutral-400 hover:text-neutral-200')}>
                             {showDebug ? 'Debug ✓' : 'Debug'}
                         </button>
+                        <GoogleSignInButton registered={account?.isRegistered}
+                            handle={account?.handle} />
                         <span className={'text-sm font-semibold tabular-nums ' +
                             (net > 0 ? 'text-emerald-400'
                                 : net < 0 ? 'text-rose-400' : 'text-neutral-400')}>
@@ -433,6 +474,9 @@ function AiGame() {
                         </span>
                     </div>
                 </div>
+
+                <IntroModal open={showIntro} onClose={closeIntro} />
+                <LoginPrompt open={showLogin} onClose={() => setShowLogin(false)} />
 
                 {/* Body: left = read/debug/log, centre = table, right = actions.
                     The centre column flexes so the table sits in the middle of the
@@ -449,7 +493,7 @@ function AiGame() {
                                 Bot debug
                             </h4>
                             <p className="text-[11px] text-neutral-600 mb-2">
-                                Info-set keys &amp; solver internals — reveals the bot&rsquo;s
+                                Info-set keys &amp; solver internals - reveals the bot&rsquo;s
                                 hand bucket (spoiler).
                             </p>
                             <BotDebug debug={view.botDebug} />
@@ -480,13 +524,13 @@ function AiGame() {
                 {/* CENTRE: felt table (fluid) + caption + result + error.
                     `containerType: inline-size` makes this column a query container so
                     the board sizes off the SPACE AVAILABLE here (cqw), not the raw
-                    viewport — a wider screen widens this column and grows the board. */}
+                    viewport - a wider screen widens this column and grows the board. */}
                 <main className="order-1 lg:order-2 w-full flex flex-col items-center gap-3"
                     style={{ containerType: 'inline-size' }}>
 
                 {/* Felt table. `--card-w` drives every card's size. It's the SMALLER
-                    of a width budget (cqw — the centre column) and a height budget
-                    (vh — three card rows must fit a short window), clamped to a sane
+                    of a width budget (cqw - the centre column) and a height budget
+                    (vh - three card rows must fit a short window), clamped to a sane
                     min/max so it grows with the screen but never gets comical or
                     overflows vertically. */}
                 <div className="w-fit rounded-[1.75rem] sm:rounded-[2.25rem] ring-4 ring-amber-600/60
@@ -536,7 +580,7 @@ function AiGame() {
                                 );
                                 // A revealed run-out card (beyond what was actually
                                 // dealt) is dimmed so it reads as "would-have-come".
-                                const isRunout = i >= view.community.length;
+                                const isRunout = i >= community.length;
                                 return (
                                     <div key={i}
                                         className={isRunout ? 'opacity-40 grayscale' : ''}>
@@ -557,7 +601,7 @@ function AiGame() {
                         <BetChip chips={view.yourBet} />
                     </div>
                     <div className="flex justify-center gap-2 mt-1.5">
-                        {view.yourCards.map((c, i) => <PlayingCard key={i} card={c} />)}
+                        {(view.yourCards || []).map((c, i) => <PlayingCard key={i} card={c} />)}
                     </div>
                     <div className="flex justify-center my-1.5">
                         <span className="px-3 py-0.5 rounded-full bg-black/30 text-xs
@@ -645,7 +689,7 @@ function AiGame() {
                         </div>
                     )}
 
-                    {/* Custom (unrestricted) bet/raise — at the end of the action list */}
+                    {/* Custom (unrestricted) bet/raise - at the end of the action list */}
                     {!handOver && yourTurn && view.customBounds && (
                         <div className="mt-1 rounded-xl border border-neutral-800 p-3">
                             <div className="text-xs text-neutral-400 mb-1.5">
@@ -662,7 +706,7 @@ function AiGame() {
                                     onChange={(e) => setCustomAmt(e.target.value)}
                                     onBlur={clampCustom}
                                     onKeyDown={(e) => { if (e.key === 'Enter') doCustom(); }}
-                                    placeholder={`${view.customBounds.minBb}–${view.customBounds.maxBb}`}
+                                    placeholder={`${view.customBounds.minBb}-${view.customBounds.maxBb}`}
                                     className="w-full px-3 py-2 rounded-lg bg-neutral-800 text-white text-sm
                                                border border-neutral-700 focus:border-amber-500
                                                outline-none tabular-nums" />

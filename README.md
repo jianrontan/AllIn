@@ -30,7 +30,7 @@ through a **Flask** API, and exposes it in an interactive **React** platform.
 ```
 Served blueprint (capped run, 25M-iteration snapshot — see Deployment):
 ├── Algorithm:          Monte Carlo CFR+ with external sampling + Linear-CFR-style discount
-├── Training iterations: 25,550,000 (the least-exploitable snapshot; pinned via ALLIN_BLUEPRINT_DB)
+├── Training iterations: 25,550,000 (the least-exploitable snapshot; served as blueprint_final.db)
 ├── Info sets:          128,177 (trained situations stored)
 ├── Game:               Heads-up NLHE, 100 BB effective stacks (SB 1 / BB 2)
 └── Storage:            SQLite (incremental checkpoint + resume)

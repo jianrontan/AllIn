@@ -1,5 +1,5 @@
 // frontend/src/pages/StrategyLookup.jsx
-// Strategy Explorer — two separate, self-contained tools:
+// Strategy Explorer - two separate, self-contained tools:
 //   Hand Explorer : enter real cards + a betting line.
 //   Key Explorer  : build an info-set key from the abstraction buckets.
 import React, { useState } from 'react';

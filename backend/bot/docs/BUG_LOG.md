@@ -10,7 +10,22 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
-## BUG-018 — Hand Explorer off-grid postflop translation ignores the served menu mode → shows a different line than the live bot
+## BUG-020 — Explorer endpoints 500'd on a non-list `actions`/`history` payload instead of 400
+
+| | |
+|---|---|
+| **Date** | 2026-06-09 |
+| **Area** | Strategy explorer API (`/api/strategy/from-hand`, `/api/strategy/river-solve`) |
+| **Severity** | Low · **Status** | Fixed |
+
+A client sending `actions` (or a `history` street) as a non-list (e.g. a string) made the
+pattern builders iterate it and call `.get(...)` on a character, raising and surfacing as a 500.
+Fix: `isinstance(..., list)` guards return a clean 400. Lesson: validate request-field *types*,
+not just presence.
+
+---
+
+## BUG-019 — Hand Explorer off-grid postflop translation ignores the served menu mode → shows a different line than the live bot
 
 | | |
 |---|---|
@@ -43,6 +58,23 @@ asserts explorer-translation == live-bot-translation.
 **Lesson.** When a "single source of truth" helper is introduced (`postflop_grid_for`), grep for every
 hardcoded use of the thing it replaced (`POSTFLOP_GRID`) — one stale call site reintroduces the drift the
 helper was meant to kill. Same failure class as the key-format drift fixed in commit 9a85056.
+
+---
+
+## BUG-018 — Key Explorer offered street-illegal pattern chars; the paste path bypassed the per-street guards
+
+| | |
+|---|---|
+| **Date** | 2026-06-08 |
+| **Area** | Key Explorer (`frontend/src/components/KeyExplorer.jsx`) |
+| **Severity** | Low · **Status** | Fixed |
+
+The pattern-char buttons offered every char regardless of street (`o`/`2` are postflop-only,
+`x` is a preflop open), so a user could build a structurally impossible key shown as a
+misleading `found:false`; a pasted/typed key bypassed the per-street bucket clamp + char
+legality entirely. Fix: per-street `PREFLOP_CHARS`/`POSTFLOP_CHARS` filtering + a
+`canonicalize()` step on the paste/lookup path. Lesson: an editable mirror of a guarded
+builder must re-apply the same guards.
 
 ---
 

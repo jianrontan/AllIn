@@ -10,6 +10,52 @@ const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000';
 let playerId = null;
 export const setPlayerId = (id) => { playerId = id || null; };
 
+const PLAYER_ID_KEY = 'allin_player_id';
+const uuidv4 = () =>
+    (crypto.randomUUID
+        ? crypto.randomUUID()
+        : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+            const r = (Math.random() * 16) | 0;
+            return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+        }));
+
+// The browser's stable anonymous identity. Created + persisted on first call;
+// also primes the module-level playerId used by game requests.
+export function getPlayerId() {
+    let id = localStorage.getItem(PLAYER_ID_KEY);
+    if (!id) {
+        id = uuidv4();
+        localStorage.setItem(PLAYER_ID_KEY, id);
+    }
+    playerId = id;
+    return id;
+}
+
+// Adopt a canonical playerId returned by sign-in (one account per Google sub):
+// a returning user on a new device switches this browser to the account's id.
+export function adoptPlayerId(id) {
+    if (!id) return;
+    localStorage.setItem(PLAYER_ID_KEY, id);
+    playerId = id;
+}
+
+// Lightweight cached account state (handle + whether signed in), persisted so the
+// header can render it without a self-lookup endpoint. Updated after sign-in
+// (/auth/callback) and after a handle change.
+const ACCOUNT_KEY = 'allin_account';
+export const getAccount = () => {
+    try { return JSON.parse(localStorage.getItem(ACCOUNT_KEY) || 'null'); }
+    catch { return null; }
+};
+export const setAccount = (row) => {
+    if (!row) return;
+    const prev = getAccount() || {};
+    localStorage.setItem(ACCOUNT_KEY, JSON.stringify({
+        handle: row.handle ?? prev.handle ?? null,
+        isRegistered: row.isRegistered ?? prev.isRegistered ?? false,
+    }));
+};
+
 async function request(path, options) {
     let res;
     try {
@@ -63,3 +109,17 @@ export const sendGameAction = (id, action, extra = {}) =>
 // the freshly-dealt board + a "thinking" indicator before the (slow) river solve.
 export const sendBotAction = (id) => gamePost('/api/game/bot-action', { id });
 export const nextHand = (id) => gamePost('/api/game/next-hand', { id });
+
+// --- +EV leaderboard + accounts ---------------------------------------------
+export const getStats = () => request('/api/stats');
+export const getLeaderboard = ({ n = 10, minHands = 50, accountsOnly = false } = {}) =>
+    request(`/api/leaderboard?n=${n}&min_hands=${minHands}`
+        + (accountsOnly ? '&accounts_only=true' : ''));
+// Set the caller's unique username (signed-in players, on sign-in or rename).
+// Throws on 400 (invalid) / 409 (taken) with the server's message.
+export const upsertHandle = (handle) =>
+    jsonPost('/api/player', { playerId: getPlayerId(), handle });
+// Bind a Cognito-issued Google ID token; returns the canonical account row
+// ({playerId, usernameSet, suggestedHandle, ...}). The caller adopts playerId.
+export const authGoogle = (idToken) =>
+    jsonPost('/api/auth/google', { idToken, playerId: getPlayerId() });

@@ -27,10 +27,11 @@ Status legend: ✅ done · 🚧 in progress · 📅 planned
   cheap blueprint lookups, no per-user state → exactly the cheap-to-serve profile (Slumbot
   is the same blueprint+real-time-solver shape, served free online). **Ready now**; the
   cost section below holds.
-- **Ship the 25M blueprint, NOT the auto-resolved 30M.** The capped 30M run *over-trained*
-  past its best point; 25M is least exploitable on BR+LBR. Pin
-  `ALLIN_BLUEPRINT_DB=analysis/blueprints/snapshots/snap_20260604_114512_25550000.db`
-  (see the `capped-blueprint-ship-25m` memory).
+- **The served default is the 25M blueprint, not the over-trained 30M.** The capped 30M run
+  over-trained past its best point; 25M is least exploitable on BR+LBR. The 25M is the
+  top-level `blueprint_final.db` (served by default); the 30M is kept in `snapshots/`, which
+  the resolver doesn't search. Pin `ALLIN_BLUEPRINT_DB` only to override (see the
+  `capped-blueprint-ship-25m` memory).
 - **The TURN solver is PAUSED.** It's proven in the lab (M0–M2: ~99% less exploitable at
   high fidelity) but a *live* turn solve is **~20–54 s** (building the leaf value table
   dominates), vs the river solver's ~8 s. Serving it needs one of:
@@ -141,10 +142,10 @@ rewrite**.
   `.npz` — they're git-ignored (the turn table is ~126 MB). A fresh box without them falls
   back to slow lazy bucketing. **This is the main deploy gotcha.** (River is runtime-cached
   by design — fine.)
-- **Ship the blueprint `.db`** into the image/instance, and **pin
-  `ALLIN_BLUEPRINT_DB` to the 25M snapshot** (`snap_20260604_114512_25550000.db`) — the
-  auto-resolver picks the highest-iteration DB, which is the *over-trained, more-exploitable*
-  30M (see the 2026-06-07 update + `capped-blueprint-ship-25m`).
+- **Ship the blueprint `.db`** into the image/instance. The image's `.dockerignore` keeps only
+  the 25M snapshot, and the resolver serves the top-level 25M (`blueprint_final.db`) by default,
+  so no pin is required; set `ALLIN_BLUEPRINT_DB` only to override (see the
+  `capped-blueprint-ship-25m` memory).
 - **Real WSGI** (gunicorn/waitress), not the Flask dev server. ✅ **Done in code** —
   `backend/api/wsgi.py` (see "Security & runtime hardening" below). In-memory sessions only
   survive one worker — another reason for the persistent session store (D2).
@@ -385,17 +386,274 @@ shipped, and how it changes deployment:
 This closes the D0 "real WSGI" gap and the D2 "DynamoDBSessionStore (mandatory)" gap in code;
 provisioning the table + setting the env vars below is what remains at deploy time.
 
+## v1 surface — the deployment-prep code (added 2026-06-09)
+
+Architectural tour of everything *added on top of* the existing engine
+(training, blueprint, river solver, GameSession, range tracker) to make the
+bot servable as a public website with a +EV leaderboard and Google sign-in.
+
+### Module map
+
+New files. All wire through factory functions selected by env vars — nothing
+hard-codes the prod backend.
+
+| Layer | New file | What it does |
+|---|---|---|
+| **Storage** | `bot/src/storage/blueprint_source.py` | Where the blueprint comes from. `LocalFileSource` (file baked into image) is the only impl wired in v1; `S3ObjectSource` stubbed for later. Factory: `make_blueprint_source()` from `ALLIN_BLUEPRINT_SOURCE`. |
+| **Leaderboard data** | `bot/src/game/player_store.py` | Per-player rows: handle, lifetime hands/netBB, rolling hand-cap window, optional linked account. `InMemory*` (dev) + `DynamoDB*` (prod). Factory: `make_player_store()` from `ALLIN_STORE_BACKEND`. |
+| | `bot/src/game/global_stats_store.py` | The single "+EV counter" row: `{totalHands, totalNetBB, totalPlayers}`. Same factory pattern. |
+| | `bot/src/game/hand_store.py` | Per-hand recap capture (added 2026-06-09). One PutItem per completed hand inside the same `_record_hand_end` hook. Write-only in v1 — no UI/coach consumer yet; the point is to have the data when those features ship. `recap_from_session()` builds the recap dict from `GameSession.data` at `hand_over`; cards in display format, full `actionLog` across streets, result + before/after net P/L, blueprint snapshot tag. Schema: PK `playerId`, SK `<13-digit ms-epoch>#<sessionId>#<handNumber>` so a single Query (`ScanIndexForward=False`) returns newest-first. |
+| **Auth** | `api/auth.py` | Cognito ID-token validation (PyJWT + JWKS cache). `is_configured()` is the dev-vs-prod gate; `verify_cognito_id_token()` is the validator; `@require_account` is the (unused-in-v1) decorator stub. |
+| **Frontend config** | `frontend/src/config.js` | Cognito public config + `hostedUiUrl()` (the Hosted UI redirect URL builder). |
+| **Frontend UI** | `components/EvCounter.jsx` | +EV counter widget, polls `/api/stats` every 30s. |
+| | `components/Leaderboard.jsx` | The signed-in leaderboard (Home renders one cut: accounts with 50+ hands). |
+| | `components/UsernameModal.jsx` | Required unique-username picker shown on sign-in (pre-filled from the Google name). |
+| | `components/LoginPrompt.jsx` | Optional "sign in to join the leaderboard" popup. |
+| | `components/GoogleSignInButton.jsx` | Shows a DISABLED button if Cognito unconfigured (so its placement is visible); else redirects to Hosted UI. |
+| | `components/IntroModal.jsx` | First-visit popup. Gated on `allin.introDismissed`. Wired into `AiGame.jsx` so it triggers the first time someone plays, not on the marketing page. |
+| | `pages/AuthCallback.jsx` | `/auth/callback` route. Reads ID token from URL fragment, calls `/api/auth/google`, scrubs the token from the URL bar. |
+
+Modified files: `api/strategy_api.py` (hand-end hook, hand-cap gate, the four
+new endpoints, `_redact_view` for the debug overlay), `api/wsgi.py`
+(`logging.basicConfig` once), `game/session_store.py` (env-driven TTL),
+`game/game_session.py` (`max_raises_per_street` param so tests can hit the
+trained cap without disturbing live serving's `inf`), `frontend/src/api.js`
+(localStorage UUID + cached account state + new endpoints),
+`frontend/src/App.jsx` (the `/auth/callback` route), `frontend/src/pages/Home.jsx`
+(EvCounter + the signed-in Leaderboard + GoogleSignInButton). Sign-in adopts the
+canonical playerId and prompts for a unique username (UsernameModal).
+
+### Stores — what's actually stored
+
+`PlayerStore` row (DynamoDB table `allin-players`, PK `playerId`):
+
+```
+{
+  playerId,                              # the browser's localStorage UUID
+  handle,                                # display name, validated
+  hands, netBB,                          # lifetime (human perspective; bot = -netBB)
+  firstSeen, lastSeen,                   # epoch seconds
+  window_start, hands_in_window,         # rolling 500/1h cap
+  isRegistered,                          # True once an account links
+  # added by link_account():
+  email, authProvider, providerSub,      # set on Google sign-in
+  merged_into,                           # set if this row was merged into another
+}
+```
+
+`GlobalStatsStore` row (table `allin-global`, PK `statId='global'`):
+
+```
+{ totalHands, totalNetBB, totalPlayers }
+```
+
+Both DynamoDB impls use `UpdateItem ADD/SET` — atomic at the table level, no
+read-modify-write races. The hand-cap window reset is a *conditional* update
+(only fires when `window_start < now - 3600`), so two concurrent hands
+resetting the window can't double-reset.
+
+### The hand-end hook — how a hand becomes a leaderboard bump
+
+The bump lives in the **API layer** (`strategy_api._record_hand_end`), not in
+`GameSession`. The engine stays transport-agnostic; the API knows about stores.
+
+It fires on the `status != 'hand_over' → status == 'hand_over'` transition,
+inside the per-session lock. Three properties this gets right:
+
+1. **Idempotent.** A retried `/api/game/action` for the same hand: the second
+   call sees `pre_status == 'hand_over'` and returns early. One hand → one bump.
+2. **Concurrent-safe.** The session lock guarantees only one request at a time
+   owns the transition.
+3. **Failure-safe.** A store outage is logged and swallowed — the hand still
+   ends correctly for the player. Counters can drift down (a missed bump) but
+   never up (a double bump).
+
+Plus a separate one-shot at `/api/game/new`: `PLAYERS.create_if_absent()`
+returns `True` exactly once per playerId; that's when `GLOBAL.record_new_player()`
+fires.
+
+The **hand cap** (500 hands per rolling 1h, per playerId) gates `/api/game/new`
+and `/api/game/next-hand` with a 429 + `Retry-After`. An in-flight hand is
+never interrupted — only the next deal is refused.
+
+### Auth — from-scratch explanation
+
+The user signs in with their existing Google account. We never touch their
+password. The whole flow rests on three open standards (**OAuth 2.0**,
+**OpenID Connect / OIDC**, **JWT**) and one AWS service (**Cognito**).
+
+#### Vocabulary
+
+- **OAuth 2.0** — protocol for "let app A use my account from app B without
+  giving A my password." Browser-redirect dance: A sends the user to B, B asks
+  the user to authorize, B redirects back to A with a token.
+- **OpenID Connect (OIDC)** — a thin layer *on top of* OAuth 2.0 that adds
+  *identity*: "who is this user?", as opposed to OAuth's "what may A do on
+  behalf of the user?". OIDC introduces the **ID token**.
+- **JWT (JSON Web Token)** — a token format: three base64 segments separated
+  by dots (`header.payload.signature`). The payload is JSON claims (who,
+  audience, when issued, when expires); the signature proves the issuer
+  signed it. **Signed, not encrypted** — anyone can decode and read the
+  payload; only the issuer can produce a valid signature.
+- **ID token** — a JWT *whose payload says who the user is*: `sub` (subject,
+  a stable per-user ID), `email`, `iss` (issuer URL), `aud` (audience — *who*
+  the token is for), `exp` (expiry), `token_use: "id"`.
+- **JWKS (JSON Web Key Set)** — the issuer's *public keys*, fetched at a
+  well-known URL. Used to verify signatures. The issuer rotates these
+  periodically.
+- **Cognito User Pool** — AWS's managed identity database + authentication
+  endpoints. Stores users, can federate to external IdPs (Google, Apple,
+  etc.), exposes a **Hosted UI** that handles the OAuth flow for you, mints
+  the ID tokens.
+- **Hosted UI** — the AWS-hosted login page. You redirect the user there;
+  they sign in (via Google in our case); AWS redirects back to your callback
+  URL with the token in the URL.
+
+#### What our flow actually does
+
+```
+1. Anonymous user clicks "Sign in with Google" on Home
+   → frontend builds the Hosted UI URL via config.hostedUiUrl()
+   → browser navigates to https://<cognito-domain>/oauth2/authorize?...
+
+2. Cognito Hosted UI sees identity_provider=Google in the URL
+   → it redirects the user to Google's standard OAuth screen
+
+3. User authenticates with Google
+   → Google redirects back to Cognito with an internal authorization code
+
+4. Cognito mints an ID token (a JWT signed by the User Pool's private key)
+   → redirects to https://allin.jianrontan.com/auth/callback#id_token=eyJ...
+
+5. AuthCallback.jsx reads the token from window.location.hash
+   → scrubs it from the URL bar (so it doesn't sit in browser history)
+   → POSTs { idToken, playerId: <localStorage UUID> } to /api/auth/google
+
+6. Backend auth.verify_cognito_id_token(idToken):
+     - fetches the User Pool's JWKS (cached ~1h)
+     - finds the JWK matching the token's `kid` (key id) header
+     - verifies the RS256 signature against that public key
+     - checks iss == https://cognito-idp.<region>.amazonaws.com/<poolId>
+     - checks aud == our App Client ID
+     - checks exp > now and token_use == 'id'
+     - on any failure → AuthError → 401 to the client
+
+7. PlayerStore.link_account(playerId, email=..., authProvider='google',
+                              providerSub=token.sub):
+     - if a DIFFERENT playerId already has this providerSub (the user signed in
+       on a different browser before), MERGE non-destructively: prefer the
+       higher-hands row's stats onto the surviving row, mark the other merged.
+     - else: just add {email, authProvider, providerSub, isRegistered=True}
+       to the existing anonymous row. Their handle and lifetime stats survive.
+
+8. /auth/callback shows "Welcome back, <handle>. You've played N hands."
+   → never a 0-state. localStorage caches { handle, isRegistered } so the header
+     can render the signed-in chip without a self-lookup endpoint.
+```
+
+#### Why this is safe (the security properties that matter)
+
+- **The backend trusts no client claim.** Even if the frontend says "I am
+  jianrontan", the backend re-verifies the token. The frontend is a hostile
+  environment in principle.
+- **The signature anchors trust.** Cognito's private signing key never leaves
+  AWS. The JWKS gives us the *public* key. A token we can verify against the
+  JWKS came from Cognito — full stop.
+- **`aud` pins which app the token is for.** A token issued for app X can't
+  be replayed against app Y. We check `aud == <our App Client ID>`.
+- **`exp` bounds replay windows.** Cognito ID tokens default to 1h. After
+  that, the token is rejected; the user re-authenticates (or uses a refresh
+  token — we don't, see Deviation below).
+- **Hostile playerId binding is blocked.** If you somehow obtain another
+  user's playerId UUID and try to bind your Google account to it,
+  `/api/auth/google` checks `existing.providerSub != claims.sub` and returns
+  403.
+
+#### Deviation from the original plan
+
+The implementation uses **implicit flow** (`response_type=token`, ID token
+returned directly in the URL fragment). The original plan mentioned **PKCE
+authorization code flow**, which also returns a *refresh* token (so the user
+doesn't have to re-sign-in when the 1h ID token expires).
+
+Implicit flow is simpler and zero-server-secret. The cost is the user
+re-authenticates every ~1h. **For v1 that's fine** — they're not hitting auth
+endpoints continuously, only on first sign-in. Upgrading to PKCE later is
+additive: add a `/api/auth/refresh` endpoint that calls Cognito's token
+endpoint with the refresh token; frontend persists the refresh token in an
+httpOnly cookie (or memory + localStorage); silent refresh on expiry.
+
+### Endpoint inventory
+
+Strategy lookup (unchanged): `/api/strategy`, `/api/strategy/from-hand`,
+`/api/strategy/river-solve`, `/api/abstractions`.
+
+Game (unchanged shape; only internal `_record_hand_end` + `_hand_cap_response`
+plumbing added): `/api/game/new`, `/api/game/state`, `/api/game/action`,
+`/api/game/bot-action`, `/api/game/next-hand`.
+
+**New in v1 surface:**
+
+| Endpoint | Purpose | Notes |
+|---|---|---|
+| `GET /api/stats` | The +EV counter source. | 5s in-process cache (hottest endpoint, polled by every browser every 30s). |
+| `GET /api/leaderboard?n=10&min_hands=50&accounts_only=true` | Ranked board (accounts only) or Most-active (anonymous OK). | Rows redacted (no `playerId`/`email`). |
+| `POST /api/player` | Upsert the caller's handle. | Validates regex + profanity, 400 on reject. |
+| `POST /api/auth/google` | Bind a Google account (via Cognito) to the caller's existing playerId. | 503 if Cognito unconfigured, 401 on bad token, 403 if the playerId already belongs to another account. |
+| `GET /api/healthz` (alias of `/api/test`) | Health probe. | Reports blueprint, iterations, baked-table presence, session store class, debug overlay flag, `ALLIN_GIT_SHA`. |
+
+### What's stubbed vs wired
+
+| Thing | State |
+|---|---|
+| `LocalFileSource` (blueprint from baked-in file) | Wired ✅ |
+| `S3ObjectSource` (blueprint from S3) | Implemented, not wired (no env var flips to it in v1) |
+| `InMemory*` stores | Wired, default in dev |
+| `DynamoDB*` stores | Wired, default in image (env override at deploy) |
+| `HandStore` recap capture | Wired ✅ (write-only — no v1 consumer; data is captured from launch onward for the post-launch hand-history UI / coach / RAG) |
+| Hand-history / coach / RAG endpoints | Not built; post-launch features that READ the data captured above |
+| Cognito auth (`/api/auth/google`) | Wired; **503 until** `ALLIN_COGNITO_*` env vars are set at deploy |
+| Hosted UI redirect (frontend `GoogleSignInButton`) | Wired; **hidden until** `VITE_COGNITO_*` build vars are set |
+| `@require_account` decorator | Stubbed; nothing in v1 uses it (gameplay stays playerId-routed). Used by v1.1 saved-hands. |
+| Refresh tokens / silent re-auth | Not done (implicit flow). v1.1. |
+
 ## Environment variables (deploy-relevant)
 
-- `ALLIN_BLUEPRINT_DB` — explicit path to the blueprint DB (overrides auto-resolution). **Pin
-  this to the 25M snapshot** in prod (the auto-resolver picks the over-trained 30M).
-- `ALLIN_CORS_ORIGINS` — comma-separated allowed CORS origins (set to the real frontend domain).
+- `ALLIN_BLUEPRINT_DB` — explicit path to the blueprint DB (overrides auto-resolution). The
+  resolver serves the top-level 25M (`blueprint_final.db`) by default; set this only to override.
+- `ALLIN_BLUEPRINT_SOURCE` — where the blueprint comes from: `local` (default, a file —
+  what the image bakes in) or `s3` (download once + cache; stub, not wired in v1).
+- `ALLIN_BLUEPRINT_S3_URI` — `s3://bucket/key` of the blueprint (only when source = `s3`).
+- `ALLIN_CORS_ORIGINS` — comma-separated allowed CORS origins. **In prod set to exactly the
+  Cloudflare Pages domain (e.g. `https://allin.jianrontan.com`), never `*`.**
 - `ALLIN_SESSION_STORE` — `memory` (default) or `dynamodb`. **Must be `dynamodb` for >1 worker.**
-- `ALLIN_DYNAMODB_TABLE` — DynamoDB table name (default `allin-sessions`).
+- `ALLIN_STORE_BACKEND` — `memory` (default) or `dynamodb`: backs the **leaderboard** stores
+  (players + global counter). Set to `dynamodb` in prod alongside `ALLIN_SESSION_STORE`.
+- `ALLIN_DYNAMODB_TABLE` — sessions table name (default `allin-sessions`).
+- `ALLIN_PLAYERS_TABLE` / `ALLIN_GLOBAL_TABLE` — leaderboard table names (defaults
+  `allin-players` / `allin-global`). Provision via the stores' `create_table_if_missing()`.
+- `ALLIN_HANDS_TABLE` — recap-capture table name (default `allin-hands`). Provision via
+  `DynamoDBHandStore.create_table_if_missing()`. Backed by `ALLIN_STORE_BACKEND` along with
+  the leaderboard stores.
 - `ALLIN_DYNAMODB_ENDPOINT` — override endpoint for DynamoDB Local testing (e.g.
   `http://localhost:8000`); unset in prod.
-- `AWS_REGION` / `AWS_DEFAULT_REGION` — region for the DynamoDB store.
+- `AWS_REGION` / `AWS_DEFAULT_REGION` — region for the DynamoDB stores.
+- `ALLIN_SESSION_TTL_SECONDS` — session lifetime (default `86400` = 24h; DynamoDB TTL).
+- `ALLIN_HANDS_PER_WINDOW` / `ALLIN_HAND_WINDOW_SECONDS` — rolling hand cap (default `500`
+  per `3600`s); over it, `/api/game/new` + `/next-hand` return 429 + `Retry-After`.
+- `ALLIN_COGNITO_REGION` / `ALLIN_COGNITO_USER_POOL_ID` / `ALLIN_COGNITO_APP_CLIENT_ID` —
+  backend, for Google-sign-in ID-token validation. **Optional in dev**: when any is unset,
+  `/api/auth/google` returns 503 and gameplay (playerId-routed) is unaffected.
+- `ALLIN_DEBUG_OVERLAY` — `1` exposes the per-decision bot trace (`botDebug`, which leaks the
+  bot's bucketed hand class mid-hand) in game responses; **default `0` (off)**. Set `1` only in
+  local dev. Must stay unset/`0` in prod — the repo is public, so a hot debug overlay is a leak.
+- `ALLIN_LOG_LEVEL` — log level for the WSGI/dev server (default `INFO`).
+- `ALLIN_GIT_SHA` — build commit, surfaced in `/api/healthz` (set by CI; absent in dev is fine).
 - `ALLIN_DEBUG` — dev server only: `1` (default) enables the Werkzeug debugger, `0` disables.
   Irrelevant under gunicorn/waitress (that code path never runs).
 - `ALLIN_DEV_HOST` / `ALLIN_DEV_PORT` — dev server bind (default `127.0.0.1:5000`).
 - `VITE_API_BASE` — frontend API base URL (set at build time).
+- `VITE_COGNITO_DOMAIN` / `VITE_COGNITO_APP_CLIENT_ID` / `VITE_COGNITO_REDIRECT_URI` —
+  frontend (build-time), for the "Sign in with Google" Hosted-UI redirect. **Public values**
+  (not secrets). When unset, the sign-in button hides itself. The Google OAuth *client secret*
+  is NEVER here — it lives only in the Cognito IdP config in AWS.

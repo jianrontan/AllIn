@@ -11,7 +11,7 @@ const SUITS = {
 
 function PlayingCard({ card, hidden, small }) {
     // The card sizes off the `--card-w` CSS variable set on the table container,
-    // which is clamped to the viewport — so the whole board grows/shrinks with the
+    // which is clamped to the viewport - so the whole board grows/shrinks with the
     // window. Font size is derived from the width, so the rank/suit scale with the
     // card. `small` pins a fixed compact size for use outside the table; elsewhere
     // the variable falls back to 3.5rem (the original size) so other pages are

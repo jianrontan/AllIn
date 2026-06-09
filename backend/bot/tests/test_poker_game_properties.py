@@ -93,11 +93,13 @@ _TOTAL_CHIPS = 2 * STARTING_STACK
 _EPS = 1e-6
 
 
-def _new_session(seed):
+def _new_session(seed, max_raises=float('inf')):
     """Construct a fresh GameSession with a deterministic deck (Python's
-    `random` drives `shuffled_deck`)."""
+    `random` drives `shuffled_deck`). `max_raises` is the per-street raise cap:
+    the default (inf) matches LIVE serving (uncapped re-raises); pass 2 to walk
+    the trained/eval-capped engine (1 bet + 2 raises) for the D3 cap property."""
     _r.seed(seed)
-    return GameSession.new(f'fuzz-{seed}', 'p')
+    return GameSession.new(f'fuzz-{seed}', 'p', max_raises_per_street=max_raises)
 
 
 def _grand_pot(session):
@@ -122,7 +124,7 @@ def _chip_conservation_holds(session):
 # ---------------------------------------------------------------------------
 
 @st.composite
-def session_walk(draw, max_steps=80, max_hands=3):
+def session_walk(draw, max_steps=80, max_hands=3, max_raises=float('inf')):
     """Generate a session that has executed a sequence of random legal
     actions. Returns the live GameSession plus the list of post-action
     snapshots (so per-step invariants can be checked).
@@ -130,9 +132,12 @@ def session_walk(draw, max_steps=80, max_hands=3):
     We use Hypothesis's `draw` to pick action indices and seeds — this is
     what gives shrinking power: when an assertion fails, Hypothesis can
     shrink the action sequence and seed to the minimal failing case.
+
+    `max_raises` is the per-street raise cap (default inf = live serving's
+    uncapped re-raises; pass 2 for the trained-cap engine — see test_D3).
     """
     seed = draw(st.integers(min_value=0, max_value=10_000_000))
-    session = _new_session(seed)
+    session = _new_session(seed, max_raises=max_raises)
     snapshots = []
 
     hands = 0
@@ -364,14 +369,19 @@ def test_D1_legal_actions_affordable(walk):
             f"{action} costs {cost} but acting={acting} has {remaining}")
 
 
-@given(session_walk())
+@given(session_walk(max_raises=2))
 @settings(max_examples=200, deadline=None,
           suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large])
 def test_D3_max_bet_raise_per_street(walk):
     """D3: at most 3 sized aggression actions per street (1 bet + 2 raises,
     or all-in counts toward the cap as a terminal raise). We assert the
     weaker but already-violated-on-failure form: combined sized bet/raise
-    count <= 3 per street."""
+    count <= 3 per street.
+
+    This is a property of the CAPPED engine (max_raises_per_street=2) the
+    blueprint trains/evals under, so the walk passes max_raises=2. LIVE serving
+    (GameSession's default inf) deliberately UNCAPS re-raises so a human can
+    5-bet/6-bet+, where this bound does NOT hold by design (see GameSession)."""
     session, snapshots = walk
     # Walk through pre-states and check the current-street history.
     for pre, _ in snapshots:

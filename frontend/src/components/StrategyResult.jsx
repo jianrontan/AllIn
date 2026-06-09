@@ -4,16 +4,16 @@ import React from 'react';
 
 const ACTION_LABELS = {
     fold: 'Fold', call: 'Call', check: 'Check', allin: 'All-in',
-    bet_small: 'Bet — small (≈ ⅓ pot)',
-    bet_medium: 'Bet — medium (≈ ⅔ pot)',
-    bet_large: 'Bet — large (≈ pot)',
-    bet_xlarge: 'Open — xlarge (5 BB)',
-    bet_overbet: 'Bet — overbet (1.5× pot)',
-    bet_overbet2: 'Bet — overbet2 (2× pot)',
-    raise_small: 'Raise — small', raise_medium: 'Raise — medium',
-    raise_large: 'Raise — large',
-    raise_overbet: 'Raise — overbet (1.5× pot)',
-    raise_overbet2: 'Raise — overbet2 (2× pot)',
+    bet_small: 'Bet - small (≈ ⅓ pot)',
+    bet_medium: 'Bet - medium (≈ ⅔ pot)',
+    bet_large: 'Bet - large (≈ pot)',
+    bet_xlarge: 'Open - xlarge (5 BB)',
+    bet_overbet: 'Bet - overbet (1.5× pot)',
+    bet_overbet2: 'Bet - overbet2 (2× pot)',
+    raise_small: 'Raise - small', raise_medium: 'Raise - medium',
+    raise_large: 'Raise - large',
+    raise_overbet: 'Raise - overbet (1.5× pot)',
+    raise_overbet2: 'Raise - overbet2 (2× pot)',
 };
 
 const actionLabel = (a) => ACTION_LABELS[a] || a;
@@ -37,9 +37,15 @@ const PANEL = 'mt-5 rounded-2xl border border-neutral-800 bg-neutral-900/70 p-5'
 
 // One {action: prob} distribution as a sorted stack of labelled bars.
 function StrategyBars({ strategy }) {
+    // Defensive: a malformed/empty strategy must not crash the panel.
+    const entries = (strategy && typeof strategy === 'object')
+        ? Object.entries(strategy) : [];
+    if (entries.length === 0) {
+        return <div className="text-sm text-neutral-600">No strategy data.</div>;
+    }
     return (
         <div className="space-y-3">
-            {Object.entries(strategy)
+            {entries
                 .sort((a, b) => b[1] - a[1])
                 .map(([action, prob]) => (
                     <div key={action}>
@@ -108,7 +114,7 @@ function StrategyResult({ result, loading, error }) {
             )}
 
             {/* River subgame solver (when the toggle was on for a river spot). Shown
-                FIRST — it's the exact-card answer; the blueprint follows for context. */}
+                FIRST - it's the exact-card answer; the blueprint follows for context. */}
             {showSolver && (
                 <div className="mb-5 rounded-xl border border-fuchsia-800/50 bg-fuchsia-950/20 p-4">
                     <h4 className="text-sm uppercase tracking-wider text-fuchsia-300 mb-1">
@@ -121,7 +127,7 @@ function StrategyResult({ result, loading, error }) {
                     ) : solver ? (
                         <>
                             <p className="text-[11px] text-neutral-500 mb-3">
-                                Real-time CFR+ solve of the exact board &amp; line — ungated
+                                Real-time CFR+ solve of the exact board &amp; line - ungated
                                 (no SPR/EV gate). Ranges built by replaying the entered hand
                                 through the blueprint · pot {solver.potEntryBb} BB · stacks{' '}
                                 {solver.effectiveStackBb} BB
@@ -145,7 +151,7 @@ function StrategyResult({ result, loading, error }) {
                 </div>
             )}
 
-            {translated && brackets && (
+            {translated && Array.isArray(brackets) && (
                 <div className="mb-4 rounded-lg border border-sky-800/50 bg-sky-950/30
                                 px-4 py-3 text-sm text-sky-200">
                     <b>Off-grid bet → action translation.</b> Your size sits between two

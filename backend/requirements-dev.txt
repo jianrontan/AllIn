@@ -1,0 +1,13 @@
+# Dev/test-only dependencies (not installed in the production image).
+#   pip install -r requirements.txt -r requirements-dev.txt
+-r requirements.txt
+
+# DynamoDB Local emulation for the store tests (test_leaderboard_stores.py,
+# test_session_store DynamoDB paths). The tests skip cleanly if moto is absent.
+moto[dynamodb]>=5.0,<6
+pytest>=8.0
+hypothesis==6.152.9          # property tests (test-only; was in prod reqs)
+
+# Loads a local .env for dev (backend/api/strategy_api.py load_dotenv). Optional:
+# the import is guarded, and prod sets real host env vars instead of a file.
+python-dotenv>=1.0

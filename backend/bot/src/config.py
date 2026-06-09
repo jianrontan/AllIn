@@ -47,7 +47,10 @@ def _read_total_iterations(db_path):
             ).fetchone()
         finally:
             conn.close()
-        return json.loads(row[0]) if row else 0
+        # A readable DB with NO total_iterations row is empty/half-written -> treat
+        # as unusable (-1), not 0, so it can't be selected as "best" and then served
+        # with an empty info_sets table.
+        return json.loads(row[0]) if row else -1
     except Exception:
         return -1
 

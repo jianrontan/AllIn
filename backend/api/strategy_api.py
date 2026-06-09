@@ -1,22 +1,44 @@
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
+import logging
 import math
 import sys
 import os
 import threading
+import time
 import uuid
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 backend_dir = os.path.dirname(current_dir)
 sys.path.insert(0, backend_dir)
+sys.path.insert(0, current_dir)         # so sibling `auth` module imports resolve
 
-print(f"DEBUG: Current dir: {current_dir}")
-print(f"DEBUG: Backend dir: {backend_dir}")
+# Load a local .env for DEV convenience (repo root, then backend/), BEFORE any
+# os.environ reads below. No-op if python-dotenv isn't installed (prod) or the
+# file is absent; override=False so real host env vars (Lightsail) always win.
+try:
+    from dotenv import load_dotenv
+    _repo_root = os.path.dirname(backend_dir)
+    load_dotenv(os.path.join(_repo_root, '.env'))
+    load_dotenv(os.path.join(backend_dir, '.env'))
+except ImportError:
+    pass
+
+# Logging is configured once at the WSGI entrypoint (wsgi.py) / dev-server block;
+# here we just get a module logger. No top-level print() so production logs
+# (CloudWatch / Lightsail) stay clean.
+_LOG = logging.getLogger(__name__)
+_LOG.debug("sys.path set: current=%s backend=%s", current_dir, backend_dir)
 
 # --- Shared backend resources (loaded once at startup) -----------------------
-from bot.src.config import resolve_blueprint_path
+from bot.src.storage.blueprint_source import make_blueprint_source
 from bot.src.storage.blueprint_db import BlueprintDB
 from bot.src.game.session_store import make_session_store, SessionLockTimeout
+from bot.src.game.player_store import (
+    make_player_store, InvalidHandle, HandleTaken, AccountConflict,
+    sanitize_display_name)
+from bot.src.game.global_stats_store import make_global_stats_store
+from bot.src.game.hand_store import make_hand_store, recap_from_session
 from bot.src.game.game_session import GameSession, advance_bot_turns, GameError, BIG_BLIND
 from bot.src.game.cards import to_engine
 from bot.src.cfr.poker_game import make_custom_action, STARTING_STACK
@@ -26,8 +48,10 @@ from bot.src.subgame.river_subgame_solver import RiverSubgameSolver
 from bot.src.game.range_tracker import RangeTracker, _FULL_DECK
 from bot.src.subgame.river_tree import is_sized, sized_chips
 
-# The blueprint DB is opened read-only so a concurrent training run is safe.
-_BLUEPRINT_PATH = resolve_blueprint_path()
+# The blueprint DB is opened read-only so a concurrent training run is safe. The
+# source (local file in v1; an S3 object later) is chosen by ALLIN_BLUEPRINT_SOURCE
+# behind make_blueprint_source(); local_path() returns a path BlueprintDB can open.
+_BLUEPRINT_PATH = make_blueprint_source().local_path()
 BLUEPRINT_DB = BlueprintDB(_BLUEPRINT_PATH, read_only=True)
 # Action-abstraction arm the served blueprint was trained under ('control'|'capped'),
 # read from its DB metadata. The serving engine (GameSession.game) MUST match it, or
@@ -47,9 +71,10 @@ _POSTFLOP_GRID = translation.postflop_grid_for(BLUEPRINT_MENU_MODE)
 # exact size it finds (validated ~24x less river-exploitable than the blueprint).
 # A river decision can take up to time_budget seconds (early-stops sooner on easy
 # spots); GameSession's advance_bot_turns has a safe-fallback guard so a hand
-# never crashes. NOTE: resolve_blueprint_path picks the highest-iteration DB; set
-# ALLIN_BLUEPRINT_DB to a CURRENT-sizing blueprint/snapshot if the auto-resolved
-# one predates the active abstraction (see the serve note in the river-solver docs).
+# never crashes. NOTE: resolve_blueprint_path globs only the TOP-LEVEL
+# analysis/blueprints/blueprint_*.db (snapshots/ is not searched), so the served
+# default is blueprint_final.db (the 25M snapshot). Pin ALLIN_BLUEPRINT_DB only to
+# override that (e.g. a different-sizing blueprint).
 BOT = RiverSubgameSolver(BLUEPRINT_DB, max_iters=200, check_every=40, time_budget=5.0)
 # A separate solver for the Strategy Explorer's on-demand river solve. It is NOT
 # latency-critical (an explicit "solve" click, not a live turn), so it gets more
@@ -66,6 +91,14 @@ BOT_RANGE_FN = BOT.range_model_fn()
 # 'dynamodb' for a multi-worker / multi-box deploy so games are shared and
 # survive restarts (see session_store.py / make_session_store).
 SESSIONS = make_session_store()
+# Leaderboard datastores (the +EV counter + per-player rows). Same backend switch
+# as sessions (ALLIN_STORE_BACKEND: memory default, dynamodb in prod).
+PLAYERS = make_player_store()
+GLOBAL = make_global_stats_store()
+# Per-hand recap capture (write-only in v1; the UI / coach / training pipeline
+# that consume it are post-launch — but capturing now means launch-window hands
+# aren't lost forever). One PutItem per completed hand inside the same hook.
+HANDS = make_hand_store()
 
 # River-solve concurrency cap: a single river decision can burn several seconds
 # of CFR (BOT.time_budget), so without a bound N simultaneous solves pin every
@@ -74,11 +107,32 @@ SESSIONS = make_session_store()
 # to leave one core free. Acquired around advance_bot_turns (see _run_bot).
 _SOLVE_PERMITS = max(1, (os.cpu_count() or 2) - 1)
 _SOLVE_SEMAPHORE = threading.BoundedSemaphore(_SOLVE_PERMITS)
+# The explorer's on-demand river solve (ungated, unauthenticated, up to 8s each)
+# gets a SEPARATE, smaller pool so a burst of /api/strategy/river-solve can't hold
+# every permit and starve live gameplay (which uses _SOLVE_SEMAPHORE).
+_EXPLORER_PERMITS = max(1, _SOLVE_PERMITS // 2)
+_EXPLORER_SEMAPHORE = threading.BoundedSemaphore(_EXPLORER_PERMITS)
 # How long a request will wait for a solve permit before giving up with 503.
 _SOLVE_WAIT_SECONDS = 30.0
 
-print(f"DEBUG: Blueprint: {_BLUEPRINT_PATH.name} "
-      f"({BLUEPRINT_DB.get_metadata('total_iterations', 0):,} iterations)")
+# Debug overlay (the per-decision bot trace, `botDebug`) exposes the bot's bucketed
+# hand class MID-HAND -- a spoiler, and a leak now that the repo is public. It is a
+# dev inspection aid only, so it is gated OFF by default (fail-safe for prod) and
+# stripped from every response unless ALLIN_DEBUG_OVERLAY=1. Set that locally to see
+# it in the frontend's Debug panel. See the M2 note + deploy security checklist.
+_DEBUG_OVERLAY = os.environ.get("ALLIN_DEBUG_OVERLAY", "0") == "1"
+
+
+def _redact_view(view):
+    """Return a public view with the debug overlay removed unless explicitly
+    enabled. Applied to every game response so botDebug never ships hot."""
+    if not _DEBUG_OVERLAY:
+        view.pop('botDebug', None)
+    return view
+
+
+_LOG.info("Loaded blueprint: %s (%s iterations)", _BLUEPRINT_PATH.name,
+          BLUEPRINT_DB.get_metadata('total_iterations', 0))
 
 app = Flask(__name__)
 
@@ -526,7 +580,7 @@ def strategy_river_solve():
     if ps.get('riverEntryPot') is None or ps.get('hero_range') is None:
         return jsonify({"error": "could not assemble the river solve inputs"}), 400
 
-    if not _SOLVE_SEMAPHORE.acquire(timeout=_SOLVE_WAIT_SECONDS):
+    if not _EXPLORER_SEMAPHORE.acquire(timeout=_SOLVE_WAIT_SECONDS):
         raise TimeoutError("server busy: no solver permit available")
     try:
         dist, node, info = EXPLORER_BOT.solve_for_action(
@@ -541,7 +595,7 @@ def strategy_river_solve():
         # bot's hand has ~zero blueprint reach for this line, ...) -> clean 400.
         return jsonify({"error": f"river solve not applicable: {e}"}), 400
     finally:
-        _SOLVE_SEMAPHORE.release()
+        _EXPLORER_SEMAPHORE.release()
 
     strategy = {}
     for a, p in dist.items():
@@ -629,20 +683,94 @@ def _run_bot(session, **kwargs):
         _SOLVE_SEMAPHORE.release()
 
 
+def _record_hand_end(session, pre_status, pre_net):
+    """If the hand just transitioned in_hand -> hand_over, record ONE result to the
+    leaderboard stores. Idempotent: it fires only on the transition (a retried
+    request on an already-finished hand has pre_status == 'hand_over'), and the
+    session lock is held, so each hand is counted exactly once. Never breaks a hand
+    -- a store failure is logged, not raised."""
+    if pre_status == 'hand_over' or session.data.get('status') != 'hand_over':
+        return
+    if session.data.get('result_recorded'):
+        return                                  # persisted idempotency anchor (below)
+    player_id = session.data.get('player_id')
+    if not player_id:
+        return
+    delta_bb = (session.data.get('human_net', 0.0) - pre_net) / BIG_BLIND
+    if not math.isfinite(delta_bb):
+        # A NaN/inf would poison netBB and the leaderboard sort; never record it.
+        _LOG.warning("non-finite hand delta (%r); skipping leaderboard update", delta_bb)
+        return
+    # Persist the "recorded" flag with the session BEFORE writing the stats, so a
+    # crash between the two can't double-count on retry (a lost stat is acceptable;
+    # a double-count is not). The endpoint's own put() afterward is idempotent.
+    session.data['result_recorded'] = True
+    try:
+        SESSIONS.put(session.data['session_id'], session.to_dict())
+    except Exception:
+        session.data['result_recorded'] = False
+        _LOG.warning("could not persist hand-end anchor; deferring", exc_info=True)
+        return
+    try:
+        PLAYERS.record_hand_result(player_id, delta_bb)
+        GLOBAL.record_hand_result(delta_bb, is_new_player=False)
+    except Exception:
+        _LOG.warning("leaderboard hand-end update failed", exc_info=True)
+    # Capture the recap (write-only; no v1 consumer). Wrapped + swallowed so a
+    # store outage never breaks a hand; idempotent on retried requests via the
+    # pre_status guard above + the (playerId, handKey) row identity.
+    try:
+        HANDS.put(recap_from_session(session, blueprint_name=_BLUEPRINT_PATH.name))
+    except Exception:
+        _LOG.warning("hand-recap capture failed", exc_info=True)
+
+
+def _hand_cap_response(player_id):
+    """A 429 (+ Retry-After) response if the player is over the rolling hand cap,
+    else None. Used to gate starting a NEW hand (game/new, next-hand); an in-flight
+    hand is never interrupted."""
+    try:
+        allowed, retry = PLAYERS.hand_cap_status(player_id)
+    except Exception:
+        _LOG.warning("hand-cap check failed; allowing", exc_info=True)
+        return None
+    if allowed:
+        return None
+    resp = jsonify({"error": "hand limit reached — take a break and come back later",
+                    "retryAfter": int(retry)})
+    resp.status_code = 429
+    resp.headers['Retry-After'] = str(int(retry))
+    return resp
+
+
 @app.route('/api/game/new', methods=['POST'])
 def game_new():
     """Start a new game session and deal the first hand."""
     data = request.get_json(silent=True) or {}
     player_id = data.get('playerId') or str(uuid.uuid4())
-    session_id = str(uuid.uuid4())
 
+    # Rolling hand-cap: refuse a new hand once the player is over quota (429).
+    capped = _hand_cap_response(player_id)
+    if capped is not None:
+        return capped
+
+    # Count a newly-seen player exactly once (create_if_absent is atomic).
+    try:
+        if PLAYERS.create_if_absent(player_id):
+            GLOBAL.record_new_player()
+    except Exception:
+        _LOG.warning("new-player counting failed", exc_info=True)
+
+    session_id = str(uuid.uuid4())
     # No contention on a freshly-minted id, but lock for uniformity.
     with SESSIONS.lock(session_id):
         session = GameSession.new(session_id, player_id, strategy_fn=BOT_RANGE_FN,
                                   menu_mode=BLUEPRINT_MENU_MODE)
+        pre_status, pre_net = session.data['status'], session.data.get('human_net', 0.0)
         _run_bot(session)                    # bot may act first (when it is SB)
+        _record_hand_end(session, pre_status, pre_net)   # rare: bot folds hand 1 outright
         SESSIONS.put(session_id, session.to_dict())
-        view = session.public_view()
+        view = _redact_view(session.public_view())
     view['playerId'] = player_id
     return jsonify(view)
 
@@ -656,7 +784,7 @@ def game_state():
         session, err = _load_session(session_id, player_id)
         if err:
             return err
-        return jsonify(session.public_view())
+        return jsonify(_redact_view(session.public_view()))
 
 
 @app.route('/api/game/action', methods=['POST'])
@@ -677,6 +805,7 @@ def game_action():
         if not session.is_human_turn():
             return jsonify({"error": "not your turn"}), 409
 
+        pre_status, pre_net = session.data['status'], session.data.get('human_net', 0.0)
         action = data.get('action')
         # Unrestricted sizing: the UI sends {action: 'bet_custom'|'raise_custom',
         # amountBb: <raise-to TOTAL in big blinds>}. Convert BB -> chips and build
@@ -699,8 +828,9 @@ def game_action():
         except GameError as e:
             return jsonify({"error": str(e)}), 400
 
+        _record_hand_end(session, pre_status, pre_net)
         SESSIONS.put(session.data['session_id'], session.to_dict())
-        return jsonify(session.public_view())
+        return jsonify(_redact_view(session.public_view()))
 
 
 @app.route('/api/game/bot-action', methods=['POST'])
@@ -715,6 +845,7 @@ def game_bot_action():
         session, err = _load_session(session_id, player_id)
         if err:
             return err
+        pre_status, pre_net = session.data['status'], session.data.get('human_net', 0.0)
         try:
             # Pause when a bot action deals a new board card so the client can
             # render it before the bot's (possibly slow, river-solve) decision on
@@ -722,8 +853,9 @@ def game_bot_action():
             _run_bot(session, stop_on_new_card=True)
         except GameError as e:
             return jsonify({"error": str(e)}), 400
+        _record_hand_end(session, pre_status, pre_net)
         SESSIONS.put(session.data['session_id'], session.to_dict())
-        return jsonify(session.public_view())
+        return jsonify(_redact_view(session.public_view()))
 
 
 @app.route('/api/game/next-hand', methods=['POST'])
@@ -736,26 +868,185 @@ def game_next_hand():
         session, err = _load_session(session_id, player_id)
         if err:
             return err
+        # Rolling hand-cap: refuse the next hand once over quota (the just-finished
+        # hand was allowed to complete; this stops the next deal).
+        capped = _hand_cap_response(session.data.get('player_id'))
+        if capped is not None:
+            return capped
         try:
             session.start_next_hand()
+            pre_status = session.data['status']          # 'in_hand' after the deal
+            pre_net = session.data.get('human_net', 0.0)
             _run_bot(session)
         except GameError as e:
             return jsonify({"error": str(e)}), 400
+        _record_hand_end(session, pre_status, pre_net)
         SESSIONS.put(session.data['session_id'], session.to_dict())
-        return jsonify(session.public_view())
+        return jsonify(_redact_view(session.public_view()))
+
+
+# =============================================================================
+# +EV leaderboard + accounts
+# =============================================================================
+
+_STATS_CACHE = {'data': None, 'ts': 0.0}
+_STATS_TTL_SECONDS = 5.0          # /api/stats is polled ~every 30s by every client
+# /api/leaderboard does a full table Scan; cache per (n,min_hands,accounts_only)
+# so an unauthenticated burst can't amplify into O(table) Scans every request.
+_LEADERBOARD_CACHE = {}           # params-tuple -> (ts, payload)
+_LEADERBOARD_TTL_SECONDS = 10.0
+
+
+def _player_public_self(row):
+    """The caller's OWN row, curated. The canonical playerId is returned so the
+    client can adopt it after sign-in. Email is intentionally NOT returned."""
+    h = row.get('hands') or 0
+    net = float(row.get('netBB') or 0.0)
+    return {
+        'playerId': row.get('playerId'),
+        'handle': row.get('handle'),
+        'hands': int(h),
+        'netBB': round(net, 2),
+        'bbPer100': round((net / h * 100.0) if h else 0.0, 2),
+        'isRegistered': bool(row.get('isRegistered')),
+        'usernameSet': bool(row.get('handle')),
+    }
+
+
+@app.route('/api/stats', methods=['GET'])
+def stats():
+    """The +EV counter source: global totals + the served blueprint. Cached a few
+    seconds (it's the hottest endpoint — every client polls it)."""
+    now = time.time()
+    c = _STATS_CACHE
+    if c['data'] is None or now - c['ts'] > _STATS_TTL_SECONDS:
+        g = GLOBAL.get()
+        c['data'] = {
+            'totalHands': g['totalHands'],
+            'totalNetBB': round(float(g['totalNetBB']), 2),
+            'totalPlayers': g['totalPlayers'],
+            'blueprint': _BLUEPRINT_PATH.name,
+            'iterations': BLUEPRINT_DB.get_metadata('total_iterations', 0),
+        }
+        c['ts'] = now
+    return jsonify(c['data'])
+
+
+@app.route('/api/leaderboard', methods=['GET'])
+def leaderboard():
+    """Ranked by bb/100 over >= min_hands. accounts_only=true is the ranked board;
+    omit it for a 'most active' cut that includes anonymous players. Rows are
+    redacted (no playerId/email)."""
+    def _int(name, default, lo, hi):
+        try:
+            return max(lo, min(hi, int(request.args.get(name, default))))
+        except (TypeError, ValueError):
+            return default
+    n = _int('n', 10, 1, 100)
+    min_hands = _int('min_hands', 50, 0, 10 ** 9)
+    accounts_only = request.args.get('accounts_only', '').lower() in ('1', 'true', 'yes')
+    ck = (n, min_hands, accounts_only)
+    now = time.time()
+    hit = _LEADERBOARD_CACHE.get(ck)
+    if hit is None or now - hit[0] > _LEADERBOARD_TTL_SECONDS:
+        hit = (now, {'players': PLAYERS.top(n=n, min_hands=min_hands,
+                                            accounts_only=accounts_only)})
+        _LEADERBOARD_CACHE[ck] = hit
+    return jsonify(hit[1])
+
+
+@app.route('/api/player', methods=['POST'])
+def player_upsert():
+    """Set the caller's unique username (signed-in players pick one on sign-in, or
+    rename later). Validates the handle (regex + profanity -> 400) and uniqueness
+    (-> 409)."""
+    data = request.get_json(silent=True) or {}
+    player_id = data.get('playerId')
+    handle = data.get('handle')
+    if not player_id:
+        return jsonify({"error": "playerId required"}), 400
+    try:
+        row = PLAYERS.upsert_handle(player_id, handle)
+    except InvalidHandle as e:
+        return jsonify({"error": str(e)}), 400
+    except HandleTaken:
+        return jsonify({"error": "that username is already taken"}), 409
+    return jsonify(_player_public_self(row))
+
+
+@app.route('/api/auth/google', methods=['POST'])
+def auth_google():
+    """Verify a Cognito-issued Google ID token and resolve the canonical account.
+
+    One account per Google `sub`: a returning user (even on a new device) ADOPTS
+    the existing account (the response's `playerId` is the canonical id the client
+    must adopt); a first sign-in binds this browser's row, absorbing its anonymous
+    history. The client then sets a unique username if `usernameSet` is false
+    (`suggestedHandle` pre-fills the prompt). 503 unconfigured, 401 bad/unverified
+    token, 403 if this browser is already bound to a different account.
+    """
+    import auth
+    if not auth.is_configured():
+        return jsonify({"error": "auth not configured"}), 503
+    data = request.get_json(silent=True) or {}
+    id_token = data.get('idToken')
+    player_id = data.get('playerId')
+    if not id_token or not player_id:
+        return jsonify({"error": "idToken and playerId required"}), 400
+    try:
+        claims = auth.verify_cognito_id_token(id_token)
+    except auth.AuthNotConfigured:
+        return jsonify({"error": "auth not configured"}), 503
+    except auth.AuthError as e:
+        return jsonify({"error": str(e)}), 401
+    # Trust `sub` as identity; require a verified email before storing/using it.
+    ev = claims.get('email_verified')
+    if not (ev is True or str(ev).lower() == 'true'):
+        return jsonify({"error": "Google email is not verified"}), 401
+    sub, email = claims.get('sub'), claims.get('email')
+    try:
+        row = PLAYERS.link_account(player_id, email=email, auth_provider='google',
+                                   provider_sub=sub)
+    except AccountConflict:
+        return jsonify({"error": "this browser is already signed in to another "
+                                 "account; sign out first"}), 403
+    out = _player_public_self(row)
+    out['suggestedHandle'] = sanitize_display_name(
+        claims.get('name') or (email.split('@')[0] if email else ''))
+    return jsonify(out)
 
 
 # =============================================================================
 # Health
 # =============================================================================
 
-@app.route('/api/test', methods=['GET'])
-def test():
-    return jsonify({
-        "status": "Server is working",
+def _postflop_table_status():
+    """Whether the baked postflop lookup tables are present. If a table is
+    missing, PostflopV2 falls back to slow lazy bucketing -- a misbuilt image
+    signal worth surfacing in the healthcheck."""
+    base = os.path.join(backend_dir, 'bot', 'analysis', 'abstractions')
+    return {street: os.path.exists(os.path.join(base, f'postflop_table_{street}.npz'))
+            for street in ('flop', 'turn')}
+
+
+def _health_payload():
+    return {
+        "status": "ok",
         "blueprint": _BLUEPRINT_PATH.name,
         "iterations": BLUEPRINT_DB.get_metadata('total_iterations', 0),
-    })
+        "postflopTables": _postflop_table_status(),
+        "sessionStore": type(SESSIONS).__name__,
+        "debugOverlay": _DEBUG_OVERLAY,
+        "commit": os.environ.get('ALLIN_GIT_SHA'),
+    }
+
+
+@app.route('/api/test', methods=['GET'])
+@app.route('/api/healthz', methods=['GET'])
+def test():
+    """Health/diagnostics for the load balancer + a quick manual check. The
+    /api/healthz alias is the rolling-deploy probe."""
+    return jsonify(_health_payload())
 
 
 if __name__ == "__main__":
@@ -768,6 +1059,9 @@ if __name__ == "__main__":
     # Defaults are safe-ish for dev: bind loopback (not 0.0.0.0) and gate the
     # debugger behind ALLIN_DEBUG (default on for convenience). Override host via
     # ALLIN_DEV_HOST if you really need LAN access.
+    logging.basicConfig(
+        level=os.environ.get("ALLIN_LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     debug = os.environ.get("ALLIN_DEBUG", "1") == "1"
     host = os.environ.get("ALLIN_DEV_HOST", "127.0.0.1")
     port = int(os.environ.get("ALLIN_DEV_PORT", "5000"))

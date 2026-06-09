@@ -112,7 +112,7 @@ The system revolves around a string key that uniquely identifies a poker situati
   Example: `pf_9_5_ip_turn_m` (coarse preflop class 9 → strength bucket 5, in position, turn, opponent bet medium)
 
 - `position`: `ip` (button/SB, acts last postflop) or `oop` (BB).
-- `pattern`: betting actions **on the current street only** (resets each street). Characters: `k`=check, `c`=call, `f`=fold, `s`=small bet/raise, `m`=medium, `l`=large, `o`=overbet (1.5x pot, postflop only), `x`=xlarge open (5 BB, preflop open only), `a`=all-in. (Single source of truth: `cfr/keys.py:ACTION_CHARS`.)
+- `pattern`: betting actions **on the current street only** (resets each street). Characters: `k`=check, `c`=call, `f`=fold, `s`=small bet/raise, `m`=medium, `l`=large, `o`=overbet (1.5x pot, postflop only), `2`=overbet2 (2.0x pot, postflop only, capped menu), `x`=xlarge open (5 BB, preflop open only), `a`=all-in. (Single source of truth: `cfr/keys.py:ACTION_CHARS`.)
 
 ### Card Abstractions (`backend/bot/src/abstractions/card_abstractions.py`)
 
@@ -206,21 +206,33 @@ Transport-agnostic engine for playing against the bot — **no Flask imports**, 
 Strategy:
 - `GET /api/strategy?key=` — blueprint strategy for an info-set key (`found:false` for untrained keys is a valid answer, not an error).
 - `POST /api/strategy/from-hand` — derive the key from real cards + a betting line, then return the strategy.
+- `POST /api/strategy/river-solve` — ungated river subgame solve for a concrete spot (real cards + history); returns the solved strategy.
 - `GET /api/abstractions` — bucket/position/street/pattern vocabulary for the Key Explorer dropdowns.
 
 Game:
 - `POST /api/game/new` — start a session, deal the first hand.
 - `GET /api/game/state?id=` — current redacted state.
-- `POST /api/game/action` — apply the human action; the bot then responds.
+- `POST /api/game/action` — apply the human action.
+- `POST /api/game/bot-action` — run the bot's pending turn(s) (split out so the client can reveal the new card first).
 - `POST /api/game/next-hand` — deal the next hand in a session.
 
-Health: `GET /api/test` — reports status and the active blueprint.
+Leaderboard / accounts:
+- `GET /api/stats` — global +EV counter (cached ~5s).
+- `GET /api/leaderboard` — ranked board (cached ~10s).
+- `POST /api/player` — set the caller's unique username.
+- `POST /api/auth/google` — verify a Cognito Google ID token, resolve the canonical account.
+
+Health: `GET /api/test` (alias `GET /api/healthz`) — status, blueprint, baked-table presence, session-store class, commit.
 
 ### Environment Variables
 
+The full, authoritative list is in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) ("Environment variables"). The essentials:
 - `ALLIN_BLUEPRINT_DB` — explicit path to the blueprint DB (overrides auto-resolution).
 - `ALLIN_CORS_ORIGINS` — comma-separated allowed CORS origins (defaults to `localhost:5173`/`5174`).
-- `VITE_API_BASE` — frontend API base URL (defaults to `http://localhost:5000`).
+- `ALLIN_SESSION_STORE` / `ALLIN_STORE_BACKEND` — `memory` (default) | `dynamodb` for sessions / leaderboard stores.
+- `ALLIN_COGNITO_REGION` / `ALLIN_COGNITO_USER_POOL_ID` / `ALLIN_COGNITO_APP_CLIENT_ID` — Google-sign-in token validation (unset = `/api/auth/google` 503s, gameplay unaffected).
+- `ALLIN_DEBUG_OVERLAY` — `1` exposes the bot-bucket debug overlay (default off).
+- `VITE_API_BASE` / `VITE_COGNITO_*` — frontend build-time config.
 
 ## Git
 

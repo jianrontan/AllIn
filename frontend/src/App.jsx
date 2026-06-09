@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Home from './pages/Home';
 import AiGame from './pages/AiGame';
 import StrategyLookup from './pages/StrategyLookup';
+import AuthCallback from './pages/AuthCallback';
 
 function App() {
   return (
@@ -11,6 +12,7 @@ function App() {
         <Route path="/" element={<Home />} />
         <Route path="/ai-game" element={<AiGame />} />
         <Route path="/strategy-lookup" element={<StrategyLookup />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
       </Routes>
     </Router>
   );

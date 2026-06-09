@@ -68,7 +68,7 @@ function KeyExplorer() {
 
     // Postflop bucket count is per-street (20 flop / 16 turn / 10 river, served by
     // /api/abstractions from the live centroids), so a bucket valid on the flop may
-    // be out of range on the river — clamp it.
+    // be out of range on the river - clamp it.
     const bucketsForStreet = (s) =>
         (s === 'preflop' ? [] : (abstractions?.postflopBuckets?.[s] || []));
 
@@ -107,27 +107,61 @@ function KeyExplorer() {
         setKeyText(composeKey(s, b, st, pos, pat));
     };
 
-    // Editable key field: update the text, and if it parses, sync the dropdowns
-    // to match (without recomposing the text, so the user's edit is preserved).
+    // Clamp a parsed key into a LEGAL, in-vocabulary key (the same guards the
+    // dropdown builder enforces, applied to a pasted/typed key): start bucket into
+    // the street's vocabulary, strength into [0, maxBucket], and pattern down to the
+    // chars legal on that street. Defeats the paste path bypassing BUG-017/018.
+    const canonicalize = (p) => {
+        let b = p.bucket;
+        const validBuckets = startBucketsForStreet(p.street);
+        if (validBuckets.length && !validBuckets.includes(b)) {
+            const idx = parseInt(String(b).split('_')[1], 10);
+            b = validBuckets[Math.min(Math.max(Number.isFinite(idx) ? idx : 0, 0),
+                validBuckets.length - 1)];
+        }
+        let st = 0;
+        if (p.street !== 'preflop') {
+            const buckets = bucketsForStreet(p.street);
+            st = Math.max(0, Number.isInteger(p.strength) ? p.strength : 0);
+            if (buckets.length) st = Math.min(st, buckets.length - 1);
+        }
+        const allowed = p.street === 'preflop' ? PREFLOP_CHARS : POSTFLOP_CHARS;
+        const pat = [...(p.pattern || '')].filter((c) => allowed.has(c)).join('');
+        return { street: p.street, bucket: b, strength: st,
+            position: p.position, pattern: pat };
+    };
+
+    // Editable key field: update the text, and if it parses, sync the dropdowns to
+    // the CLAMPED fields (so a pasted out-of-vocab bucket / strength / illegal char
+    // can't desync the dropdowns). Text itself is left as typed so editing is smooth;
+    // lookup() canonicalizes it before querying.
     const onKeyTextEdit = (text) => {
         setKeyText(text);
         const p = parseKey(text);
         if (!p) return;
-        setStreet(p.street);
-        setBucket(p.bucket);
-        setPosition(p.position);
-        setPattern(p.pattern);
-        if (p.street !== 'preflop') {
-            const buckets = bucketsForStreet(p.street);
-            let st = p.strength ?? 0;
-            if (buckets.length && st > buckets.length - 1) st = buckets.length - 1;
-            setStrength(st);
-        }
+        const c = canonicalize(p);
+        setStreet(c.street);
+        setBucket(c.bucket);
+        setStrength(c.strength);
+        setPosition(c.position);
+        setPattern(c.pattern);
     };
 
     const lookup = async () => {
-        const key = keyText.trim();
-        if (!key) { setError('Key is empty'); return; }
+        const raw = keyText.trim();
+        if (!raw) { setError('Key is empty'); return; }
+        const p = parseKey(raw);
+        if (!p) {
+            setError('Not a valid info-set key. Use the builder above, or match the '
+                + 'format e.g. pf_9_ip_  or  pf_5_4_oop_turn_m.');
+            return;
+        }
+        // Only ever query a well-formed, legal key; show the normalized form.
+        const c = canonicalize(p);
+        const key = composeKey(c.street, c.bucket, c.strength, c.position, c.pattern);
+        setKeyText(key);
+        setStreet(c.street); setBucket(c.bucket); setStrength(c.strength);
+        setPosition(c.position); setPattern(c.pattern);
         setError(null);
         setLoading(true);
         setResult(null);

@@ -9,9 +9,14 @@ PyPokerEngine==1.0.1
 gunicorn==23.0.0
 waitress==3.0.2
 
-# DynamoDB session store (ALLIN_SESSION_STORE=dynamodb). Optional for local dev,
-# which defaults to the in-memory store.
+# DynamoDB session + leaderboard stores (ALLIN_SESSION_STORE / ALLIN_STORE_BACKEND
+# = dynamodb). Optional for local dev, which defaults to the in-memory stores.
 boto3==1.35.76
 
-# Testing
-hypothesis==6.152.9
+# Google sign-in via Cognito: ID-token (RS256/JWKS) validation in backend/api/auth.py.
+PyJWT==2.9.0
+cryptography==43.0.1
+
+# Handle profanity filter (player names). Optional at runtime — player_store falls
+# back to a small built-in blocklist if it's absent — but pinned for prod.
+better-profanity==0.7.0

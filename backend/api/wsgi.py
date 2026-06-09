@@ -22,8 +22,26 @@ Notes
   in-memory store is per-process and would split games across workers).
 * Blueprint: pin ALLIN_BLUEPRINT_DB to the served snapshot (e.g. the 25M one).
 """
+import logging
 import os
 import sys
+
+# Load a local .env for dev (no-op if python-dotenv absent / file missing; real
+# host env vars win). strategy_api loads it again for its own reads — harmless.
+try:
+    from dotenv import load_dotenv
+    _here = os.path.dirname(os.path.abspath(__file__))
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(_here)), '.env'))
+    load_dotenv(os.path.join(os.path.dirname(_here), '.env'))
+except ImportError:
+    pass
+
+# Configure logging ONCE, before importing the app (so the module-load "Loaded
+# blueprint" line surfaces). Level is env-driven; format suits CloudWatch/Lightsail.
+logging.basicConfig(
+    level=os.environ.get("ALLIN_LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 # Make `import strategy_api` work regardless of the launcher's CWD (gunicorn's
 # --chdir already does this; this is belt-and-suspenders for other launchers).

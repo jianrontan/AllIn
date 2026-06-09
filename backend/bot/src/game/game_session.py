@@ -82,7 +82,8 @@ class GameError(Exception):
 
 
 class GameSession:
-    def __init__(self, data, strategy_fn=None, menu_mode='control'):
+    def __init__(self, data, strategy_fn=None, menu_mode='control',
+                 max_raises_per_street=float('inf')):
         self.data = data
         # The serving engine MUST use the same action abstraction the served
         # blueprint was trained under. Serving a 'capped' blueprint through a
@@ -96,13 +97,15 @@ class GameSession:
         # beyond-cap raises); a faced all-in 5-bet is handled by the near-terminal
         # equity guard, a faced non-jam deep raise by the blueprint/translation
         # stopgap until the Phase-4 deep-raise solver. See PokerGame.__init__.
+        # max_raises_per_street defaults to inf (LIVE serving — uncapped re-raises);
+        # tests pass the trained cap (2) to exercise the capped-engine invariants.
         from ..abstractions.sizing import postflop_menu_for, is_capped_mode
         if is_capped_mode(menu_mode):                # 'capped' | 'capped_no2'
             self.game = PokerGame(postflop_menu=postflop_menu_for(menu_mode),
                                   voluntary_allin=False,
-                                  max_raises_per_street=float('inf'))
+                                  max_raises_per_street=max_raises_per_street)
         else:
-            self.game = PokerGame(max_raises_per_street=float('inf'))
+            self.game = PokerGame(max_raises_per_street=max_raises_per_street)
         self.menu_mode = menu_mode
         self.cards = CardAbstraction()
         self.evaluator = HandEvaluator()
@@ -118,22 +121,26 @@ class GameSession:
     # ------------------------------------------------------------------
 
     @classmethod
-    def new(cls, session_id, player_id, strategy_fn=None, menu_mode='control'):
+    def new(cls, session_id, player_id, strategy_fn=None, menu_mode='control',
+            max_raises_per_street=float('inf')):
         session = cls({
             'session_id': session_id,
             'player_id': player_id,
             'human_net': 0.0,
-        }, strategy_fn=strategy_fn, menu_mode=menu_mode)
+        }, strategy_fn=strategy_fn, menu_mode=menu_mode,
+            max_raises_per_street=max_raises_per_street)
         session._deal_hand(hand_number=1, human_seat=0)
         return session
 
     @classmethod
-    def from_dict(cls, data, strategy_fn=None, menu_mode='control'):
+    def from_dict(cls, data, strategy_fn=None, menu_mode='control',
+                  max_raises_per_street=float('inf')):
         # Deep-copy so the live session never aliases the stored dict's nested
         # lists/dicts (history, action_log, community, opp_range, ...). Without
         # this, in-place mutations would leak into the store before put() and a
         # mid-apply failure could corrupt the persisted state.
-        return cls(copy.deepcopy(data), strategy_fn=strategy_fn, menu_mode=menu_mode)
+        return cls(copy.deepcopy(data), strategy_fn=strategy_fn, menu_mode=menu_mode,
+                   max_raises_per_street=max_raises_per_street)
 
     def to_dict(self):
         return self.data

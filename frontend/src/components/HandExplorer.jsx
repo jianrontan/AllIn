@@ -1,5 +1,5 @@
 // frontend/src/components/HandExplorer.jsx
-// "What should I do with this hand?" — enter real cards + a betting line, the
+// "What should I do with this hand?" - enter real cards + a betting line, the
 // backend abstracts it to a bucket key and returns the blueprint strategy.
 //
 // On the river you can also run the subgame SOLVER (ungated). With the solver on,
@@ -68,9 +68,14 @@ function StreetBetting({ label, isPreflop, actions, setActions, hint }) {
     const addFraction = (fraction) =>
         setActions((p) => [...p, { action: verbFor(p), fraction }]);
     const addCustom = () => {
+        if ((sizeInput.match(/\./g) || []).length > 1) return;   // malformed e.g. 1.2.3
         const v = parseFloat(sizeInput);
         if (!isFinite(v) || v <= 0) return;
-        if (isPreflop) addBb(v); else addFraction(v / 100);
+        if (isPreflop) {
+            addBb(Math.min(v, 1000));                            // raise-to BB, sane cap
+        } else {
+            addFraction(Math.min(Math.max(v / 100, 0.01), 10));  // 1%..1000% of pot
+        }
         setSizeInput('');
     };
 
@@ -145,6 +150,17 @@ function HandExplorer() {
     const boardN = BOARD_COUNT[street];
     const solverApplies = street === 'river';
     const solverMode = useSolver && solverApplies;
+
+    // Cards needed for a river solve: 2 hole + the full board, all 2-char and
+    // distinct. Gates the (slow, expensive) solve so it never fires on blank /
+    // duplicate / half-typed cards.
+    const cardsValid = () => {
+        const cards = [...hole, ...community.slice(0, boardN)]
+            .map((c) => (c || '').toLowerCase());
+        if (cards.length !== 2 + boardN || cards.some((c) => c.length !== 2)) return false;
+        return new Set(cards).size === cards.length;
+    };
+    const solveBlocked = solverMode && !cardsValid();
 
     const setHoleCard = (i, v) =>
         setHole((p) => p.map((c, idx) => (idx === i ? normalizeCard(v) : c)));
@@ -262,7 +278,7 @@ function HandExplorer() {
                     <p className="mt-2 text-[11px] text-neutral-500">
                         Real-time CFR+ solve of the exact board &amp; line, ungated (no
                         SPR/EV gate). Enter the full hand below so the ranges are built
-                        by replaying it through the blueprint — not assumed uniform.
+                        by replaying it through the blueprint - not assumed uniform.
                     </p>
                 </div>
             )}
@@ -272,10 +288,10 @@ function HandExplorer() {
             {solverMode ? (
                 <div className="mb-6">
                     <div className="mb-3 text-xs uppercase tracking-wider text-fuchsia-300">
-                        Hand history — builds the ranges
+                        Hand history - builds the ranges
                     </div>
                     <StreetBetting label="Preflop" isPreflop
-                        hint="In action order — small blind acts first preflop."
+                        hint="In action order - small blind acts first preflop."
                         actions={history.preflop} setActions={setHistoryStreet('preflop')} />
                     <StreetBetting label="Flop"
                         hint="Big blind (out of position) acts first postflop. Uses the first 3 board cards."
@@ -293,7 +309,7 @@ function HandExplorer() {
                     actions={actions} setActions={setActions} />
             )}
 
-            <button onClick={lookup} disabled={loading}
+            <button onClick={lookup} disabled={loading || solveBlocked}
                 className="px-7 py-3 rounded-xl font-semibold bg-amber-500
                            text-neutral-950 hover:bg-amber-400 disabled:opacity-50
                            transition-colors">
@@ -301,6 +317,11 @@ function HandExplorer() {
                     ? (solverMode ? 'Solving…' : 'Looking up…')
                     : (solverMode ? 'Solve river' : 'Look up strategy')}
             </button>
+            {solveBlocked && (
+                <p className="mt-2 text-xs text-amber-400/80">
+                    Enter your 2 hole cards and all 5 board cards (no duplicates) to solve.
+                </p>
+            )}
 
             <StrategyResult result={result} loading={loading} error={error} />
         </div>
