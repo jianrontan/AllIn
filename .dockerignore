@@ -18,14 +18,18 @@ docs
 *.db-wal
 *.db-shm
 
-# Blueprint DBs: exclude ALL, then re-include ONLY the pinned 25M snapshot.
-backend/bot/analysis/blueprints/**/*.db
-!backend/bot/analysis/blueprints/snapshots/snap_20260604_114512_25550000.db
+# Blueprint DBs: keep the top-level `blueprint_final.db` (the served default —
+# the auto-resolver only globs the top level of analysis/blueprints, not
+# snapshots/). Skip the whole snapshots/ tree to save image size.
+backend/bot/analysis/blueprints/snapshots/
 
 # Regenerable / large artifacts not needed in the image:
-#  - baked postflop tables are rebuilt in-image from the committed centroids
 #  - training curves, perf baseline, archived runs
-backend/bot/analysis/abstractions/postflop_table_*.npz
+# NOTE: the baked postflop tables (postflop_table_*.npz) ARE shipped in the
+# image, not rebuilt at build time -- they're already on disk locally, baking
+# them again would add ~5min for an identical result. The Dockerfile's bake
+# RUN step is therefore gone; if a future centroid change forces a rebake,
+# run scripts/bake_postflop_table.py locally first.
 backend/bot/analysis/training_curve
 backend/bot/analysis/archive
 backend/bot/perf_baseline.pkl

@@ -18,25 +18,23 @@ WORKDIR /app
 COPY backend/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
-# App code + committed centroids + the pinned blueprint snapshot. The
-# .dockerignore keeps ONLY the 25M snapshot among the blueprint DBs.
+# App code + committed centroids + the 25M `blueprint_final.db` + the
+# precomputed baked postflop tables. The .dockerignore keeps everything except
+# the snapshots/ tree and other regenerable artifacts (training curves etc.).
+# No bake step: the tables are already on disk and shipped as-is.
 COPY backend/ /app/backend/
 
-# Bake the postflop lookup tables INTO the image (centroids are committed; the
-# tables are git-ignored and regenerable). Without them PostflopV2 falls back to
-# slow lazy bucketing and /api/healthz.postflopTables reads false.
-RUN cd /app/backend/bot \
-    && python scripts/bake_postflop_table.py --street flop \
-    && python scripts/bake_postflop_table.py --street turn
-
 # Defaults safe for a bare `docker run`. Prod overrides at deploy time (Lightsail
-# env): ALLIN_SESSION_STORE=dynamodb, ALLIN_CORS_ORIGINS=https://allin.jianrontan.com,
-# AWS_REGION, ALLIN_GIT_SHA, etc. The debug overlay stays OFF (ALLIN_DEBUG_OVERLAY
-# unset) so the bot's bucket never leaks in production.
+# env): ALLIN_SESSION_STORE=dynamodb, ALLIN_STORE_BACKEND=dynamodb,
+# ALLIN_CORS_ORIGINS=https://allin.jianrontan.com, AWS_REGION, ALLIN_GIT_SHA,
+# ALLIN_COGNITO_*, etc. The debug overlay stays OFF (ALLIN_DEBUG_OVERLAY unset)
+# so the bot's bucket never leaks in production.
+# Blueprint resolution: NO ALLIN_BLUEPRINT_DB pin -- the auto-resolver
+# (config.resolve_blueprint_path) globs only the top-level analysis/blueprints
+# and picks blueprint_final.db, which is the 25M snapshot.
 ENV PYTHONUNBUFFERED=1 \
     ALLIN_LOG_LEVEL=INFO \
-    ALLIN_SESSION_STORE=memory \
-    ALLIN_BLUEPRINT_DB=/app/backend/bot/analysis/blueprints/snapshots/snap_20260604_114512_25550000.db
+    ALLIN_SESSION_STORE=memory
 
 EXPOSE 5000
 
