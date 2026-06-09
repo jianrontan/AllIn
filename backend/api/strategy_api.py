@@ -232,10 +232,17 @@ from bot.src.abstractions.sizing import SIZE_CHAR as _SIZE_CHAR
 _SB_CHIPS, _BB_CHIPS = 1, 2
 
 
-def _postflop_pattern(actions):
+def _postflop_pattern(actions, session=None):
     """Pattern + trailing off-grid blend for a postflop betting line. A bet/raise
     may carry a `fraction` (pot fraction); it's translated onto the postflop grid
-    (⅓ / ⅔ / pot). Returns (pattern, trailing_blend, error_or_None)."""
+    (⅓ / ⅔ / pot). Returns (pattern, trailing_blend, error_or_None).
+
+    If `session` is provided, each off-grid bet is translated against the
+    NODE-specific grid (session._node_grid) — the same grid the live bot uses,
+    which excludes any size whose chips would exceed the actor's remaining
+    stack. Each action is then APPLIED to the session so the next iteration
+    sees the live pot/stack state. Without a session the static _POSTFLOP_GRID
+    is used (correct only for 100-BB-deep current-street-fresh assumptions)."""
     pattern, trailing_blend, last = '', None, len(actions) - 1
     for idx, a in enumerate(actions):
         act = a.get('action')
@@ -255,8 +262,10 @@ def _postflop_pattern(actions):
                     return None, None, "bet fraction must be a number"
                 if not math.isfinite(frac) or frac <= 0:
                     return None, None, "bet fraction must be a positive, finite number"
-                tb = translation.translate_bet(frac, _POSTFLOP_GRID)
-                char = translation.nearest_char(frac, _POSTFLOP_GRID)
+                grid = (session._node_grid(session.legal_actions(), include_allin=False)
+                        if session is not None else _POSTFLOP_GRID)
+                tb = translation.translate_bet(frac, grid)
+                char = translation.nearest_char(frac, grid)
                 if len(tb) > 1:
                     blend = tb
             else:
@@ -266,6 +275,12 @@ def _postflop_pattern(actions):
         pattern += char
         if idx == last:
             trailing_blend = blend
+        # Walk the session forward so the next action's node grid is correct.
+        if session is not None and act in ('check', 'call', 'fold', 'allin', 'bet', 'raise'):
+            try:
+                session.apply_action(_engine_action_for_replay(a, session))
+            except (GameError, ValueError, TypeError) as e:
+                return None, None, f"could not replay action {idx + 1}: {e}"
     return pattern, trailing_blend, None
 
 
@@ -278,30 +293,54 @@ def _preflop_grid(num_aggr, committed_actor, to_call, pot):
         preflop_open_chips(), PREFLOP_RAISE_MULT, _SIZE_CHAR)
 
 
-def _preflop_pattern(actions):
+def _preflop_pattern(actions, session=None):
     """Pattern + trailing off-grid blend for a preflop line. Preflop sizes are
     absolute (a BB ladder, or pot-relative 3-bets), not plain pot fractions, so a
-    custom raise carries a `bb` raise-TO total. We replay the committed chips
-    (SB=1, BB=2, both 100 BB deep) to recover each raise's pot fraction, then
-    translate it onto the preflop grid. Returns (pattern, trailing_blend, err)."""
-    committed = [float(_SB_CHIPS), float(_BB_CHIPS)]   # p0 = SB (ip), p1 = BB (oop)
-    actor, num_aggr = 0, 0                              # SB acts first preflop
+    custom raise carries a `bb` raise-TO total.
+
+    Two paths, gated on `session`:
+      * session is None — standalone replay of committed chips (SB=1, BB=2, both
+        100 BB deep) to recover each raise's pot fraction, translated against the
+        SHARED grid (translation.preflop_grid). Backwards-compatible default.
+      * session given — translation uses the session's NODE grid
+        (session._node_grid), and each action is applied to the session so the
+        next iteration's grid reflects the actor's real remaining stack. This is
+        what the live bot does, so the explorer matches the bot in deep/short
+        spots where a size on the static grid would be illegal at the node.
+    Returns (pattern, trailing_blend, err)."""
     pattern, trailing_blend, last = '', None, len(actions) - 1
+    # Standalone (no session) bookkeeping. Unused when session is given.
+    committed = [float(_SB_CHIPS), float(_BB_CHIPS)]
+    actor, num_aggr = 0, 0
     for idx, a in enumerate(actions):
         act = a.get('action')
-        other = 1 - actor
-        to_call = max(0.0, committed[other] - committed[actor])
-        pot = committed[0] + committed[1]
+        if session is not None:
+            # Session is authoritative: read state from it instead of the
+            # standalone bookkeeping. (Both kept in sync for the session=None
+            # fall-through inside the bet/raise branch.)
+            legal = session.legal_actions()
+            actor = session.current_player()
+            other = 1 - actor
+            committed_actor = session.data['p0_invested' if actor == 0 else 'p1_invested']
+            to_call = session._action_cost('call') if 'call' in legal else 0.0
+            pot = session._current_pot()
+        else:
+            other = 1 - actor
+            to_call = max(0.0, committed[other] - committed[actor])
+            pot = committed[0] + committed[1]
+            committed_actor = committed[actor]
         char, blend = None, None
         if act == 'check':
             char = 'k'
         elif act == 'call':
             char = 'c'
-            committed[actor] = committed[other]
+            if session is None:
+                committed[actor] = committed[other]
         elif act == 'allin':
             char = 'a'
-            committed[actor] = float(STARTING_STACK)
-            num_aggr += 1
+            if session is None:
+                committed[actor] = float(STARTING_STACK)
+                num_aggr += 1
         elif act in ('bet', 'raise'):
             bb = a.get('bb')
             if bb is not None:
@@ -309,28 +348,42 @@ def _preflop_pattern(actions):
                     total = float(bb) * BIG_BLIND
                 except (TypeError, ValueError):
                     return None, None, "raise-to (bb) must be a number"
-                if not math.isfinite(total) or total <= committed[actor]:
+                if not math.isfinite(total) or total <= committed_actor:
                     return None, None, "raise-to must exceed the current bet"
-            elif num_aggr == 0:
+            elif (session is None and num_aggr == 0) or \
+                 (session is not None and not (to_call > 0)):
+                # First-in open: BB ladder.
                 total = preflop_open_chips().get(
                     a.get('size', 'medium'), preflop_open_chips()['medium'])
             else:
+                # 3-bet / 4-bet+: pot-relative.
                 mult = PREFLOP_RAISE_MULT.get(a.get('size', 'medium'), 1.0)
-                total = committed[actor] + to_call + mult * (pot + to_call)
-            grid = _preflop_grid(num_aggr, committed[actor], to_call, pot)
-            eff = translation.eff_fraction(total - committed[actor], to_call, pot)
+                total = committed_actor + to_call + mult * (pot + to_call)
+            if session is not None:
+                grid = session._node_grid(legal, include_allin=False)
+            else:
+                grid = _preflop_grid(num_aggr, committed_actor, to_call, pot)
+            eff = translation.eff_fraction(total - committed_actor, to_call, pot)
             tb = translation.translate_bet(eff, grid)
             char = translation.nearest_char(eff, grid)
             if len(tb) > 1:
                 blend = tb
-            committed[actor] = total
-            num_aggr += 1
+            if session is None:
+                committed[actor] = total
+                num_aggr += 1
         if char is None:
             continue
         pattern += char
         if idx == last:
             trailing_blend = blend
-        actor = other
+        # Apply the action so the next iteration's grid + state is correct.
+        if session is not None and act in ('check', 'call', 'fold', 'allin', 'bet', 'raise'):
+            try:
+                session.apply_action(_engine_action_for_replay(a, session))
+            except (GameError, ValueError, TypeError) as e:
+                return None, None, f"could not replay action {idx + 1}: {e}"
+        else:
+            actor = other
     return pattern, trailing_blend, None
 
 
@@ -344,12 +397,16 @@ def strategy_from_hand():
     hole = [c for c in data.get('holeCards', []) if c]
     community_in = [c for c in data.get('communityCards', []) if c]
     actions = data.get('actions', [])
+    history = data.get('history') or {}
     position = data.get('position', 'ip')
 
     if position not in ('ip', 'oop'):
         return jsonify({"error": "position must be 'ip' or 'oop'"}), 400
     if not isinstance(actions, list):
         return jsonify({"error": "'actions' must be a list"}), 400
+    if not isinstance(history, dict) or any(not isinstance(v, list)
+                                            for v in history.values()):
+        return jsonify({"error": "each 'history' street must be a list"}), 400
     if len(hole) != 2:
         return jsonify({"error": "exactly two hole cards required"}), 400
     if len(community_in) not in (0, 3, 4, 5):
@@ -390,8 +447,23 @@ def strategy_from_hand():
     # `fraction`. Either way an off-grid FINAL (faced) bet is mapped onto the
     # trained grid and the two bracketing responses are blended -- exactly what
     # the live bot does via pending_translation.
+    #
+    # If sufficient `history` was sent, build a session and use NODE-specific
+    # grids (matching the live bot exactly, even in deep/short-stack and capped
+    # menu spots where the static grid contains illegal sizes). If history is
+    # missing/incomplete, fall back to the static grid (preserves prior UX for
+    # quick lookups without prior-street setup).
+    lookup_session = None
+    try:
+        lookup_session = _try_build_lookup_session(
+            hole_e, community_e, position, history, street_idx)
+    except Exception:
+        _LOG.warning("failed to build lookup session; falling back to static grid",
+                     exc_info=True)
+        lookup_session = None
     pattern, trailing_blend, err = (
-        _preflop_pattern(actions) if is_preflop else _postflop_pattern(actions))
+        _preflop_pattern(actions, session=lookup_session) if is_preflop
+        else _postflop_pattern(actions, session=lookup_session))
     if err:
         return jsonify({"error": err}), 400
 
@@ -453,11 +525,19 @@ def _river_action_label(a, node, bot_seat):
 
 
 def _engine_action_for_replay(a, session):
-    """Convert one explorer action ({action, fraction|bb}) into an engine action
-    string for GameSession.apply_action, using the session's live pot / to_call. A
-    bet/raise becomes a custom raise-to total (full custom sizing, snapped onto the
-    trained grid by apply_action's pseudo-harmonic translation, exactly like the
-    live bot). Raises ValueError on a malformed size."""
+    """Convert one explorer action into an engine action string for
+    GameSession.apply_action, using the session's live pot / to_call.
+
+    Three forms accepted:
+      * sizeless: {action:'check'|'call'|'fold'|'allin'} -> returned as-is.
+      * named: {action:'bet'|'raise', size:'small'|...} -> returned as
+        'bet_<size>' / 'raise_<size>', applied by the engine like the live bot's
+        own named action.
+      * custom: {action:'bet'|'raise', fraction|bb} -> converted to a custom
+        raise-to total ('bet_custom_<chips>' / 'raise_custom_<chips>'). The
+        engine then snaps it onto the trained grid via pseudo-harmonic
+        translation, exactly like the live bot's pending_translation path.
+    Raises ValueError on a malformed size or unsupported action."""
     act = a.get('action')
     if act in ('check', 'call', 'fold', 'allin'):
         return act
@@ -465,10 +545,18 @@ def _engine_action_for_replay(a, session):
         raise ValueError(f"unsupported action {act!r}")
     facing = 'call' in session.legal_actions()         # a raise iff there's a bet to call
     bb = a.get('bb')
+    frac_in = a.get('fraction')
+    if bb is None and frac_in is None:
+        # Named size — apply directly as 'bet_<size>' / 'raise_<size>'.
+        size = a.get('size', 'medium')
+        return f"{act}_{size}"
     if bb is not None:                                  # preflop: absolute BB raise-to total
         total = float(bb) * BIG_BLIND
     else:                                               # postflop: pot-fraction sized
-        frac = float(a.get('fraction'))
+        try:
+            frac = float(frac_in)
+        except (TypeError, ValueError):
+            raise ValueError("bet/raise fraction must be a number")
         if not math.isfinite(frac) or frac <= 0:
             raise ValueError("bet/raise fraction must be positive and finite")
         pot = session._current_pot()
@@ -497,6 +585,50 @@ def _explorer_session(hole_e, board_e, position):
     d['opp_range'] = RangeTracker(hole_e, session.cards).to_dict()
     d['bot_range'] = RangeTracker((), session.cards).to_dict()
     return session, bot_seat
+
+
+def _replay_history_up_to(session, history, target_street):
+    """Replay history streets 0..target_street-1 through the session. Each
+    prior street's betting must close. After success the session sits at
+    `target_street` with empty current-street betting. Returns None on
+    success or an error string (the caller falls back to the static-grid
+    path on any error — history insufficient or inconsistent)."""
+    streets = [('preflop', 0), ('flop', 1), ('turn', 2)]
+    for name, idx in streets:
+        if idx >= target_street:
+            break
+        line = history.get(name) or []
+        if not line:
+            return f"history.{name} is empty"
+        for a in line:
+            if session.data['status'] != 'in_hand':
+                return f"the betting line ends the hand before {name} closes"
+            if session.data['street'] != idx:
+                return f"actions out of order at {name}"
+            try:
+                session.apply_action(_engine_action_for_replay(a, session))
+            except (GameError, ValueError, TypeError) as e:
+                return f"illegal action in {name}: {e}"
+        if session.data['status'] == 'in_hand' \
+                and session.data['street'] == idx:
+            return f"{name} betting did not close"
+    if session.data['status'] != 'in_hand' \
+            or session.data['street'] != target_street:
+        return "history did not advance to the requested street"
+    return None
+
+
+def _try_build_lookup_session(hole_e, board_e, position, history, street_idx):
+    """Build an explorer session positioned at `street_idx`, with `history`
+    replayed through prior streets. Returns the session, or None if the
+    history is insufficient (caller falls back to the static-grid lookup).
+    Preflop (street_idx == 0) always succeeds — no prior streets needed."""
+    if street_idx == 0:
+        sess, _ = _explorer_session(hole_e, board_e, position)
+        return sess
+    sess, _ = _explorer_session(hole_e, board_e, position)
+    err = _replay_history_up_to(sess, history, street_idx)
+    return None if err else sess
 
 
 def _replay_history(session, history, river_actions):
@@ -983,6 +1115,15 @@ def player_upsert():
     handle = data.get('handle')
     if not player_id:
         return jsonify({"error": "playerId required"}), 400
+    # Count a newly-seen player exactly once. /api/game/new is the usual first
+    # touch, but a player can hit /api/player first (setting a name before
+    # playing). Without this, upsert_handle creates the row silently and
+    # GLOBAL.totalPlayers under-counts.
+    try:
+        if PLAYERS.create_if_absent(player_id):
+            GLOBAL.record_new_player()
+    except Exception:
+        _LOG.warning("new-player counting failed", exc_info=True)
     try:
         row = PLAYERS.upsert_handle(player_id, handle)
     except InvalidHandle as e:
@@ -1022,6 +1163,14 @@ def auth_google():
     if not (ev is True or str(ev).lower() == 'true'):
         return jsonify({"error": "Google email is not verified"}), 401
     sub, email = claims.get('sub'), claims.get('email')
+    # Same one-shot new-player count as /api/game/new and /api/player: if this is
+    # the first server-side touch for player_id (sign-in before any hand), count
+    # them. Otherwise link_account would silently create the row.
+    try:
+        if PLAYERS.create_if_absent(player_id):
+            GLOBAL.record_new_player()
+    except Exception:
+        _LOG.warning("new-player counting failed", exc_info=True)
     try:
         row = PLAYERS.link_account(player_id, email=email, auth_provider='google',
                                    provider_sub=sub)

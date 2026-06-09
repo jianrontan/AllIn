@@ -36,13 +36,23 @@ def check(name, cond, extra=''):
         print(f"FAIL {name} {extra}")
 
 
+# All three trained postflop menu arms. Drift-guards must cover every served
+# arm; the prod-deployed blueprint is `capped`, so a control-only test would
+# leave the prod path structurally invisible to this guard. Each entry maps
+# (menu_mode, sizing.<dict>) so a future arm is one line to add.
+POSTFLOP_MENUS = (
+    ('control',     sizing.POSTFLOP_BET_MULT),
+    ('capped',      sizing.POSTFLOP_BET_MULT_CAPPED),
+    ('capped_no2',  sizing.POSTFLOP_BET_MULT_CAPPED_NO2),
+)
+
+
 def test_engine_matches_sizing():
+    # Preflop side (mode-independent): one check covers it.
     g = PokerGame()
     check('engine open == sizing.preflop_open_chips',
           g.get_preflop_bet_amounts('open', 3) == sizing.preflop_open_chips(),
           f"({g.get_preflop_bet_amounts('open', 3)})")
-    check('engine postflop multipliers == sizing.POSTFLOP_BET_MULT',
-          g.BET_MULTIPLIERS == sizing.POSTFLOP_BET_MULT)
     pr = g.get_preflop_bet_amounts('pot_relative', 100)
     expected = {k: m * 100 for k, m in sizing.PREFLOP_RAISE_MULT.items()}
     check('engine pot_relative == sizing.PREFLOP_RAISE_MULT x pot', pr == expected,
@@ -51,24 +61,36 @@ def test_engine_matches_sizing():
     check('3-bet action type is pot_relative',
           g.get_preflop_action_type(['bet_medium']) == 'pot_relative')
 
+    # Postflop side: per-menu-mode. Each arm's engine must match its dict.
+    for mode, expected_menu in POSTFLOP_MENUS:
+        gm = PokerGame(postflop_menu=expected_menu,
+                       voluntary_allin=not sizing.is_capped_mode(mode))
+        check(f'engine[{mode}] BET_MULTIPLIERS == sizing menu',
+              gm.BET_MULTIPLIERS == expected_menu,
+              f"({gm.BET_MULTIPLIERS} vs {expected_menu})")
+        check(f'engine[{mode}] voluntary_allin matches mode',
+              gm.voluntary_allin == (not sizing.is_capped_mode(mode)))
+
 
 def test_action_abstraction_matches_sizing():
+    # Preflop (mode-independent).
     aa = ActionAbstraction()
     gstate = {'pot_size': 3, 'current_bet': 0, 'player_contribution': 0, 'big_blind': 2}
     rstate = {'street': 'preflop', 'action_histories': {'preflop': []}}
-    # Open now has FOUR sizes (incl. 'xlarge'=5 BB); iterate the open keys, not SIZES.
     opens = {s: aa._calculate_target_amount(s, 'bet', gstate, rstate)
              for s in sizing.PREFLOP_OPEN_BB}
     check('action_abstraction open == sizing.preflop_open_chips',
           opens == sizing.preflop_open_chips(), f"({opens})")
-    # Postflop has FOUR sizes (incl. 'overbet'=1.5x pot); each must match the dict.
+    # Postflop: per-menu-mode. ActionAbstraction reads its menu from menu_mode.
     pstate = {'street': 'flop', 'action_histories': {'flop': []}}
     pg = {'pot_size': 20, 'current_bet': 0, 'player_contribution': 0, 'big_blind': 2}
-    postflop = {s: aa._calculate_target_amount(s, 'bet', pg, pstate)
-                for s in sizing.POSTFLOP_BET_MULT}
-    expected_post = {s: m * 20 for s, m in sizing.POSTFLOP_BET_MULT.items()}
-    check('action_abstraction postflop (incl overbet) == sizing.POSTFLOP_BET_MULT x pot',
-          postflop == expected_post, f"({postflop})")
+    for mode, expected_menu in POSTFLOP_MENUS:
+        aam = ActionAbstraction(menu_mode=mode)
+        postflop = {s: aam._calculate_target_amount(s, 'bet', pg, pstate)
+                    for s in expected_menu}
+        expected_post = {s: m * 20 for s, m in expected_menu.items()}
+        check(f'action_abstraction[{mode}] postflop == sizing menu x pot',
+              postflop == expected_post, f"({postflop} vs {expected_post})")
 
 
 def test_lbr_open_matches_sizing():

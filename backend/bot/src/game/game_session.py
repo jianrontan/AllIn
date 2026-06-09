@@ -81,9 +81,17 @@ class GameError(Exception):
     """Raised on an illegal request (bad action, wrong turn, ...)."""
 
 
+# Single source of truth for the GameSession constructor defaults. __init__,
+# .new, and .from_dict all reference these so a future change to either value
+# only needs editing one place (a previous bug class: constructors out of sync
+# silently produce engines that don't match the persisted state).
+_DEFAULT_MENU_MODE = 'control'
+_DEFAULT_MAX_RAISES_PER_STREET = float('inf')
+
+
 class GameSession:
-    def __init__(self, data, strategy_fn=None, menu_mode='control',
-                 max_raises_per_street=float('inf')):
+    def __init__(self, data, strategy_fn=None, menu_mode=_DEFAULT_MENU_MODE,
+                 max_raises_per_street=_DEFAULT_MAX_RAISES_PER_STREET):
         self.data = data
         # The serving engine MUST use the same action abstraction the served
         # blueprint was trained under. Serving a 'capped' blueprint through a
@@ -121,8 +129,9 @@ class GameSession:
     # ------------------------------------------------------------------
 
     @classmethod
-    def new(cls, session_id, player_id, strategy_fn=None, menu_mode='control',
-            max_raises_per_street=float('inf')):
+    def new(cls, session_id, player_id, strategy_fn=None,
+            menu_mode=_DEFAULT_MENU_MODE,
+            max_raises_per_street=_DEFAULT_MAX_RAISES_PER_STREET):
         session = cls({
             'session_id': session_id,
             'player_id': player_id,
@@ -133,8 +142,9 @@ class GameSession:
         return session
 
     @classmethod
-    def from_dict(cls, data, strategy_fn=None, menu_mode='control',
-                  max_raises_per_street=float('inf')):
+    def from_dict(cls, data, strategy_fn=None,
+                  menu_mode=_DEFAULT_MENU_MODE,
+                  max_raises_per_street=_DEFAULT_MAX_RAISES_PER_STREET):
         # Deep-copy so the live session never aliases the stored dict's nested
         # lists/dicts (history, action_log, community, opp_range, ...). Without
         # this, in-place mutations would leak into the store before put() and a
@@ -179,6 +189,13 @@ class GameSession:
         # hand isn't skipped (bug: without this reset, only hand 1 of a session
         # ever counted toward the +EV leaderboard).
         d['result_recorded'] = False
+        # Pending off-grid bet translation, set by apply_action when the human's
+        # last bet was custom-sized; consumed by the bot's NEXT decision. It must
+        # NOT survive across hands -- seats flip on `start_next_hand`, so a
+        # stale entry would contaminate the bot's first preflop decision of the
+        # new hand with a phantom translation built from the previous hand's
+        # betting line. (Same family of bug as the `result_recorded` carry-over.)
+        d.pop('pending_translation', None)
         # Hand-level belief over the HUMAN's hole cards, from the bot's seat
         # (the bot knows its own cards, so they're removed from the combos).
         # Only built when an opponent model is available; None disables tracking.
@@ -407,11 +424,19 @@ class GameSession:
 
         cost = self._action_cost(action)
 
-        # Range-track the HUMAN's action (the opponent, from the bot's view).
-        # Must read bet_pattern/board BEFORE this action is appended. A custom
-        # bet is observed as its nearest grid action (the tracker models the
-        # opponent as the blueprint, which only knows grid sizes; a far-off-grid
-        # bet then looks improbable and correctly erodes confidence).
+        # Range-tracker observes happen BEFORE the action is appended (they read
+        # bet_pattern/board for the PRE-action node). A custom bet is observed
+        # as its nearest grid action (the tracker models the opponent as the
+        # blueprint, which only knows grid sizes; a far-off-grid bet then looks
+        # improbable and correctly erodes confidence).
+        #
+        # Atomicity: do BOTH observes first (mutating local tracker copies), and
+        # only write back to session.data once history.append/stack updates have
+        # also succeeded. Without this, a failure in the bot-range observe
+        # AFTER the opp-range writeback would leave session.data with opp_range
+        # one step ahead of history (inconsistent restore on a retry / from_dict).
+        new_opp_range = None
+        new_bot_range = None
         if (player == d['human_seat'] and self.strategy_fn is not None
                 and d.get('opp_range') is not None):
             tracker = self._load_range()
@@ -419,12 +444,7 @@ class GameSession:
             board = d['community'][:_BOARD_COUNT[min(street, 3)]]
             tracker.observe(self.strategy_fn, snapped_action, street, self._opp_position(),
                             d['bet_pattern'], legal, board)
-            d['opp_range'] = tracker.to_dict()
-
-        # Symmetrically, build the BOT's own blueprint-reach range (the hero range
-        # the river solver consumes) by observing the bot's actions. Frozen at
-        # river entry via river_entry_bot, so observing the bot's river actions
-        # here is harmless (the solver uses the snapshot, not the live tracker).
+            new_opp_range = tracker.to_dict()
         if (player != d['human_seat'] and self.strategy_fn is not None
                 and d.get('bot_range') is not None):
             bt = self._load_bot_range()
@@ -432,14 +452,21 @@ class GameSession:
             board = d['community'][:_BOARD_COUNT[min(street, 3)]]
             bt.observe(self.strategy_fn, snapped_action, street, self._bot_position(),
                        d['bet_pattern'], legal, board)
-            d['bot_range'] = bt.to_dict()
+            new_bot_range = bt.to_dict()
 
+        # From here on every mutation is on session.data and is infallible
+        # (pure list / arithmetic ops). The range writebacks come last so that
+        # an earlier raise leaves session.data exactly as it was.
         d['history'].append(action)
         d['bet_pattern'] += char
         if player == 0:
             d['p0_stack'] -= cost
         else:
             d['p1_stack'] -= cost
+        if new_opp_range is not None:
+            d['opp_range'] = new_opp_range
+        if new_bot_range is not None:
+            d['bot_range'] = new_bot_range
         d['action_log'].append({
             'player': player,
             'street': _STREET_NAMES[min(d['street'], 3)],

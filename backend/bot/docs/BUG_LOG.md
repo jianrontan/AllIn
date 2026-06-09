@@ -10,6 +10,125 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-023 — Bot over-jams a counterfeited / range-dominated made hand (the proposing-side leak)
+
+| | |
+|---|---|
+| **Date** | 2026-06-09 |
+| **Area** | Card abstraction (postflop strength buckets) + blueprint strategy quality |
+| **Severity** | Medium (bot stacks off light on the BETTING side) · **Status** | Open — abstraction/training limitation; **no cheap inference fix** (retrain / Phase-4 proposal-side solver) |
+
+**Summary.** The bot jammed 88 BB on the turn with `2d3h` on `2c 6s Qc Qs` — i.e. a **counterfeited bottom two pair** (`QQ22`: the QQ is on the board, so the bot's real edge is just a pair of 2s) — facing a 3-bet preflop + flop bet + turn bet, and got stacked by `AA`. The blueprint's trained strategy at the key `pf_0_9_ip_turn_m` is **`allin 48%`** — the single most likely action.
+
+**Root cause.** The postflop strength buckets cluster hands by their equity *distribution* vs a **uniform** range. Verified directly:
+- `2d3h` on `2c6sQcQs` → turn strength bucket **9**, equity vs a UNIFORM range = **0.54** ("looks like a decent two pair").
+- equity vs the villain's ACTUAL range (3-bet + double-barrel = strong/made) = **0.028** (~3%, drawing dead).
+
+The bucket can't see *range-relative* strength, and on a **paired board** a junk pair gets a "two pair" label and a middling bucket, lumped with genuinely strong made hands whose bucket-average strategy (jam) is correct for *them* and badly wrong for this weak member. So the blueprint over-jams it.
+
+**Why the inference guards don't catch it.**
+- It's a **trained** node (the key has a real strategy) and the bot is **proposing** a raise — the deep-raise/all-in guards fire only when *facing* a bet at an *untrained* node, and by design **never propose aggression** (the BUG-011 stray-raise rule).
+- The range tracker was at **2% confidence** (the human's line was off the blueprint model → confidence collapsed → belief stayed ~uniform), and vs uniform the hand looks fine (0.54), so an equity check wouldn't veto it either. Knowing the hand is dead requires modeling that the *betting* range is strong — i.e. an opponent calling/range model.
+
+**Path (not a cheap heuristic).**
+- Retrain with finer / paired-board-aware postflop buckets that separate counterfeited weak two-pair from genuine value hands (so the weak tier's strategy isn't "jam").
+- OR the **Phase-4 proposal-side subgame solver**, which computes the bot's jam EV vs the actual range.
+- A range-blind veto on the bot's own jams is exactly the BUG-011 stray-aggression risk *and* would nerf legitimate value jams — not safe.
+
+**Lesson.** Equity-vs-uniform buckets measure "how good is this hand vs a *random* hand," not "vs the range that actually arrived." On paired/dynamic boards that gap is enormous (0.54 → 0.03 here) and surfaces as **over-jamming**. The guards added in BUG-021/022 fix the bot *folding* premiums and *calling* off light (the **response** side); the **betting** side (proposing light) is a separate, abstraction-rooted class — the over-jam half of the known "bot plays poorly: overjams + overcalls" issue.
+
+---
+
+## BUG-022 — Bot calls off 100 BB with T8o vs a jam: off-menu all-in keeps confidence at 100% on a uniform belief
+
+| | |
+|---|---|
+| **Date** | 2026-06-09 |
+| **Area** | Live serving — `RangeTracker.observe` + the faced-all-in equity guards (`src/game/range_tracker.py`, `src/subgame/river_subgame_solver.py`) |
+| **Severity** | High (bot stacks off with trash) · **Status** | Fixed (uncommitted) |
+
+**Summary.** A user saw the bot **call a 99 BB all-in with T8o** (over its own 1.5 BB open). The
+debug showed "Read confidence: **100%**" on a junk **uniform** range. Chain:
+1. A 100 BB jam over a min-open is an **off-menu** action — at that depth `allin` isn't a menu
+   3-bet, so the custom raise-to-stack normalizes to `allin`, which isn't in the abstract legal set.
+2. `RangeTracker.observe` saw an action **not in `legal`** and **returned early** — so it never
+   updated the range *and never decayed confidence*. The bot held a **uniform belief at 100%
+   confidence** (zero read, maximal trust).
+3. `_facing_allin_guard` fired (confidence 100% ≥ 0.2) and computed T8o equity **vs uniform ≈ 0.53**
+   > pot odds ≈ 0.49 → **call**. (No blueprint to fall back on either: the `capped` blueprint
+   (`voluntary_allin=False`) never trained *any* facing-a-jam node — 0 keys contain an all-in.)
+
+The math was right given the belief, but the belief ("opponent jams any-two") is absurd: nobody
+jams 100 BB over a min-open that wide. **Equity-vs-uniform massively over-estimates because real
+all-in ranges are selected/strong.**
+
+### Fix (inference-only, no retrain), two parts
+- **Part 1 — `RangeTracker.observe`: an off-menu action now COLLAPSES confidence** (`*= 0.1`, below
+  the guards' 0.2 trust threshold). An action the model can't represent is maximally off-model;
+  leaving confidence untouched was the root inconsistency. Keeps the prior range (can't reweight on
+  an unrepresentable action), but stops *trusting* it → the all-in guard defers.
+- **Part 2 — `_jam_range_equity`: a faced all-in with an uninformed (collapsed) read is judged vs a
+  top-20% JAM range, not uniform** (`river_subgame_solver._facing_deep_raise_guard`, preflop only —
+  the preflop bucket is equity-ordered; postflop EMD strength buckets aren't, left on the uniform
+  floor as a separate fix). Chosen over a flat equity cushion after measuring that vs-uniform and
+  vs-a-strong-range *rank hands differently*: the cushion would still stack off dominated hands
+  (KQo/A5s/55) that look fine vs random; the top-X% range folds them. Premiums always still call.
+
+### Measured (tests/run_maniac_live.py `--style shove`, off-menu jams over opens)
+1500 hands: the deep guard handled **1407** faced all-ins via the jam-range floor; **loose call-offs
+(stack committed with a sub-top-40% hand) = 0** (the T8o class); `allin_guard` fired 0× (confidence
+correctly collapsed); no crashes. Tradeoff: folds 77 to a 100 BB shove (conservative side of X=20%;
+tunable).
+
+**Why not caught.** The maniac harness's `jam` style shoves only via the *in-menu* `allin` (when
+already near-committed), which `observe` *does* process → confidence decays → guard defers. A real
+human jams *off-menu* over a small open, the path the harness never exercised. And the harness only
+measured bad *folds*, never bad *calls*. Added: a `shove` style (off-menu jams) and a loose-call-off
+metric.
+
+**Lesson.** A uniform belief means *no information* — it must never be held at high confidence. An
+off-model action the abstraction can't even represent is the strongest possible "I don't understand
+this opponent" signal; treat it as such (collapse confidence), and when committing the whole stack
+with no read, assume a *realistic* (selected) opponent range, not a uniform one.
+
+### Hardening + gap-closure (2026-06-09)
+Three follow-ups completed the fix and closed the postflop gap (all in `river_subgame_solver.py`):
+- **Postflop turn gap.** A faced all-in on the TURN with an uninformed read now uses the same
+  top-20% jam range, ranked by each EMD strength bucket's **centroid-MEAN equity** (`_postflop_means`
+  / `_combo_strength`). (Earlier I wrongly thought the EMD buckets were unusable for ranking — they
+  are: the centroid means are equity-ordered *and* draw-aware, since each centroid is an equity-vs-
+  runout histogram. The bucket *index* isn't guaranteed ordered after a re-bake, so ranking is by the
+  derived mean.) River stays solver-owned; flop rarely all-in.
+- **B1.** An uninformed *money-behind* preflop 5-bet+ (not just an all-in) is also beyond-cap and faces
+  a selected range, so it uses the jam range too.
+- **Informativeness gate.** `_trust_read` = confident AND the belief actually concentrated off uniform
+  (inverse-Simpson `eff_n/n_live < INFORMATIVE_RATIO`). Belt-and-suspenders for a uniform-belief-at-
+  high-confidence edge. NOTE the threshold lesson: it was first set at 0.95, which wrongly discarded a
+  genuine *mild* read (a 1.5x tilt is ratio ~0.97) and reverted to un-adapted blueprint play at trained
+  all-in nodes — a regression a review agent caught. Raised to **0.99** (reject only ~uniform). The
+  gate is largely redundant with the off-menu confidence collapse, so it rarely fires.
+
+**A/B validation (tests/run_maniac_live.py, served bot through uncapped GameSession, seed 42, current
+vs `--cripple2` = the pre-fix faced-all-in behavior):**
+
+| Opponent | Current (all fixes) | `cripple2` (old) |
+|---|---|---|
+| `shove` (any-two jam, 10k) | +1.56 BB/h · 0 loose call-offs · 71 prem-folds | +0.31 · **2913** · 326 |
+| `widejam` (top-50% jam, 10k) | **+1.05** BB/h · 0 · 34 | **−3.80** · 1333 · 146 |
+| `maxbet` (max non-all-in presser, 6k) | +4.32 BB/h · 0 · 0 | (headline) |
+
+The fix turns a **−3.80 loss into a +1.05 win** vs a realistic jammer and zeroes stack-off-light; it
+even beats the old behavior vs an any-two shover (not-folding-premiums dwarfs the marginal over-fold).
+
+**MEASUREMENT NOTE (important).** LBR / best-response (`tests/run_evaluation.py`) do NOT measure any of
+these guards: they evaluate the *blueprint* on the *capped* (3-aggression) public tree, while the guards
+live only in the served `RiverSubgameSolver`/`GameSession` path and fire on uncapped/off-tree/uninformed
+nodes the eval tree can't reach. The blueprint DB is unchanged, so a before/after BR run returns an
+identical number (hours wasted). The live `run_maniac_live.py` harness (`--style shove|jam|maxbet|
+widejam`, `--cripple2`) is the correct tool for inference-guard changes.
+
+---
+
 ## BUG-021 — Bot folds premiums (incl. AA) at beyond-cap live nodes: the passive coin-flip fallback
 
 | | |

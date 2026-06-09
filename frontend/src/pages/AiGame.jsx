@@ -6,8 +6,8 @@
 // All amounts are shown in big blinds (the backend works in chips; 1 BB = 2).
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { newGame, sendGameAction, sendBotAction, nextHand, getGameState, setPlayerId,
-    getPlayerId, getAccount, getMe, getHealth,
+import { newGame, sendGameAction, sendBotAction, nextHand, getGameState,
+    getPlayerId, adoptPlayerId, getAccount, getMe, getHealth,
     getStoredSessionId, setStoredSessionId, clearStoredSessionId } from '../api';
 import { fmtBB, fmtBBSigned } from '../format';
 import PlayingCard from '../components/PlayingCard';
@@ -16,9 +16,10 @@ import IntroModal from '../components/IntroModal';
 import LoginPrompt from '../components/LoginPrompt';
 import GoogleSignInButton from '../components/GoogleSignInButton';
 
-const INTRO_KEY = 'allin.introDismissed';
-
-const PLAYER_ID_KEY = 'allin_player_id';
+// Standardized snake_case localStorage key (matches the other allin_* keys
+// owned by api.js — sessionId, account, playerId). Old `allin.introDismissed`
+// users will see the popup once after this change; acceptable trade-off.
+const INTRO_KEY = 'allin_intro_dismissed';
 
 // Abstract action -> button verb. The BB amount is shown separately, below
 // the verb, so the player always sees exactly how much is being committed.
@@ -304,8 +305,10 @@ function AiGame() {
         try {
             // Send any saved player id so the backend reuses it; it echoes back
             // the authoritative id, which we persist and keep for the ownership
-            // check on every later request (see api.setPlayerId).
-            setPlayerId(localStorage.getItem(PLAYER_ID_KEY) || null);
+            // check on every later request. `getPlayerId()` is the canonical
+            // setter — it both reads from localStorage AND primes api.js's
+            // module-level `playerId` used by every game request.
+            getPlayerId();
 
             // Try to CONTINUE the previous session: a reload mid-session should
             // preserve hand_number + human_net + the dealt hand. The backend keeps
@@ -315,7 +318,7 @@ function AiGame() {
             if (storedId) {
                 try {
                     const v = await getGameState(storedId);
-                    if (v.playerId) setPlayerId(v.playerId);
+                    if (v.playerId) adoptPlayerId(v.playerId);
                     setView(v);
                     return;                          // restored cleanly
                 } catch {
@@ -323,10 +326,7 @@ function AiGame() {
                 }
             }
             const v = await newGame();
-            if (v.playerId) {
-                localStorage.setItem(PLAYER_ID_KEY, v.playerId);
-                setPlayerId(v.playerId);
-            }
+            if (v.playerId) adoptPlayerId(v.playerId);
             if (v.sessionId) setStoredSessionId(v.sessionId);
             setView(v);
         } catch (e) {
@@ -478,7 +478,6 @@ function AiGame() {
 
     const handOver = view.status === 'hand_over';
     const yourTurn = view.toAct === 'you';
-    const net = view.humanNet;
     // Fold run-out: community cards remain undealt when the hand ended before the
     // river. They can be revealed (dimmed) into the empty board slots on request.
     const community = view.community || [];
@@ -497,16 +496,46 @@ function AiGame() {
                 board stays centred in the flexible middle column. Tight padding on
                 phones, roomier margins from the `sm:` breakpoint up. */}
             <div className="w-full px-3 py-4 sm:px-8 sm:py-7">
-                {/* Top bar: Home + title top-left, debug toggle + net top-right */}
+                {/* Top bar:
+                    LEFT  — Home link, title, then Bot / You stat lines stacked.
+                    RIGHT — `?` (intro), Debug (if available), Sign in with Google.
+                */}
                 <div className="flex items-start justify-between gap-3 mb-4 sm:mb-6">
-                    <div>
+                    <div className="flex flex-col gap-1 min-w-0">
                         <Link to="/" className="text-sm text-amber-400 hover:text-amber-300">
                             ← Home
                         </Link>
-                        <h1 className="mt-1 text-xl sm:text-2xl font-bold">Play With AI</h1>
+                        <h1 className="text-xl sm:text-2xl font-bold">Play With AI</h1>
+                        {/* Bot — same compact EvCounter, now under the title. */}
+                        <span className="hidden sm:inline mt-1"><EvCounter compact /></span>
+                        {/* You — lifetime P/L across every session this playerId
+                            has ever played. Same compact format as EvCounter
+                            ("Bot ±X BB (±Y BB/hand) · Z hands") for symmetry.
+                            Refreshes after each completed hand. */}
+                        {lifetime && (() => {
+                            // lifetime.netBB is ALREADY in BB (backend stores BB
+                            // directly). Do NOT use fmtBBSigned — that's for chips.
+                            const bb = lifetime.netBB;
+                            const hands = lifetime.hands;
+                            const rate = hands ? bb / hands : 0;
+                            const cls = bb > 0 ? 'text-emerald-400'
+                                : bb < 0 ? 'text-rose-400' : 'text-neutral-400';
+                            const fmtSigned = (v, dp) =>
+                                `${v > 0 ? '+' : ''}${v.toLocaleString(undefined, { maximumFractionDigits: dp })}`;
+                            return (
+                                <span className="text-xs tabular-nums text-neutral-400">
+                                    You <span className={`font-semibold ${cls}`}>
+                                        {fmtSigned(bb, 0)} BB
+                                    </span>
+                                    <span className="text-neutral-600">
+                                        {' '}({fmtSigned(rate, 2)} BB/hand) ·{' '}
+                                        {hands.toLocaleString()} hands
+                                    </span>
+                                </span>
+                            );
+                        })()}
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                        <span className="hidden sm:inline"><EvCounter compact /></span>
                         <button onClick={() => setShowIntro(true)} title="What is this?"
                             className="text-xs w-6 h-6 rounded-full border border-neutral-700
                                        text-neutral-400 hover:text-neutral-200">?</button>
@@ -521,32 +550,6 @@ function AiGame() {
                         )}
                         <GoogleSignInButton registered={account?.isRegistered}
                             handle={account?.handle} />
-                        {/* Per-session running net. The hand number is shown
-                            under the board ("Hand #N · you are…") — no
-                            duplicate here. */}
-                        <span className={'text-sm font-semibold tabular-nums ' +
-                            (net > 0 ? 'text-emerald-400'
-                                : net < 0 ? 'text-rose-400' : 'text-neutral-400')}>
-                            Net&nbsp;&nbsp;{fmtBBSigned(net)} BB
-                        </span>
-                        {/* Lifetime stats: hands played + net across every
-                            session this playerId has ever had. Refreshes after
-                            each completed hand. */}
-                        {lifetime && (
-                            <span className="text-xs text-neutral-500 tabular-nums">
-                                Lifetime · {lifetime.hands.toLocaleString()} hands{' '}
-                                <span className={
-                                    (lifetime.netBB > 0 ? 'text-emerald-400'
-                                        : lifetime.netBB < 0 ? 'text-rose-400' : 'text-neutral-300')
-                                }>
-                                    {/* lifetime.netBB is already BB (backend
-                                        stores BB directly). fmtBBSigned would
-                                        re-divide by 2 — don't use it here. */}
-                                    {lifetime.netBB > 0 ? '+' : ''}
-                                    {lifetime.netBB.toLocaleString(undefined, { maximumFractionDigits: 1 })} BB
-                                </span>
-                            </span>
-                        )}
                     </div>
                 </div>
 
@@ -560,21 +563,29 @@ function AiGame() {
                 <div className="grid grid-cols-1 lg:grid-cols-[18rem_minmax(0,1fr)_18rem]
                                 gap-5 lg:gap-6 items-start">
 
-                {/* LEFT: bot read + debug overlay + action log */}
+                {/* LEFT: debug overlay (read + per-decision trace) + action log.
+                    Everything spoiler-shaped (the bot's read of your range, the
+                    per-decision info-set keys, the solver's internals) lives behind
+                    the Debug toggle so a casual visitor sees only the felt and the
+                    action log. The toggle itself only exists when the backend has
+                    ALLIN_DEBUG_OVERLAY=1; in prod with the overlay off there is no
+                    button and nothing to render here. */}
                 <aside className="order-3 lg:order-1 flex flex-col gap-6">
                     {showDebug && (
-                        <div>
-                            <h4 className="text-xs uppercase tracking-wider text-neutral-500 mb-1">
-                                Bot debug
-                            </h4>
-                            <p className="text-[11px] text-neutral-600 mb-2">
-                                Info-set keys &amp; solver internals - reveals the bot&rsquo;s
-                                hand bucket (spoiler).
-                            </p>
-                            <BotDebug debug={view.botDebug} />
-                        </div>
+                        <>
+                            <BotRead read={view.botRead} final={handOver} />
+                            <div>
+                                <h4 className="text-xs uppercase tracking-wider text-neutral-500 mb-1">
+                                    Bot debug
+                                </h4>
+                                <p className="text-[11px] text-neutral-600 mb-2">
+                                    Info-set keys &amp; solver internals - reveals the bot&rsquo;s
+                                    hand bucket (spoiler).
+                                </p>
+                                <BotDebug debug={view.botDebug} />
+                            </div>
+                        </>
                     )}
-                    <BotRead read={view.botRead} final={handOver} />
                     {view.actionLog.length > 0 && (
                         <div>
                             <h4 className="text-xs uppercase tracking-wider text-neutral-500 mb-2">

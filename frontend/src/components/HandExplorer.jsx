@@ -5,7 +5,7 @@
 // On the river you can also run the subgame SOLVER (ungated). With the solver on,
 // you enter the full pre-river betting (preflop/flop/turn) so the backend can
 // replay it through the blueprint and solve with realistic ranges, not uniform.
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { getStrategyFromHand, riverSolve } from '../api';
 import StrategyResult from './StrategyResult';
 
@@ -170,35 +170,45 @@ function HandExplorer() {
     const setHistoryStreet = (st) => (updater) =>
         setHistory((h) => ({ ...h, [st]: updater(h[st]) }));
 
+    // Monotonic request id: each lookup() increments it; only the latest call's
+    // resolution is allowed to set state. Prevents a slow earlier request from
+    // overwriting a newer result (or setting state after unmount).
+    const reqId = useRef(0);
+
     const lookup = async () => {
+        const myReq = ++reqId.current;
         setError(null);
         setLoading(true);
         setResult(null);
+        // Send `history` to BOTH the blueprint lookup and the river solver: the
+        // blueprint side uses it to replay through a session so off-grid bets are
+        // translated against the node-specific grid (matching what the live bot
+        // would do), not a static one (the Explorer-vs-live drift fix).
         const payload = {
             holeCards: hole,
             communityCards: community.slice(0, boardN),
             position,
             actions,
+            history,
         };
         try {
-            // Always get the blueprint lookup (cheap, gives the info-set key). In
-            // solver mode also replay the full history through the river solver and
-            // attach it; a solver failure surfaces without losing the blueprint.
             const data = await getStrategyFromHand(payload);
             let solver = null, solverError = null;
             if (solverMode) {
                 try {
-                    const r = await riverSolve({ ...payload, history });
+                    const r = await riverSolve(payload);
                     solver = r.solver;
                 } catch (e) {
                     solverError = e.message;
                 }
             }
-            setResult({ ...data, solver, solverError, showSolver: solverMode });
+            if (reqId.current === myReq) {
+                setResult({ ...data, solver, solverError, showSolver: solverMode });
+            }
         } catch (e) {
-            setError(e.message);
+            if (reqId.current === myReq) setError(e.message);
         } finally {
-            setLoading(false);
+            if (reqId.current === myReq) setLoading(false);
         }
     };
 

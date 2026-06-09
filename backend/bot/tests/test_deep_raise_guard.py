@@ -388,6 +388,120 @@ def test_value_jam_not_when_already_allin():
     check('value-jam: already all-in -> call (no money behind)', out == 'call', f"got {out!r}")
 
 
+# --- Part 2: top-X% jam range for an uninformed faced all-in (BUG-022) ---------
+
+def test_jam_range_equity_below_uniform_for_dominated():
+    s = _solver()
+    eu = s._uniform_floor_equity(('D8', 'HT'), [])       # T8o vs uniform
+    ej = s._jam_range_equity(('D8', 'HT'), [], 0.20)     # T8o vs a top-20% jam range
+    check('jam-range eq << uniform eq for T8o', ej < eu - 0.03 and ej < 0.40, f"{ej} vs {eu}")
+
+
+def test_jam_range_equity_caches():
+    s = _solver()
+    e1 = s._jam_range_equity(('CA', 'SA'), [], 0.20)
+    cached = (frozenset(('CA', 'SA')), frozenset([]), round(0.20, 3)) in s._jam_eq_cache
+    e2 = s._jam_range_equity(('CA', 'SA'), [], 0.20)
+    check('jam-range cached + stable', cached and e1 == e2, f"{e1},{e2}")
+
+
+def test_jam_range_postflop_ranks_by_centroid_mean():
+    """Postflop: the EMD bucket index isn't equity-ordered, but ranking by the bucket's
+    centroid MEAN equity is -- and is draw-aware. A weak made hand on a turn gets a much
+    lower jam-range equity than vs uniform (so it folds to a turn jam); a monster stays
+    high."""
+    s = _solver()
+    board = ['HK', 'SQ', 'D7', 'C2']
+    eu_weak = s._uniform_floor_equity(('D8', 'HT'), board)
+    ej_weak = s._jam_range_equity(('D8', 'HT'), board, 0.20)
+    ej_aa = s._jam_range_equity(('CA', 'SA'), board, 0.20)
+    check('postflop jam-range drops a weak hand vs uniform', ej_weak < eu_weak - 0.03,
+          f"{ej_weak} vs {eu_weak}")
+    check('postflop jam-range keeps AA strong', ej_aa > 0.60, f"{ej_aa}")
+
+
+def test_uninformed_preflop_allin_folds_dominated():
+    """BUG-022: a faced all-in preflop with a collapsed read judges T8o vs the top-20%
+    jam range (eq ~0.33 < pot odds 0.495) -> FOLD, instead of calling off vs uniform."""
+    s = _solver()
+    ps = _ps(0.0, to_call=99.0, bot_stack=99.0, pot=101.0, confidence=0.05, hole=('D8', 'HT'))
+    out = s._facing_deep_raise_guard('pf_13_oop_a', _LEGAL_ALLIN, ps)
+    check('uninformed preflop all-in: T8o -> fold', out == 'fold', f"got {out!r}")
+
+
+def test_uninformed_preflop_allin_premium_still_calls():
+    s = _solver()
+    ps = _ps(0.0, to_call=99.0, bot_stack=99.0, pot=101.0, confidence=0.05, hole=('CA', 'SA'))
+    out = s._facing_deep_raise_guard('pf_29_oop_a', _LEGAL_ALLIN, ps)
+    check('uninformed preflop all-in: AA -> call', out == 'call', f"got {out!r}")
+
+
+def test_decide_preflop_jam_uninformed_folds_dominated_end_to_end():
+    """Full path: faced all-in preflop, collapsed confidence -> all-in guard defers ->
+    deep guard judges vs the jam range -> T8o folds (the served-bot behavior)."""
+    s = _solver()
+    ps = _ps(0.0, to_call=99.0, bot_stack=99.0, pot=101.0, confidence=0.05, hole=('D8', 'HT'))
+    out = s.decide('pf_13_oop_a', ['fold', 'call'], ps)
+    check('decide end-to-end: T8o jam -> fold', out == 'fold', f"got {out!r}")
+
+
+def test_turn_uninformed_allin_premium_calls():
+    """A faced all-in on the TURN with an uninformed read now uses the centroid-mean jam
+    range (the postflop-gap fix). AA (overpair) clears it -> call."""
+    s = _solver()
+    ps = _ps(0.0, street='turn', community=['HK', 'SQ', 'D7', 'C2'],
+             to_call=80.0, bot_stack=80.0, pot=60.0, confidence=0.05, hole=('CA', 'SA'))
+    out = s._facing_deep_raise_guard('pf_9_5_oop_turn_a', _LEGAL_ALLIN, ps)
+    check('turn all-in, uninformed: AA calls', out == 'call', f"got {out!r}")
+
+
+def test_turn_uninformed_allin_weak_made_hand_folds():
+    """The postflop-gap fix: a WEAK made hand facing a turn jam with no read folds vs the
+    centroid-mean jam range (it called off vs the uniform floor before). 87 on K-Q-7-2 =
+    bottom-ish pair, a dog vs a top-20% turn jam range."""
+    s = _solver()
+    ps = _ps(0.0, street='turn', community=['HK', 'SQ', 'D7', 'C2'],
+             to_call=80.0, bot_stack=80.0, pot=60.0, confidence=0.05, hole=('S8', 'H7'))
+    out = s._facing_deep_raise_guard('pf_3_4_oop_turn_a', _LEGAL_ALLIN, ps)
+    check('turn all-in, uninformed: weak pair folds', out == 'fold', f"got {out!r}")
+
+
+def test_b1_preflop_money_behind_uninformed_folds_dominated():
+    """B1: an uninformed PREFLOP money-behind (non-all-in) deep raise at a beyond-cap node
+    also uses the jam range (the range is selected), so a dominated hand folds instead of
+    calling vs uniform."""
+    s = _solver()
+    ps = _ps(0.0, to_call=60.0, bot_stack=120.0, pot=70.0, confidence=0.05, hole=('D8', 'HT'))
+    out = s._facing_deep_raise_guard('pf_13_ip_llm', _LEGAL, ps)
+    check('B1: preflop money-behind T8o -> fold', out == 'fold', f"got {out!r}")
+
+
+def test_informativeness_gate():
+    """A6/BUG-022 generalization: a UNIFORM belief at high confidence is NOT trusted (it
+    carries no read); a CONCENTRATED belief is. A stub without weights defers to the
+    confidence gate (so existing stub tests are unaffected)."""
+    import numpy as np
+
+    class _W:
+        def __init__(self, w, c):
+            self.w = np.array(w, float)
+            self.confidence = c
+    uni = _W([1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 1.0)
+    conc = _W([10, 1, 0, 0, 0, 0, 0, 0, 0, 0], 1.0)
+    mild = _W([1.5] * 4 + [1.0] * 16, 1.0)               # a real ~1.5x tilt (ratio ~0.968)
+    s = _solver()
+    check('uniform belief: not informative', s._belief_is_informative(uni) is False)
+    check('concentrated belief: informative', s._belief_is_informative(conc) is True)
+    # Regression guard: a genuine MILD read must be TRUSTED, not discarded as "uniform"
+    # (the 0.95-threshold bug reverted these to un-adapted blueprint play at trained
+    # all-in nodes). At 0.99 the 1.5x tilt is informative.
+    check('mild real read: informative (not discarded)', s._belief_is_informative(mild) is True)
+    check('trust_read False on uniform@high-conf', s._trust_read(uni) is False)
+    check('trust_read True on concentrated@high-conf', s._trust_read(conc) is True)
+    check('trust_read defers to confidence for a stub (no weights)',
+          s._trust_read(_StubTracker(0.9, 1.0)) is True)
+
+
 TESTS = [
     test_untrained_premium_calls,
     test_untrained_trash_folds,
@@ -422,6 +536,16 @@ TESTS = [
     test_value_jam_not_for_marginal_equity,
     test_value_jam_never_upgrades_a_fold,
     test_value_jam_not_when_already_allin,
+    test_jam_range_equity_below_uniform_for_dominated,
+    test_jam_range_equity_caches,
+    test_jam_range_postflop_ranks_by_centroid_mean,
+    test_uninformed_preflop_allin_folds_dominated,
+    test_uninformed_preflop_allin_premium_still_calls,
+    test_decide_preflop_jam_uninformed_folds_dominated_end_to_end,
+    test_turn_uninformed_allin_premium_calls,
+    test_turn_uninformed_allin_weak_made_hand_folds,
+    test_b1_preflop_money_behind_uninformed_folds_dominated,
+    test_informativeness_gate,
 ]
 
 if __name__ == '__main__':

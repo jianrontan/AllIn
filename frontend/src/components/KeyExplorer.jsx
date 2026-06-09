@@ -58,7 +58,14 @@ function KeyExplorer() {
     const [error, setError] = useState(null);
 
     useEffect(() => {
-        getAbstractions().then(setAbstractions).catch((e) => setError(e.message));
+        // alive flag prevents a late-resolving fetch from setting state on an
+        // unmounted component (React warning + potential ghost data on
+        // tab-switch or page navigation).
+        let alive = true;
+        getAbstractions()
+            .then((a) => { if (alive) setAbstractions(a); })
+            .catch((e) => { if (alive) setError(e.message); });
+        return () => { alive = false; };
     }, []);
 
     const composeKey = (s, b, st, pos, pat) =>

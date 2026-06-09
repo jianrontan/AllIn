@@ -65,6 +65,7 @@ class RecordingSolver(RiverSubgameSolver):
         self.deep_allin = 0      # deep-guard fires that were FACED ALL-INS (the #2 path)
         self.deep_nonallin = 0   # deep-guard fires with money behind (the #1 path)
         self.value_jams = 0      # C1: deep-guard upgraded a monster's call to an all-in
+        self.loose_calloffs = []  # BUG-022: bot CALLED off its stack facing an all-in with a weak hand
         self.blend_fires = 0     # #4: decisions where the bot consumed an off-grid translation
         self.trans_folds = 0     # #4: folds while a translation was active (any -- mostly legit)
         self.blend_untrained_bracket = 0   # #4: a bracket KEY was untrained (the leak precondition)
@@ -110,6 +111,14 @@ class RecordingSolver(RiverSubgameSolver):
                 bucket = int(key.split('_')[1])
             except (ValueError, IndexError):
                 bucket = None
+        # BUG-022 regression metric: bot CALLS off its whole stack facing an all-in with
+        # a weak preflop hand (below ~top-40%, bucket < 18). T8o (pf_13) calling a 100BB
+        # jam is the reported bug; after the jam-range floor this should be ~0.
+        if (action == 'call' and street == 'preflop' and bucket is not None
+                and bucket < 18):
+            to_call = float((public or {}).get('to_call') or 0.0)
+            if to_call >= _bot_stack(public) - 1e-6:
+                self.loose_calloffs.append((bucket, tuple((public or {}).get('hole_cards') or ()), key))
         self.log.append({'street': street, 'key': key, 'action': action,
                          'db_hit': hit, 'mode': mode, 'bucket': bucket,
                          'hole': tuple((public or {}).get('hole_cards') or ())})
@@ -144,6 +153,27 @@ def human_action(session, style):
                 total = (hi - stack) + 0.5 * (costs[-1] + costs[-2])
                 total = min(max(total, lo + 1e-6), hi - 1e-6)
                 return make_custom_action('call' in legal, total)
+    if style == 'shove':
+        # Shove the FULL STACK as a custom raise-to-stack whenever aggression is legal --
+        # an OFF-MENU all-in (e.g. a 100BB jam over a min-open, where 'allin' isn't a menu
+        # 3-bet). This is the real BUG-022 scenario the in-menu jam style can't reproduce.
+        bounds = session.custom_bounds()
+        if bounds is not None and bounds[1] > bounds[0]:
+            return make_custom_action('call' in legal, bounds[1])   # bounds[1] = all-in total
+    if style == 'widejam':
+        # A REALISTIC wide jammer: off-menu shove with the top ~50% of hands, fold the
+        # rest. Tests whether the bot's top-20% jam-range assumption OVER-FOLDS vs an
+        # opponent who jams wider than 20% (but isn't literally any-two like `shove`).
+        hand = d['p0_cards'] if d['human_seat'] == 0 else d['p1_cards']
+        b = session.cards.get_bucket(list(hand), None)
+        bi = int(b.split('_')[1]) if isinstance(b, str) else int(b)
+        if bi >= 15:                                 # top ~50% of preflop buckets (0..29)
+            bounds = session.custom_bounds()
+            if bounds is not None and bounds[1] > bounds[0]:
+                return make_custom_action('call' in legal, bounds[1])
+        if 'fold' in legal:
+            return 'fold'                            # weak hand -> fold (never get stacked light)
+        return 'check' if 'check' in legal else 'call'
     if best is not None:
         return best                                  # room for a non-all-in max raise -> escalate
     if style == 'jam' and 'allin' in legal:
@@ -208,7 +238,8 @@ def main():
     p.add_argument('--db', default=None)
     p.add_argument('--hands', type=int, default=20000)
     p.add_argument('--seed', type=int, default=42)
-    p.add_argument('--style', choices=['maxbet', 'jam', 'overbet'], default='maxbet')
+    p.add_argument('--style', choices=['maxbet', 'jam', 'overbet', 'shove', 'widejam'],
+                   default='maxbet')
     p.add_argument('--cripple2', action='store_true',
                    help="Simulate the pre-#2 bot (deep guard defers on faced all-ins).")
     p.add_argument('--value-jam', dest='value_jam', action='store_true',
@@ -241,6 +272,9 @@ def main():
     print(f"   untrained-bracket present={bot.blend_untrained_bracket}  "
           f"fold-WITH-untrained-bracket (the leak)={bot.blend_untrained_fold}")
     print(f"#5 first-to-act untrained checks={bot.firstact_untrained_checks}")
+    print(f"BUG-022 loose call-offs (called off stack, weak hand): {len(bot.loose_calloffs)}")
+    for bk, hole, key in bot.loose_calloffs[:8]:
+        print(f"    bucket {bk}: called {hole}  key={key}")
     print(f"Bot decision modes: {dict(stats)}")
 
 

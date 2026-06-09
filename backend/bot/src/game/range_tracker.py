@@ -56,6 +56,14 @@ _RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A']
 _SUITS = ['H', 'D', 'C', 'S']
 _FULL_DECK = [s + r for r in _RANKS for s in _SUITS]
 
+# Confidence multiplier for an OFF-MENU opponent action (one the abstract model has
+# no column for -- a custom all-in, a far-off-grid bet). Such an action is maximally
+# off-model: the model assigns it ~0 probability, so the confidence factor
+# exp(-(surprise - H)) -> 0 in the limit. We apply a strong finite collapse (well below
+# any consumer's trust threshold, e.g. the guards' guard_confidence=0.2) rather than a
+# hard zero, so repeated weirdness still compounds. See BUG-022.
+_OFF_MENU_CONFIDENCE_DECAY = 0.1
+
 
 class RangeTracker:
     def __init__(self, hero_hole, cards_abstraction):
@@ -134,9 +142,16 @@ class RangeTracker:
             # player who instead makes a voluntary custom raise-to-stack has it normalized
             # to 'allin' by apply_action -- which is then NOT in `legal`. The opponent
             # model has no column for it, so we can't do the Bayesian reweight; keep the
-            # prior range + confidence rather than crash (this previously raised
-            # ValueError and 500'd the live hand). Conditioning on such actions would need
-            # the model to expose an all-in probability at these nodes (future work).
+            # prior range rather than crash (this previously raised ValueError and 500'd
+            # the live hand). Conditioning on such actions would need the model to expose
+            # an all-in probability at these nodes (future work).
+            #
+            # BUT the action is MAXIMALLY off-model, so we MUST still collapse confidence:
+            # leaving it untouched is what let the bot hold a UNIFORM, never-updated belief
+            # at 100% confidence and trust "opponent jams any-two", calling off 100 BB with
+            # T8o vs a real (strong) jam range (BUG-022). Drop confidence below the guards'
+            # trust threshold so consumers fall back to a no-read default.
+            self.confidence *= _OFF_MENU_CONFIDENCE_DECAY
             return
         ai = legal.index(action)
         mat = self._action_matrix(strategy_fn, street, position, bet_pattern, legal, board)
@@ -150,7 +165,16 @@ class RangeTracker:
                 p_a = float(avg[ai])
                 entropy = float(-np.sum(avg * np.log(avg + 1e-12)))
                 surprise = -np.log(p_a + 1e-12)
-                self.confidence *= float(np.exp(-max(0.0, surprise - entropy)))
+                # Cap excess-surprise so a single legal-but-near-zero-probability
+                # action can't collapse confidence in one shot. Without this, a
+                # ~0-prob legal action gives surprise ~= 27.6 (from the 1e-12
+                # floor) while entropy is bounded by log(|legal|) <= ~1.4 — one
+                # observation multiplies confidence by exp(-26) ~= 5e-12. Cap the
+                # per-observation decay at exp(-ln(10)) = 0.1 (one off-model
+                # action drops confidence by 10x at most; recurrence still
+                # collapses, but no single action can blind the bot).
+                excess = min(max(0.0, surprise - entropy), float(np.log(10.0)))
+                self.confidence *= float(np.exp(-excess))
 
         new_w = self.w * mat[:, ai]
         s = new_w.sum()

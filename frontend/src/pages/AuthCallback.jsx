@@ -18,6 +18,12 @@ function AuthCallback() {
     useEffect(() => {
         if (ran.current) return;                     // StrictMode double-invoke guard
         ran.current = true;
+        // alive flag: if the user navigates away (Home, AiGame) before the
+        // authGoogle call resolves, suppress all UI state setters. The
+        // adoptPlayerId / setAccount side-effects (localStorage writes) DO
+        // still fire — those should land regardless so the rest of the app
+        // sees the now-signed-in identity.
+        let alive = true;
         const frag = new URLSearchParams(window.location.hash.replace(/^#/, ''));
         const idToken = frag.get('id_token');
         const oauthErr = frag.get('error_description') || frag.get('error');
@@ -35,13 +41,15 @@ function AuthCallback() {
         window.history.replaceState(null, '', window.location.pathname);
         authGoogle(idToken)
             .then((r) => {
-                adoptPlayerId(r.playerId);   // one account per Google sub: adopt canonical id
-                setAccount(r);
+                adoptPlayerId(r.playerId);   // localStorage write — always lands
+                setAccount(r);               // localStorage write — always lands
+                if (!alive) return;
                 setRow(r);
-                setNeedUsername(!r.usernameSet);   // required username if none yet
+                setNeedUsername(!r.usernameSet);
                 setState('done');
             })
-            .catch((e) => { setErr(e.message); setState('error'); });
+            .catch((e) => { if (alive) { setErr(e.message); setState('error'); } });
+        return () => { alive = false; };
     }, []);
 
     return (

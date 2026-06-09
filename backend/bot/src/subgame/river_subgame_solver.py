@@ -150,6 +150,23 @@ class RiverSubgameSolver(BlueprintStrategy):
     # via calls anyway.
     VALUE_JAM_EQ = 0.80
 
+    # Assumed opponent JAM range (top fraction of preflop hands) for a FACED ALL-IN when
+    # the read is uninformed. A real 100BB+ jam over a min-open is a SELECTED range, not
+    # uniform, so equity-vs-uniform over-estimates and stacks off dominated hands
+    # (KQo/A5s/55). Judging vs the top ~20% folds those while never folding premiums.
+    # See BUG-022. (Preflop only; the postflop EMD strength buckets aren't equity-ordered.)
+    JAM_RANGE_FRACTION = 0.20
+
+    # A belief is treated as UNINFORMED (don't trust the tracked range for a stack-off)
+    # only when its effective-hand-count / live-hand-count is AT/ABOVE this -- i.e. the
+    # belief is essentially still uniform (no real read). Set very near 1.0 on purpose:
+    # the canonical BUG-022 case (a uniform belief) sits at ratio = 1.0 AND already has its
+    # confidence collapsed by the off-menu decay, so this gate is belt-and-suspenders for
+    # the exact-uniform-at-high-confidence edge. A LOWER value would wrongly discard a
+    # genuine MILD read (a 1.5x tilt is ratio ~0.97) and revert to un-adapted blueprint
+    # play at trained all-in nodes -- a regression. 0.99 rejects only ~uniform beliefs.
+    INFORMATIVE_RATIO = 0.99
+
     def __init__(self, blueprint_db, *, max_iters=400, check_every=40,
                  time_budget=8.0, gap_threshold=None, temper_beta=DEFAULT_TEMPER_BETA,
                  ev_margin=1.0, menu=DEFAULT_MENU, rng=None,
@@ -189,6 +206,11 @@ class RiverSubgameSolver(BlueprintStrategy):
         # never pays the full-flush latency cliff a plain dict's clear() would.
         self._uniform_eq_cache = OrderedDict()
         self._uniform_eq_cap = 50000
+        # Same idea for the top-fraction jam-range floor (faced all-in, uninformed read).
+        self._jam_eq_cache = OrderedDict()
+        # Per-street postflop bucket -> centroid MEAN equity (derived once from the
+        # committed EMD centroids; robust to a re-bake that reorders bucket indices).
+        self._pf_means_cache = {}
         # Diagnostics: why does / doesn't the solver change the bot's action?
         self.stats = {'river_calls': 0, 'solved': 0, 'fallback': 0,
                       'deviated': 0, 'kept_blueprint': 0, 'allin_guard': 0,
@@ -373,12 +395,14 @@ class RiverSubgameSolver(BlueprintStrategy):
         bot_stack = float(ps['p0_stack'] if seat == 0 else ps['p1_stack'])
         if to_call <= 0.0 or to_call < bot_stack - 1e-6:
             return None                              # call leaves money behind -> not near-terminal
-        # Default missing confidence to 0.0 (DEFER), not 1.0: a tracker lacking a
-        # confidence reading is an untrusted belief, and acting on it risks the
-        # whole stack. The real RangeTracker always sets .confidence; this only
-        # bites a malformed/foreign tracker, where defer is the safe direction.
-        if getattr(tracker, 'confidence', 0.0) < self.guard_confidence:
-            return None                              # belief untrusted -> defer to blueprint
+        # Trust the tracked range only when CONFIDENT *and* INFORMATIVE. A uniform belief
+        # held at high confidence (e.g. an on-menu-but-unmodeled jam that left the range
+        # unmoved) must NOT be acted on for a whole-stack decision -- that is the BUG-022
+        # mechanism one branch over. _trust_read folds both checks; defer otherwise (the
+        # deep guard then judges vs the jam range / uniform floor). Missing confidence ->
+        # 0.0 (defer), the safe direction for a malformed/foreign tracker.
+        if not self._trust_read(tracker):
+            return None                              # untrusted/uninformed -> defer
 
         # More board cards still to come (preflop=5, flop=2) -> Monte-Carlo runout
         # equity, which is noisy; use more samples the further from the river so the
@@ -468,11 +492,23 @@ class RiverSubgameSolver(BlueprintStrategy):
         # possible range (AA >= ~0.78 equity vs anything > any preflop pot odds), so it
         # NEVER folds; only genuine trash folds. This makes "never fold the nuts to a
         # deep raise" a hard guarantee, independent of the tracker's confidence state.
-        if getattr(tracker, 'confidence', 0.0) >= self.guard_confidence:
+        if self._trust_read(tracker):
             n_runouts = 600 if street == 'preflop' else 200
             eq = float(tracker.hero_equity(list(hole), list(board), n_runouts=n_runouts))
+        elif street == 'preflop':
+            # Uninformed read at this untrained (beyond-cap) PREFLOP node -- a 5-bet+ jam
+            # OR a money-behind 5-bet+ both face a SELECTED range, not uniform (nobody
+            # gets here any-two). Vs-uniform over-estimates and stacks off dominated hands
+            # (T8o/KQo/A5s/55) -- BUG-022 + B1. Judge vs the top-fraction jam range.
+            eq = self._jam_range_equity(hole, [], self.JAM_RANGE_FRACTION)
+        elif street == 'turn' and to_call >= bot_stack - 1e-6:
+            # FACED ALL-IN on the TURN, uninformed: judge vs the top-fraction range ranked
+            # by the EMD strength bucket's centroid-MEAN equity (the buckets aren't index-
+            # ordered but their centroid means are usable + draw-aware). River is solver-
+            # owned (_solver_inputs); flop is rarely an all-in. The postflop-gap fix.
+            eq = self._jam_range_equity(hole, board, self.JAM_RANGE_FRACTION)
         else:
-            eq = self._uniform_floor_equity(hole, board)   # cached; the latency fix
+            eq = self._uniform_floor_equity(hole, board)   # money-behind postflop / flop
         # EV(call) vs EV(fold)=0, with all-in-for-less handled (mirror the all-in
         # guard's chip math). For the money-behind deep-raise case this is the eq >=
         # pot-odds rule but scored as if the call runs out -- the documented v1
@@ -520,6 +556,94 @@ class RiverSubgameSolver(BlueprintStrategy):
         if len(self._uniform_eq_cache) > self._uniform_eq_cap:
             self._uniform_eq_cache.popitem(last=False)   # evict LRU; no flush cliff
         return eq
+
+    def _postflop_means(self, n_board):
+        """Per-bucket MEAN equity for the street with `n_board` cards, derived from the
+        committed EMD centroids (each is an equity-distribution histogram, so its mean is
+        `centroid @ bin_centers`). The bucket INDEX isn't guaranteed equity-ordered after
+        a re-bake, but the centroid mean always is the bucket's strength -- so ranking by
+        this is robust. Cached per street."""
+        cached = self._pf_means_cache.get(n_board)
+        if cached is not None:
+            return cached
+        from ..abstractions.postflop_features import load_centroids
+        street = {3: 'flop', 4: 'turn', 5: 'river'}[n_board]
+        centroids, bins = load_centroids(street)
+        centroids = np.asarray(centroids, dtype=float)
+        centers = (np.arange(bins) + 0.5) / bins
+        sums = centroids.sum(axis=1)
+        means = (centroids @ centers) / np.where(sums > 0.0, sums, 1.0)
+        self._pf_means_cache[n_board] = means
+        return means
+
+    def _combo_strength(self, combo, board):
+        """A scalar 'how strong is this hand here' for ranking the opponent's range.
+        Preflop: the equity-quantile bucket INDEX (equity-ordered by construction).
+        Postflop: the EMD strength bucket's centroid MEAN equity (equity-ordered + draw-
+        aware -- a strong draw's distribution has a high mean)."""
+        if not board:
+            b = self._cards.get_bucket(list(combo), None)
+            return float(int(b.split('_')[1]) if isinstance(b, str) else int(b))
+        sb = self._cards.get_bucket(list(combo), list(board))
+        idx = int(sb.split('_')[1]) if isinstance(sb, str) else int(sb)
+        means = self._postflop_means(len(board))
+        return float(means[idx]) if 0 <= idx < len(means) else 0.0
+
+    def _jam_range_equity(self, hole, board, frac):
+        """Hero equity vs the top-`frac` of opponent hands (a realistic SELECTED jam /
+        deep-raise range), for an uninformed faced all-in / deep raise. Ranks live combos
+        by `_combo_strength` (preflop bucket index; postflop centroid-mean equity), keeps
+        the strongest `frac`, and returns hero equity vs that range. Folds dominated hands
+        the uniform floor would stack off; premiums still clear pot odds. Cached on
+        (hole, board, frac); 200 MC runouts is ample for a coarse range floor."""
+        ck = (frozenset(hole), frozenset(board), round(frac, 3))
+        cached = self._jam_eq_cache.get(ck)
+        if cached is not None:
+            self._jam_eq_cache.move_to_end(ck)
+            return cached
+        from ..game.range_tracker import RangeTracker
+        t = RangeTracker(list(hole), self._cards)
+        if board:
+            t.reveal(list(board))                         # card removal before ranking
+        scored = []
+        for i, h in enumerate(t.hands):
+            if t.w[i] <= 0.0:
+                continue
+            scored.append((self._combo_strength(h, board), i))
+        scored.sort(reverse=True)                         # strongest first
+        keep = {i for _, i in scored[:max(1, int(round(frac * len(scored))))]}
+        for i in range(len(t.w)):
+            if i not in keep:
+                t.w[i] = 0.0
+        eq = float(t.hero_equity(list(hole), list(board), n_runouts=200))
+        self._jam_eq_cache[ck] = eq
+        if len(self._jam_eq_cache) > self._uniform_eq_cap:
+            self._jam_eq_cache.popitem(last=False)
+        return eq
+
+    def _belief_is_informative(self, tracker):
+        """True iff the tracked range has meaningfully concentrated off uniform (a real
+        read). A uniform belief = NO information and must not be trusted for a stack-off
+        even at high confidence (BUG-022 / A6). Measures effective-hands (inverse Simpson)
+        vs the live-hand count. A stub/foreign tracker without weights returns True (let
+        the confidence gate decide)."""
+        w = getattr(tracker, 'w', None)
+        if w is None:
+            return True
+        s = float(w.sum())
+        if s <= 0.0:
+            return True
+        p = w / s
+        n_live = int((w > 0.0).sum())
+        if n_live <= 1:
+            return True
+        eff_n = 1.0 / float((p * p).sum())
+        return (eff_n / n_live) < self.INFORMATIVE_RATIO
+
+    def _trust_read(self, tracker):
+        """Use the tracked range for a stack-off only when CONFIDENT and INFORMATIVE."""
+        return (getattr(tracker, 'confidence', 0.0) >= self.guard_confidence
+                and self._belief_is_informative(tracker))
 
     def _is_untrained(self, info_set_key, legal_actions):
         """True iff the blueprint has NO usable mass on `legal_actions` at this key --

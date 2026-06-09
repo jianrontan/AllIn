@@ -13,6 +13,7 @@ board values, so it is passed in from day one. Adding the smarter bot later
 means writing a new class here — nothing else changes.
 """
 import random
+import threading
 from abc import ABC, abstractmethod
 
 from ..cfr import translation
@@ -41,7 +42,22 @@ class BlueprintStrategy(BotStrategy):
         # debug overlay, populated by decide() and read by advance_bot_turns.
         # None for a plain blueprint lookup (the info-set key + strategy already
         # tell the whole story); the river solver fills it with solve details.
-        self.last_debug = None
+        #
+        # THREAD-LOCAL: the deployed BOT / EXPLORER_BOT are MODULE-LEVEL
+        # singletons serving multiple Flask worker threads concurrently. A naive
+        # `self.last_debug = ...` lets thread B overwrite A's debug between A's
+        # decide() returning and advance_bot_turns reading it → A's session log
+        # gets B's data. The thread-local store gives each thread its own
+        # last_debug; reads default to None if the current thread never wrote.
+        self._tls = threading.local()
+
+    @property
+    def last_debug(self):
+        return getattr(self._tls, 'last_debug', None)
+
+    @last_debug.setter
+    def last_debug(self, value):
+        self._tls.last_debug = value
 
     def _distribution(self, info_set_key, legal_actions):
         """

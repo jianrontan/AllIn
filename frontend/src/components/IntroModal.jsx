@@ -1,7 +1,7 @@
 // frontend/src/components/IntroModal.jsx
 // First-visit "what is this" popup. Shown on first visit (gated by the
-// allin.introDismissed localStorage flag, managed by the parent) and reopenable
-// from the header "?" button. Copy is fixed per the deployment handoff.
+// allin_intro_dismissed localStorage flag, managed by the parent) and
+// reopenable from the header "?" button. Copy is fixed per the deployment handoff.
 import React, { useState } from 'react';
 
 const BULLETS = [

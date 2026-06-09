@@ -139,20 +139,24 @@ def test_offmodel_action_preserves_range():
     print(f"PASS test_offmodel_action_preserves_range: conf {conf_before:.2f}->{t.confidence:.3f}")
 
 
-def test_offmenu_action_does_not_crash():
-    """Regression (2026-06-04): observe(action) where `action` is NOT in `legal` -- an
-    emergent/custom all-in outside the node's abstract menu (e.g. a capped/deep-stack
-    river jam normalized to 'allin' when 'allin' isn't a listed legal action) -- must
-    no-op safely, NOT raise ValueError and 500 the live hand. Range + confidence are
-    preserved."""
+def test_offmenu_action_collapses_confidence_keeps_range():
+    """observe(action) where `action` is NOT in `legal` -- an emergent/custom all-in
+    outside the node's abstract menu (e.g. a 100BB jam over a min-open normalized to
+    'allin' when 'allin' isn't a listed legal action) -- must (a) not crash / 500 the
+    live hand [regression 2026-06-04], (b) leave the RANGE unchanged (can't Bayesian-
+    reweight on an action the model can't represent), and (c) COLLAPSE confidence
+    [BUG-022 2026-06-09]: such an action is maximally off-model, and leaving confidence
+    untouched let the bot trust a uniform 'jams any-two' belief and call off 100BB with
+    trash. Confidence must drop below the guards' trust threshold (0.2)."""
     t = RangeTracker(('HA', 'DK'), CARDS)
     legal = ['fold', 'call', 'raise_medium', 'raise_large']   # note: no 'allin'
     before = t.w.copy()
     conf_before = t.confidence
     t.observe(weakfolds_fn, 'allin', 0, 'oop', '', legal, [])   # 'allin' not in legal
     assert np.allclose(t.w, before), "off-menu action must leave the range unchanged"
-    assert t.confidence == conf_before, "off-menu action no-op must not alter confidence"
-    print("PASS test_offmenu_action_does_not_crash")
+    assert t.confidence < conf_before, "off-menu action must collapse confidence"
+    assert t.confidence < 0.2, "off-menu confidence must drop below the guard threshold"
+    print("PASS test_offmenu_action_collapses_confidence_keeps_range")
 
 
 def test_serialization_roundtrip():
@@ -382,7 +386,7 @@ TESTS = [
     test_confidence_drops_on_offmodel_action,
     test_bayesian_update_shifts_toward_consistent_hands,
     test_offmodel_action_preserves_range,
-    test_offmenu_action_does_not_crash,
+    test_offmenu_action_collapses_confidence_keeps_range,
     test_serialization_roundtrip,
     test_gamesession_tracking_disabled_without_model,
     test_gamesession_tracks_and_serializes,
