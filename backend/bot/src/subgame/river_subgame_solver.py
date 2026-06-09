@@ -22,6 +22,7 @@ blueprint<->tree bridge (step 6b); until then the solver returns the solved
 strategy when the solve converged and otherwise falls back to the blueprint.
 """
 import logging
+from collections import OrderedDict
 
 import numpy as np
 
@@ -137,11 +138,24 @@ def blueprint_to_tree_dist(bp_dist, node, postflop_menu=None):
 
 
 class RiverSubgameSolver(BlueprintStrategy):
+    # C1: value-jam threshold -- at an UNTRAINED beyond-cap node, a hand whose
+    # uniform-floor equity clears this bar is a monster that could re-jam for value /
+    # deny equity rather than flatly call (the deep guard's default). Gated behind
+    # `value_jam` and DEFAULT OFF: the maniac A/B (2026-06-09) showed it fires ~never
+    # under the capped engine (~1/60 deep nodes) because a standalone 'allin' is only
+    # legal when the bot is already near-committed (voluntary_allin=False), and we
+    # deliberately never CONSTRUCT a custom jam from an untrained node (the BUG-011
+    # risk). Kept as a documented opt-in (it would fire under a control-menu / deeper
+    # or folding-opponent setting); not worth enabling vs a presser that stacks off
+    # via calls anyway.
+    VALUE_JAM_EQ = 0.80
+
     def __init__(self, blueprint_db, *, max_iters=400, check_every=40,
                  time_budget=8.0, gap_threshold=None, temper_beta=DEFAULT_TEMPER_BETA,
                  ev_margin=1.0, menu=DEFAULT_MENU, rng=None,
-                 guard_confidence=0.2, guard_margin=1.0):
+                 guard_confidence=0.2, guard_margin=1.0, value_jam=False):
         super().__init__(blueprint_db)
+        self.value_jam = value_jam
         # Postflop size menu the served blueprint was trained under (control vs
         # capped), so the EV-gate baseline projection maps the blueprint's stored
         # sizes (incl. capped's overbet2) onto the river tree correctly.
@@ -167,9 +181,18 @@ class RiverSubgameSolver(BlueprintStrategy):
         self._evaluator = HandEvaluator()
         self._cards = CardAbstraction()
         self._fallback_count = 0       # solve failures that degraded to the blueprint
+        # Uniform-range equity floor cache (the latency fix): equity vs a uniform
+        # opponent range depends only on (hole, board), not game state, so it is safe
+        # to memoize process-wide. Preflop (board == []) keys on the hole alone, so an
+        # aggressive presser that fires this path every decision reuses <=1326 values.
+        # OrderedDict = LRU (evict oldest at the cap) so a long-lived shared process
+        # never pays the full-flush latency cliff a plain dict's clear() would.
+        self._uniform_eq_cache = OrderedDict()
+        self._uniform_eq_cap = 50000
         # Diagnostics: why does / doesn't the solver change the bot's action?
         self.stats = {'river_calls': 0, 'solved': 0, 'fallback': 0,
-                      'deviated': 0, 'kept_blueprint': 0, 'allin_guard': 0}
+                      'deviated': 0, 'kept_blueprint': 0, 'allin_guard': 0,
+                      'deep_raise_guard': 0, 'premium_no_fold': 0}
 
     # -- BotStrategy interface -------------------------------------------------
     def decide(self, info_set_key, legal_actions, public_state):
@@ -180,10 +203,32 @@ class RiverSubgameSolver(BlueprintStrategy):
         guard = self._run_guard(legal_actions, ps)
         if guard is not None:
             return guard
+        # Deep-raise guard: a raise OR jam into a node the blueprint never trained
+        # (beyond the 3-aggression training cap, e.g. a human 5-bet -> pf_*_ip_slll).
+        # super().decide() would hit BlueprintStrategy's passive fallback (uniform
+        # call/fold) and FOLD THE NUTS half the time. Decide it by equity vs the range
+        # instead (call/fold only -- never a stray raise from an untrained node). The
+        # all-in guard above owns the TRUSTED jam; this catches the untrained jam it
+        # defers on (collapsed read) plus every non-all-in deep raise. See
+        # _facing_deep_raise_guard.
+        try:
+            deep = self._facing_deep_raise_guard(info_set_key, legal_actions, ps)
+        except Exception:
+            # Never crash a live hand (advance_bot_turns only catches GameError). Count
+            # + record so a genuine defect surfaces instead of silently degrading.
+            self._fallback_count += 1
+            self.stats['fallback'] += 1
+            self.last_debug = {'mode': 'deep_guard_error', 'street': ps.get('street')}
+            # Safe degradation: at an untrained faced-bet node, prefer CALL over the
+            # blueprint's 50/50 coin-flip so an ERROR never folds the nuts.
+            deep = self._safe_untrained_call(info_set_key, legal_actions, ps)
+        if deep is not None:
+            return deep
         spec = self._solver_inputs(ps)
         if spec is None:
             self.last_debug = {'mode': 'blueprint', 'street': ps.get('street')}
-            return super().decide(info_set_key, legal_actions, public_state)
+            action = super().decide(info_set_key, legal_actions, public_state)
+            return self._premium_no_fold(action, legal_actions, ps)
         self.stats['river_calls'] += 1
         try:
             dist, node, info = self.solve_for_action(**spec)
@@ -201,7 +246,11 @@ class RiverSubgameSolver(BlueprintStrategy):
             if n <= 5 or n % 100 == 0:
                 _LOG.warning("RiverSubgameSolver fell back to blueprint (#%d)",
                              n, exc_info=True)
-            return super().decide(info_set_key, legal_actions, public_state)
+            safe = self._safe_untrained_call(info_set_key, legal_actions, ps)
+            if safe is not None:
+                return safe          # untrained faced bet -> never coin-flip on an error
+            action = super().decide(info_set_key, legal_actions, public_state)
+            return self._premium_no_fold(action, legal_actions, ps)
 
     # -- shared guard + gate/pick (reused by TurnSubgameSolver) ----------------
     def _run_guard(self, legal_actions, ps):
@@ -231,9 +280,19 @@ class RiverSubgameSolver(BlueprintStrategy):
         baseline = blueprint_to_tree_dist(bp_engine, node, self._postflop_menu)
         row = hand_row(info['ba'], spec['hole'], info['idx'])
         evs = hand_action_evs(info['cfr'], node, row, info['reach0'], info['reach1'])
-        chosen, gate = ev_gate(node.actions, dist, baseline, evs, self.ev_margin)
+        # C3: at an UNTRAINED key the baseline is BlueprintStrategy's passive coin-flip
+        # fallback -- EV-gating the converged solve against that garbage can wrongly
+        # KEEP it. Trust the solve outright there (the only real signal at a beyond-cap
+        # river node). Trained keys keep the normal gate against a real baseline.
+        if self._is_untrained(info_set_key, legal_actions):
+            ev_s = float(sum(dist.get(a, 0.0) * v for a, v in zip(node.actions, evs)))
+            chosen = dist
+            gate = {'ev_solved': ev_s, 'ev_baseline': 0.0, 'delta': 0.0,
+                    'used': 'solved_untrained'}
+        else:
+            chosen, gate = ev_gate(node.actions, dist, baseline, evs, self.ev_margin)
         self.stats['solved'] += 1
-        deviated = gate['used'] == 'solved'
+        deviated = gate['used'] != 'baseline'
         self.stats['deviated' if deviated else 'kept_blueprint'] += 1
         self.last_debug = {
             'mode': mode, 'street': street, 'solved': True, 'deviated': deviated,
@@ -342,6 +401,171 @@ class RiverSubgameSolver(BlueprintStrategy):
         if ev_call < -self.guard_margin:
             return 'fold'
         return None                                  # too close -> defer to blueprint
+
+    # -- facing-a-deep-raise guard (preflop / flop / turn, money behind) --------
+    def _facing_deep_raise_guard(self, info_set_key, legal_actions, ps):
+        """Guard a FACING-a-bet decision (deep raise OR jam) when the blueprint has
+        nothing usable at this node -- i.e. a beyond-cap / untrained key.
+
+        WHY: training caps aggression at 3/street (max_raises_per_street=2), but LIVE
+        play uncaps re-raises so a human can 5-bet/6-bet+. Those nodes (e.g.
+        pf_*_ip_slll) are never visited in training, so BlueprintStrategy._distribution
+        returns its PASSIVE fallback: uniform over {call, fold}. That folds premium
+        hands (AA to a 5-bet) ~half the time -- the exact leak observed live. The
+        _facing_allin_guard runs FIRST and owns the TRUSTED jam (it acts on the tracked
+        range when confident); it DEFERS on a collapsed read -- and at an untrained node
+        deferring is a 50/50 coin-flip, so we cover both the jam it punted on AND every
+        non-all-in deep raise (which never commits the whole stack, so it slips past the
+        all-in guard's to_call >= bot_stack trigger entirely).
+
+        Fix: when (and only when) the blueprint key is untrained, decide call/fold by
+        the tracked-range equity vs pot odds, never a raise (a stray raise from an
+        untrained node is the BUG-011 class). This is an unsafe v1 stopgap (it ignores
+        future-street play / implied odds), but beyond-cap nodes are DEEP -- a called
+        5-bet leaves low residual SPR, so a runout-equity call is a good approximation
+        right where this fires, and it is strictly better than folding the nuts. The
+        principled replacement is the Phase-4 deep-raise subgame solver.
+
+        A collapsed-confidence read does NOT defer here (unlike _facing_allin_guard):
+        there is no trained blueprint to defer to at an untrained node, so deferring
+        would just be a coin flip. It instead judges against a uniform range, which
+        still never folds a premium. See the equity branch below.
+
+        Returns 'call'/'fold', or None to DEFER (river -> solver; trained key ->
+        blueprint; no faced bet; or missing tracker inputs)."""
+        street = ps.get('street')
+        if street not in ('preflop', 'flop', 'turn'):
+            return None                              # river -> full solver downstream
+        if 'call' not in legal_actions or 'fold' not in legal_actions:
+            return None                              # not facing a bet
+        # Only override when the blueprint has NO usable mass on the legal actions
+        # here -- mirrors exactly when _distribution would fall into its passive
+        # fallback. A trained key keeps its learned (balanced) mixed strategy.
+        if not self._is_untrained(info_set_key, legal_actions):
+            return None                              # trained -> defer to blueprint
+        tracker = ps.get('opp_range')
+        hole = ps.get('hole_cards')
+        board = ps.get('community')                  # [] preflop is fine
+        seat = ps.get('seat')
+        if tracker is None or not hole or board is None or seat is None:
+            return None
+        to_call = float(ps.get('to_call') or 0.0)
+        bot_stack = float(ps['p0_stack'] if seat == 0 else ps['p1_stack'])
+        if to_call <= 0.0:
+            return None                              # not facing a bet
+        # NB: we do NOT exclude the faced-all-in case (to_call >= bot_stack). The
+        # all-in guard runs first and ACTS on a trusted jam; it only reaches here when
+        # it DEFERRED (collapsed read), where deferring at an untrained node is a
+        # coin-flip. A called jam just runs the board out, so an equity call/fold is
+        # even better-founded for it than for the money-behind deep-raise case.
+        # Runout equity vs the opponent range (more samples the further from showdown
+        # so MC noise can't flip a premium at the pot-odds boundary). When the read is
+        # TRUSTED, use the tracked belief (adapts: folds marginal hands the read says
+        # are behind). When it is NOT -- a maniac's off-model spam collapses confidence
+        # but `observe` KEEPS the prior range, so the belief is near-uniform anyway --
+        # do NOT defer to the blueprint's 50/50 coin-flip at this untrained node:
+        # judge against a UNIFORM range (card removal only). A premium dominates every
+        # possible range (AA >= ~0.78 equity vs anything > any preflop pot odds), so it
+        # NEVER folds; only genuine trash folds. This makes "never fold the nuts to a
+        # deep raise" a hard guarantee, independent of the tracker's confidence state.
+        if getattr(tracker, 'confidence', 0.0) >= self.guard_confidence:
+            n_runouts = 600 if street == 'preflop' else 200
+            eq = float(tracker.hero_equity(list(hole), list(board), n_runouts=n_runouts))
+        else:
+            eq = self._uniform_floor_equity(hole, board)   # cached; the latency fix
+        # EV(call) vs EV(fold)=0, with all-in-for-less handled (mirror the all-in
+        # guard's chip math). For the money-behind deep-raise case this is the eq >=
+        # pot-odds rule but scored as if the call runs out -- the documented v1
+        # approximation; for a jam it is exact (the board does run out).
+        pot = float(ps.get('pot') or 0.0)            # chips in the middle now (incl. the raise/jam)
+        call_cost = min(to_call, bot_stack)
+        if to_call <= bot_stack:
+            final_pot = pot + to_call
+        else:
+            final_pot = pot - to_call + 2.0 * bot_stack   # opp's unmatched excess returns
+        ev_call = eq * final_pot - call_cost
+        action = 'call' if ev_call >= 0.0 else 'fold'
+        # C1 (opt-in): a monster at this untrained beyond-cap node should re-jam for
+        # value / deny equity rather than flatly call. Gated tightly so it is NOT the
+        # BUG-011 stray raise: only upgrades a CALL (never a fold), only on dominating
+        # uniform-floor equity, only with money behind, and only emits a LEGAL all-in
+        # (never a constructed/off-grid size).
+        if (self.value_jam and action == 'call' and eq >= self.VALUE_JAM_EQ
+                and to_call < bot_stack - 1e-6 and 'allin' in legal_actions):
+            action = 'allin'
+        self.stats['deep_raise_guard'] += 1
+        self.last_debug = {'mode': 'deep_raise_guard', 'street': street,
+                           'action': action, 'eq': round(eq, 3),
+                           'evCall': round(ev_call, 2), 'toCall': to_call,
+                           'botStack': bot_stack}
+        return action
+
+    def _uniform_floor_equity(self, hole, board):
+        """Equity of `hole` vs a UNIFORM opponent range (card removal only), used by the
+        deep-raise guard when the tracker's read has collapsed. Depends only on (hole,
+        board), so it is memoized process-wide -- the latency fix: this path fires on
+        nearly every faced bet vs an aggressive presser, and the 600-runout MC it
+        replaced was ~0.7s each. Preflop (board == []) keys on the hole alone (<=1326
+        values). 200 runouts is ample for a coarse floor where a premium sits far from
+        any pot-odds boundary; turn/river are exact regardless of the count."""
+        ck = (frozenset(hole), frozenset(board))   # order-free: a board is a set of cards
+        cached = self._uniform_eq_cache.get(ck)
+        if cached is not None:
+            self._uniform_eq_cache.move_to_end(ck)   # mark most-recently-used
+            return cached
+        from ..game.range_tracker import RangeTracker
+        eq = float(RangeTracker(list(hole), self._cards).hero_equity(
+            list(hole), list(board), n_runouts=200))
+        self._uniform_eq_cache[ck] = eq
+        if len(self._uniform_eq_cache) > self._uniform_eq_cap:
+            self._uniform_eq_cache.popitem(last=False)   # evict LRU; no flush cliff
+        return eq
+
+    def _is_untrained(self, info_set_key, legal_actions):
+        """True iff the blueprint has NO usable mass on `legal_actions` at this key --
+        i.e. BlueprintStrategy._distribution would fall into its passive coin-flip
+        fallback (a beyond-cap / zero-mass node). Single source of truth for the deep
+        guard, the safe-call degradation, and the river EV-gate skip (C3). A failed
+        lookup returns False (treat as trained -> defer to the blueprint, the safe
+        direction)."""
+        try:
+            stored = self.db.get_average_strategy(info_set_key) if self.db else None
+        except Exception:
+            return False
+        if not stored:
+            return True
+        return sum(max(0.0, stored.get(a, 0.0)) for a in legal_actions) <= 1e-12
+
+    def _safe_untrained_call(self, info_set_key, legal_actions, ps):
+        """Safe degradation on an ERROR path: at an UNTRAINED node FACING A BET, return
+        'call' rather than letting decide() fall through to BlueprintStrategy's 50/50
+        coin-flip (which folds the nuts half the time -- the leak the guards remove).
+        Never throws. Returns 'call', or None (no override -> the normal fallback)."""
+        if 'call' not in legal_actions or 'fold' not in legal_actions:
+            return None
+        if not self._is_untrained(info_set_key, legal_actions):
+            return None           # trained -> let the blueprint play its real strategy
+        return 'call'             # untrained + facing a bet -> never fold on an error
+
+    def _premium_no_fold(self, action, legal_actions, ps):
+        """AA/KK never fold PREFLOP at 100BB heads-up -- they dominate every range at any
+        depth. The blueprint mixes a tiny fold mass at some trained preflop nodes (CFR
+        noise); sampling it folds the nuts (observed: pf_29_ip_sl folding AA to a 3-bet).
+        If the chosen action is a preflop fold with pocket AA/KK, upgrade it to call
+        (never raise -- keep the blueprint's aggression when it already raises). This is
+        belt-and-suspenders to the guards, which only cover UNTRAINED nodes; this fires
+        at TRAINED ones. Scoped to AA/KK by RANK (not the equity bucket, which also holds
+        QQ/AKs -- legitimately foldable to deep aggression)."""
+        if action != 'fold' or ps.get('street') != 'preflop':
+            return action
+        hole = ps.get('hole_cards') or ()
+        if len(hole) == 2 and hole[0][1] == hole[1][1] and hole[0][1] in ('A', 'K'):
+            if 'call' in legal_actions:
+                self.stats['premium_no_fold'] += 1
+                self.last_debug = {'mode': 'premium_no_fold', 'street': 'preflop',
+                                   'hand': ''.join(hole), 'overrode': 'fold->call'}
+                return 'call'
+        return action
 
     def _solver_inputs(self, ps):
         """Extract the river-solve inputs from public_state, or None to signal

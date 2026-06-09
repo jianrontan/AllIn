@@ -116,11 +116,11 @@ _EXPLORER_SEMAPHORE = threading.BoundedSemaphore(_EXPLORER_PERMITS)
 _SOLVE_WAIT_SECONDS = 30.0
 
 # Debug overlay (the per-decision bot trace, `botDebug`) exposes the bot's bucketed
-# hand class MID-HAND -- a spoiler, and a leak now that the repo is public. It is a
-# dev inspection aid only, so it is gated OFF by default (fail-safe for prod) and
-# stripped from every response unless ALLIN_DEBUG_OVERLAY=1. Set that locally to see
-# it in the frontend's Debug panel. See the M2 note + deploy security checklist.
-_DEBUG_OVERLAY = os.environ.get("ALLIN_DEBUG_OVERLAY", "0") == "1"
+# hand class MID-HAND -- a spoiler. Policy: ON by default (dev experience), the
+# PROD Dockerfile sets ALLIN_DEBUG_OVERLAY=0 explicitly so the public deploy is
+# off by default. To disable locally: ALLIN_DEBUG_OVERLAY=0. To enable in Docker:
+# ALLIN_DEBUG_OVERLAY=1. The frontend Debug toggle gates the UI side too.
+_DEBUG_OVERLAY = os.environ.get("ALLIN_DEBUG_OVERLAY", "1") == "1"
 
 
 def _redact_view(view):
@@ -953,6 +953,24 @@ def leaderboard():
                                             accounts_only=accounts_only)})
         _LEADERBOARD_CACHE[ck] = hit
     return jsonify(hit[1])
+
+
+@app.route('/api/me', methods=['GET'])
+def me():
+    """Return the caller's own player row (lifetime stats for the AiGame header).
+    Unlike /api/leaderboard, this is unredacted (the caller sees their own email
+    + bb/100), but it's still scoped to ONE playerId — no enumeration. Missing
+    player or no playerId → empty row so the UI can render a 0-state cleanly
+    (don't 404 here; that would log noise on first-load before any hand)."""
+    player_id = (request.args.get('playerId') or '').strip()
+    if not player_id:
+        return jsonify({"playerId": None, "handle": None, "hands": 0,
+                        "netBB": 0.0, "bbPer100": 0.0, "isRegistered": False})
+    row = PLAYERS.get(player_id)
+    if not row:
+        return jsonify({"playerId": player_id, "handle": None, "hands": 0,
+                        "netBB": 0.0, "bbPer100": 0.0, "isRegistered": False})
+    return jsonify(_player_public_self(row))
 
 
 @app.route('/api/player', methods=['POST'])

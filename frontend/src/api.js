@@ -39,6 +39,17 @@ export function adoptPlayerId(id) {
     playerId = id;
 }
 
+// Active game session id, persisted so reloads CONTINUE the same session
+// (preserving hand_number + human_net + the dealt hand) instead of starting a
+// fresh one. Sessions live 24h on the backend; if the stored id 404s on
+// /api/game/state, the caller clears it and starts a new game cleanly.
+const SESSION_ID_KEY = 'allin_session_id';
+export const getStoredSessionId = () => localStorage.getItem(SESSION_ID_KEY);
+export const setStoredSessionId = (id) => {
+    if (id) localStorage.setItem(SESSION_ID_KEY, id);
+};
+export const clearStoredSessionId = () => localStorage.removeItem(SESSION_ID_KEY);
+
 // Lightweight cached account state (handle + whether signed in), persisted so the
 // header can render it without a self-lookup endpoint. Updated after sign-in
 // (/auth/callback) and after a handle change.
@@ -112,6 +123,16 @@ export const nextHand = (id) => gamePost('/api/game/next-hand', { id });
 
 // --- +EV leaderboard + accounts ---------------------------------------------
 export const getStats = () => request('/api/stats');
+// The caller's OWN row (lifetime hands + net + bb/100). Returns a 0-state row
+// if the player is unknown — never 404 — so the UI renders cleanly on first
+// load before any hand.
+export const getMe = () =>
+    request('/api/me?playerId=' + encodeURIComponent(getPlayerId()));
+
+// /api/healthz — exposes `debugOverlay` so the UI can hide the Debug button
+// entirely when the backend has the overlay redacted. Cached after the first
+// successful call.
+export const getHealth = () => request('/api/healthz');
 export const getLeaderboard = ({ n = 10, minHands = 50, accountsOnly = false } = {}) =>
     request(`/api/leaderboard?n=${n}&min_hands=${minHands}`
         + (accountsOnly ? '&accounts_only=true' : ''));

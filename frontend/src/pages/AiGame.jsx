@@ -7,7 +7,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { newGame, sendGameAction, sendBotAction, nextHand, getGameState, setPlayerId,
-    getPlayerId, getAccount } from '../api';
+    getPlayerId, getAccount, getMe, getHealth,
+    getStoredSessionId, setStoredSessionId, clearStoredSessionId } from '../api';
 import { fmtBB, fmtBBSigned } from '../format';
 import PlayingCard from '../components/PlayingCard';
 import EvCounter from '../components/EvCounter';
@@ -269,6 +270,14 @@ function AiGame() {
     const [account, setAccountState] = useState(null);
     const [showIntro, setShowIntro] = useState(false);
     const [showLogin, setShowLogin] = useState(false);
+    // Lifetime stats for THIS player (hands + net across all their sessions).
+    // Refreshes on mount and again after every completed hand. Distinct from
+    // view.handNumber / view.humanNet (which are PER-SESSION).
+    const [lifetime, setLifetime] = useState(null);
+    // Debug overlay availability — `null` until /api/healthz answers; `true`
+    // shows the toggle, `false` hides the whole button. Prevents an inert
+    // "Debug" button when the backend has ALLIN_DEBUG_OVERLAY=0.
+    const [debugAvailable, setDebugAvailable] = useState(null);
     const loginAsked = useRef(false);
 
     useEffect(() => {
@@ -297,11 +306,28 @@ function AiGame() {
             // the authoritative id, which we persist and keep for the ownership
             // check on every later request (see api.setPlayerId).
             setPlayerId(localStorage.getItem(PLAYER_ID_KEY) || null);
+
+            // Try to CONTINUE the previous session: a reload mid-session should
+            // preserve hand_number + human_net + the dealt hand. The backend keeps
+            // sessions for 24h; a stale/missing id 404s, and we silently fall
+            // through to a fresh game.
+            const storedId = getStoredSessionId();
+            if (storedId) {
+                try {
+                    const v = await getGameState(storedId);
+                    if (v.playerId) setPlayerId(v.playerId);
+                    setView(v);
+                    return;                          // restored cleanly
+                } catch {
+                    clearStoredSessionId();          // expired / unknown -> fresh game
+                }
+            }
             const v = await newGame();
             if (v.playerId) {
                 localStorage.setItem(PLAYER_ID_KEY, v.playerId);
                 setPlayerId(v.playerId);
             }
+            if (v.sessionId) setStoredSessionId(v.sessionId);
             setView(v);
         } catch (e) {
             setError(e.message);
@@ -319,6 +345,32 @@ function AiGame() {
     // Collapse the fold run-out reveal whenever a new hand is dealt.
     const handNumber = view ? view.handNumber : null;
     useEffect(() => { setShowRunout(false); }, [handNumber]);
+
+    // Persist the active session id so a reload (or a Home -> AiGame round-trip)
+    // resumes the SAME session instead of dealing a new one. The backend stores
+    // sessions for 24h; an expired/missing id 404s on /state and startSession
+    // falls through to newGame cleanly (clearing the stored id).
+    useEffect(() => {
+        if (view?.sessionId) setStoredSessionId(view.sessionId);
+    }, [view?.sessionId]);
+
+    // Lifetime stats: load on mount, refresh whenever a hand ends. getMe() returns
+    // a 0-state row for unknown players, so this never 404s.
+    const fetchLifetime = async () => {
+        try { setLifetime(await getMe()); } catch { /* silent: dev / stats outage */ }
+    };
+    useEffect(() => { fetchLifetime(); }, []);
+
+    // Check ONCE on mount whether the backend exposes the debug overlay
+    // (ALLIN_DEBUG_OVERLAY). If it doesn't, the Debug button is hidden — no
+    // dead toggle, no "No bot decisions yet" panel that never populates.
+    useEffect(() => {
+        getHealth()
+            .then((h) => setDebugAvailable(!!h.debugOverlay))
+            .catch(() => setDebugAvailable(false));
+    }, []);
+    const handEnded = view?.status === 'hand_over';
+    useEffect(() => { if (handEnded) fetchLifetime(); }, [handEnded, handNumber]);
 
     // Animated ellipsis for the "Bot is thinking" indicator: '' -> . -> .. -> ...
     useEffect(() => {
@@ -458,20 +510,43 @@ function AiGame() {
                         <button onClick={() => setShowIntro(true)} title="What is this?"
                             className="text-xs w-6 h-6 rounded-full border border-neutral-700
                                        text-neutral-400 hover:text-neutral-200">?</button>
-                        <button onClick={() => setShowDebug((v) => !v)}
-                            className={'text-xs px-2 py-1 rounded-lg border transition-colors ' +
-                                (showDebug
-                                    ? 'border-fuchsia-600 text-fuchsia-300 bg-fuchsia-950/40'
-                                    : 'border-neutral-700 text-neutral-400 hover:text-neutral-200')}>
-                            {showDebug ? 'Debug ✓' : 'Debug'}
-                        </button>
+                        {debugAvailable && (
+                            <button onClick={() => setShowDebug((v) => !v)}
+                                className={'text-xs px-2 py-1 rounded-lg border transition-colors ' +
+                                    (showDebug
+                                        ? 'border-fuchsia-600 text-fuchsia-300 bg-fuchsia-950/40'
+                                        : 'border-neutral-700 text-neutral-400 hover:text-neutral-200')}>
+                                {showDebug ? 'Debug ✓' : 'Debug'}
+                            </button>
+                        )}
                         <GoogleSignInButton registered={account?.isRegistered}
                             handle={account?.handle} />
+                        {/* Per-session running net. The hand number is shown
+                            under the board ("Hand #N · you are…") — no
+                            duplicate here. */}
                         <span className={'text-sm font-semibold tabular-nums ' +
                             (net > 0 ? 'text-emerald-400'
                                 : net < 0 ? 'text-rose-400' : 'text-neutral-400')}>
                             Net&nbsp;&nbsp;{fmtBBSigned(net)} BB
                         </span>
+                        {/* Lifetime stats: hands played + net across every
+                            session this playerId has ever had. Refreshes after
+                            each completed hand. */}
+                        {lifetime && (
+                            <span className="text-xs text-neutral-500 tabular-nums">
+                                Lifetime · {lifetime.hands.toLocaleString()} hands{' '}
+                                <span className={
+                                    (lifetime.netBB > 0 ? 'text-emerald-400'
+                                        : lifetime.netBB < 0 ? 'text-rose-400' : 'text-neutral-300')
+                                }>
+                                    {/* lifetime.netBB is already BB (backend
+                                        stores BB directly). fmtBBSigned would
+                                        re-divide by 2 — don't use it here. */}
+                                    {lifetime.netBB > 0 ? '+' : ''}
+                                    {lifetime.netBB.toLocaleString(undefined, { maximumFractionDigits: 1 })} BB
+                                </span>
+                            </span>
+                        )}
                     </div>
                 </div>
 

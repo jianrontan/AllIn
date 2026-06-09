@@ -35,6 +35,10 @@ COPY backend/ /app/backend/
 ENV PYTHONUNBUFFERED=1 \
     ALLIN_LOG_LEVEL=INFO \
     ALLIN_SESSION_STORE=memory
+# Debug overlay default is ON in code (strategy_api.py). The image does NOT
+# force it off — set ALLIN_DEBUG_OVERLAY=0 in the Lightsail env vars at deploy
+# time if you want the public bot's bucket hidden mid-hand. Local docker runs
+# inherit the dev-friendly ON default.
 
 EXPOSE 5000
 
@@ -42,10 +46,13 @@ EXPOSE 5000
 # (read-only blueprint; state is in-memory/DynamoDB), and COPY leaves them
 # world-readable, so an unprivileged user is sufficient.
 RUN useradd --create-home --uid 10001 allin
-USER allin
 
-# A river solve is CPU-bound (a few seconds); small worker count + threads + a
-# generous timeout. The per-process river-solve semaphore caps concurrent solves.
-CMD ["gunicorn", "--chdir", "backend/api", "wsgi:app", \
-     "--workers", "2", "--threads", "4", "--timeout", "120", \
-     "--bind", "0.0.0.0:5000"]
+# Entrypoint chooses --workers based on the store backend: 1 worker for the
+# in-memory default (per-process dicts can't be shared, so >1 worker oscillates),
+# 2 workers when both stores point at DynamoDB (the prod config). Override via
+# ALLIN_WORKERS=<N>. See docker-entrypoint.sh.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+USER allin
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

@@ -265,11 +265,14 @@ def test_decide_guard_exception_defers_to_blueprint():
     before = s.stats['fallback']
     action = s.decide('irrelevant_key', _LEGAL, ps)
     check('decide survives guard exception', action in _LEGAL, f"got {action!r}")
-    # The guard catches + counts the error (persistent), then falls through to the
-    # blueprint -- so last_debug ends as 'blueprint' (accurate); the durable signal
-    # the error happened is the fallback stat.
-    check('decide counted guard fallback', s.stats['fallback'] == before + 1,
+    # A broken tracker trips BOTH equity guards: the all-in guard catches it (defers),
+    # then the deep-raise guard's own equity call also throws and is caught -- each
+    # ticks the fallback counter once (now +2). On the deep-guard error the catch block
+    # then degrades SAFELY: at this untrained faced-bet node it returns 'call' rather
+    # than the blueprint coin-flip (the #2 safety net), so the action is 'call'.
+    check('decide counted both guard fallbacks', s.stats['fallback'] == before + 2,
           s.stats['fallback'])
+    check('decide degraded to a safe call', action == 'call', f"got {action!r}")
     check('decide did NOT tick allin_guard on error', s.stats['allin_guard'] == 0,
           s.stats['allin_guard'])
 

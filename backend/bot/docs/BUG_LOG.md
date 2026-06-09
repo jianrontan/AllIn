@@ -10,6 +10,60 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-021 — Bot folds premiums (incl. AA) at beyond-cap live nodes: the passive coin-flip fallback
+
+| | |
+|---|---|
+| **Date** | 2026-06-09 |
+| **Area** | Live serving — `RiverSubgameSolver`/`BlueprintStrategy` fallback (`src/subgame/river_subgame_solver.py`, `src/game/bot_strategy.py`) |
+| **Severity** | High (bot folds the nuts in live play) · **Status** | Fixed (uncommitted) |
+
+**Summary.** A user saw the bot fold AA to a 5-bet. Root cause: training caps aggression at 3/street
+(`max_raises_per_street=2`), but LIVE `GameSession` uncaps re-raises, so a human 5-bet/6-bet reaches
+info-set keys (e.g. `pf_29_ip_slll`) that are **never in the blueprint**. `BlueprintStrategy._distribution`
+then returns its PASSIVE fallback — uniform over `{check,call,fold}` — which facing a bet is 50/50
+call/fold, hand-strength-blind. So the bot folds the strongest possible hand half the time.
+
+### Walkthrough
+Verified against `blueprint_final.db`: `pf_29_ip_sl` exists (the 4-bet node, 1825 visits) but
+`pf_29_ip_sll` and `pf_29_ip_slll` are **MISSING** — one aggression past the 3-cap. The near-terminal
+all-in guard (`_facing_allin_guard`) didn't save it: it only fires when `to_call >= bot_stack`, and a
+5-bet-to-90 leaves ~8 BB behind, so it deferred → blueprint fallback → 50/50 → fold.
+
+### Fix (inference-only, no retrain)
+`_facing_deep_raise_guard` in `river_subgame_solver.py`, run in `decide()` after the all-in guard: at an
+UNTRAINED key facing any bet/raise/**jam**, decide call/fold by equity vs the opponent range — tracked
+range when `confidence>=guard_confidence`, else a UNIFORM-range floor (premiums dominate every range, so
+they never fold). Never raises (no stray untrained aggression). Plus: a cached uniform floor (latency),
+a safe-call-on-exception path, and an AA/KK-never-fold-preflop floor (`_premium_no_fold`) for the residual
+CFR-noise fold at trained nodes.
+
+### Measured (tests/run_maniac_live.py — drives the REAL served bot through live uncapped GameSession)
+| Opponent (8–20k hands, seed 42) | Bot BB/hand | premium folds | beyond-cap folds |
+|---|---|---|---|
+| maxbet presser, pre-fix | +1.70 | 375 (1.88%) | **300** |
+| maxbet presser, post-fix | **+4.11** | 76 (0.38%) | **0** |
+| jam presser, #2 (untrained-jam) OFF | +0.55 | 56 | **27** (folds AKs/AJs to 5-bet shoves) |
+| jam presser, #2 ON | +1.17 | 30 | **0** (guard fired 76× on jams) |
+
+The remaining post-fix premium folds are all at *trained* keys and mostly legitimate (JJ/AQ/77 fold to
+deep aggression). `#4` translation-overflow-fold and `#5` first-to-act-value were investigated with an
+off-grid `overbet` maniac and found already-closed (0 leak folds in 1500 hands). `C3` (skip the river
+EV-gate at untrained keys, where the baseline is this same garbage) shipped alongside.
+
+**Why not caught.** The "uncapped live re-raises" feature (a human can 5-bet+) and the passive fallback
+were each correct in isolation; their interaction (beyond-cap keys → fallback → fold the nuts) only shows
+up in live play past the trained tree, which no test or eval exercised — the capped match/LBR engines
+can't even reach the node. The new `run_maniac_live.py` harness (uncapped, drives the served bot) is the
+gap-filler.
+
+**Lesson.** A "passive, never-propose-aggression" fallback is safe for *bets* but catastrophic for *folds*
+(folding the nuts). When you cap something in training but uncap it in serving, the out-of-distribution
+serving nodes need an explicit policy (here: equity vs range), not a uniform default. And measure the
+SERVED bot through the SERVING path — the eval harnesses ran the capped tree and were blind to this.
+
+---
+
 ## BUG-020 — Explorer endpoints 500'd on a non-list `actions`/`history` payload instead of 400
 
 | | |

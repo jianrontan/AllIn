@@ -174,6 +174,11 @@ class GameSession:
         d['bot_debug'] = []          # per-hand bot decision trace (debug overlay)
         d['result'] = None
         d['revealed_board'] = 0
+        # Idempotency anchor for the leaderboard hand-end hook. Set to True
+        # AFTER the hook records this hand; we must reset it here so the NEXT
+        # hand isn't skipped (bug: without this reset, only hand 1 of a session
+        # ever counted toward the +EV leaderboard).
+        d['result_recorded'] = False
         # Hand-level belief over the HUMAN's hole cards, from the bot's seat
         # (the bot knows its own cards, so they're removed from the combos).
         # Only built when an opponent model is available; None disables tracking.

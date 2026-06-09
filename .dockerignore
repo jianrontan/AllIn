@@ -14,6 +14,15 @@ docs
 *.pyo
 *.log
 
+# Dev-only env files (loaded by python-dotenv when present in the working tree).
+# In prod, Lightsail passes real env vars; nothing here should ever ship in the
+# image. The previous oversight let ALLIN_DEBUG_OVERLAY=1 leak via `backend/.env`.
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+
 # SQLite sidecars
 *.db-wal
 *.db-shm
