@@ -68,3 +68,4 @@ secrets.json
 terraform.tfstate
 terraform.tfstate.*
 .terraform/
+ecr-policy.json
