@@ -60,7 +60,11 @@ RUN useradd --create-home --uid 10001 allin
 # 2 workers when both stores point at DynamoDB (the prod config). Override via
 # ALLIN_WORKERS=<N>. See docker-entrypoint.sh.
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# Defensive CRLF strip: if the entrypoint was checked out on Windows it has \r\n
+# line endings, and Linux's exec(2) will fail with "no such file or directory"
+# trying to run the shebang (/bin/sh\r doesn't exist). sed normalises to LF.
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
+ && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 USER allin
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
