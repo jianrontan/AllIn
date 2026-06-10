@@ -60,7 +60,8 @@ class DynamoDBGlobalStatsStore(GlobalStatsStore):
 
     def __init__(self, table_name, region=None, endpoint_url=None):
         import boto3
-        kwargs = {}
+        from botocore.config import Config
+        kwargs = {'config': Config(retries={'mode': 'adaptive', 'max_attempts': 5})}
         if region:
             kwargs['region_name'] = region
         if endpoint_url:
@@ -113,6 +114,17 @@ class DynamoDBGlobalStatsStore(GlobalStatsStore):
             client.get_waiter('table_exists').wait(TableName=table_name)
         except ClientError as e:
             if e.response.get('Error', {}).get('Code') != 'ResourceInUseException':
+                raise
+        # PITR for disaster recovery; idempotent. Tolerate moto / DDB Local where
+        # the operation isn't supported.
+        try:
+            client.update_continuous_backups(
+                TableName=table_name,
+                PointInTimeRecoverySpecification={'PointInTimeRecoveryEnabled': True})
+        except ClientError as e:
+            code = e.response.get('Error', {}).get('Code', '')
+            if code not in ('ContinuousBackupsUnavailableException',
+                            'UnknownOperationException', 'ValidationException'):
                 raise
 
 

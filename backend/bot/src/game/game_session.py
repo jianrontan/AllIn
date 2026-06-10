@@ -17,7 +17,10 @@ Design notes
   happens only in public_view().
 """
 import copy
+import logging
 import math
+
+_LOG = logging.getLogger(__name__)
 
 from ..cfr.poker_game import (
     PokerGame, STARTING_STACK, _is_custom, _custom_total, make_custom_action)
@@ -189,6 +192,10 @@ class GameSession:
         # hand isn't skipped (bug: without this reset, only hand 1 of a session
         # ever counted toward the +EV leaderboard).
         d['result_recorded'] = False
+        # Recap timestamp anchor: pinned by the hand-end hook on the first
+        # successful record, reused on retries so the hand-store handKey stays
+        # deterministic. Must reset per hand (same family as `result_recorded`).
+        d.pop('recap_ts_ms', None)
         # Pending off-grid bet translation, set by apply_action when the human's
         # last bet was custom-sized; consumed by the bot's NEXT decision. It must
         # NOT survive across hands -- seats flip on `start_next_hand`, so a
@@ -887,16 +894,31 @@ def advance_bot_turns(session, bot_strategy, stop_on_new_card=False):
         _record_bot_debug(session, bot_strategy, public, key, legal, action)
         try:
             session.apply_action(action)
-        except GameError:
+        except GameError as bot_err:
             # A borderline solver custom size the engine rejected at the margin
-            # must never crash a hand -- fall back to a safe legal action.
+            # must never crash a hand -- fall back to a safe legal action. Logged
+            # so the silent-fallback path is debuggable when users report "the
+            # bot did something weird" (previously this was a black hole).
             legal = session.legal_actions()
             if not legal:
+                _LOG.warning(
+                    "bot action %r rejected and no legal fallback (session=%s, "
+                    "street=%s); ending hand. error=%s",
+                    action, session.data.get('session_id'),
+                    session.data.get('street'), bot_err)
                 break                       # nothing legal -> let _settle/guard end it
             safe = next((a for a in ('check', 'call', 'fold') if a in legal), legal[0])
+            _LOG.warning(
+                "bot action %r rejected (session=%s, street=%s); falling back to %r. error=%s",
+                action, session.data.get('session_id'),
+                session.data.get('street'), safe, bot_err)
             try:
                 session.apply_action(safe)
-            except GameError:
+            except GameError as safe_err:
+                _LOG.warning(
+                    "safe fallback %r also rejected (session=%s, street=%s); bailing. error=%s",
+                    safe, session.data.get('session_id'),
+                    session.data.get('street'), safe_err)
                 break                       # even the fallback is illegal -> bail safely
         guard += 1
         if guard > 64:

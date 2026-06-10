@@ -137,6 +137,52 @@ class RiverCFR:
             self._cfr(self.tree.root, reach0, reach1)
         return self
 
+    def run_gadget(self, hero_reach, villain_gadget_reach, optout, villain_seat,
+                   iters=500):
+        """Safe re-solving via the re-solve (reach) gadget (Burch/Moravcik/Brown,
+        "safe and nested subgame solving"). Phase 5a.
+
+        The villain (`villain_seat`) is given a per-hand OPT-OUT paying `optout[h]`
+        -- the blueprint's river-entry counterfactual value for villain hand h (from
+        blueprint_projection.blueprint_cfv), in the SAME MEASURE units as the subgame
+        values here (both weighted by the HERO's reach). Each iteration the villain
+        regret-matches, per hand, between FOLLOW (enter the subgame) and TERMINATE
+        (take the opt-out). So the villain only brings hands into the subgame that do
+        at least as well as the blueprint already guaranteed them; the solver player
+        (hero) must therefore make the subgame no better for the villain than the
+        blueprint did -> the resulting HERO strategy is no-more-exploitable than the
+        blueprint. Reads off via average_strategy as usual.
+
+        hero_reach: the hero's FIXED river-entry reach (length H).
+        villain_gadget_reach: the villain's river-entry reach -- the gadget WEIGHTING;
+            the solved follow-probability modulates it each iteration (do NOT pre-scale).
+        The Linear-CFR clock continues across calls, like run()."""
+        hero_reach = np.asarray(hero_reach, float)
+        vg = np.asarray(villain_gadget_reach, float)
+        optout = np.asarray(optout, float)
+        g_regret = np.zeros((self.H, 2))          # per villain hand: [Follow, Terminate]
+        for _ in range(iters):
+            self._iter += 1
+            self._t_weight = float(self._iter)
+            # villain gadget strategy (regret-matching+); uniform until regret accrues.
+            gr = np.maximum(g_regret, 0.0)
+            gs = gr.sum(axis=1, keepdims=True)
+            gstrat = np.where(gs > 1e-12, gr / np.where(gs > 1e-12, gs, 1.0), 0.5)
+            follow = gstrat[:, 0]
+            villain_reach = vg * follow
+            if villain_seat == 0:
+                v0, v1 = self._cfr(self.tree.root, villain_reach, hero_reach)
+                v_follow = v0
+            else:
+                v0, v1 = self._cfr(self.tree.root, hero_reach, villain_reach)
+                v_follow = v1
+            # gadget regret update (CFR+): villain maximizes Follow vs Terminate.
+            node_val = follow * v_follow + gstrat[:, 1] * optout
+            g_regret[:, 0] += v_follow - node_val
+            g_regret[:, 1] += optout - node_val
+            np.maximum(g_regret, 0.0, out=g_regret)
+        return self
+
     # -- value + exploitability (convergence gap) ------------------------------
     def current_values(self, reach0, reach1):
         """(v0, v1) value vectors at the root under the CURRENT strategy."""

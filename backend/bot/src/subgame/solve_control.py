@@ -74,17 +74,63 @@ def solve_river(tree, ba, reach0, reach1, *, max_iters=1000, check_every=50,
                  'converged': bool(gap <= gap_threshold)}
 
 
+def solve_river_gadget(tree, ba, hero_reach, villain_reach, optout, villain_seat, *,
+                       max_iters=1000, check_every=50, time_budget=None):
+    """Solve the river subgame under the SAFE re-solving gadget (RiverCFR.run_gadget):
+    the villain gets a per-hand opt-out paying `optout` (the blueprint river-entry CFV
+    from blueprint_projection.blueprint_cfv), so the solved HERO strategy is
+    no-more-exploitable than the blueprint (Phase 5a). Mirrors solve_river's
+    increment / time-budget loop.
+
+    NOTE there is no cheap per-iteration convergence GAP here: the gadget deliberately
+    reshapes the villain's effective range, so the ordinary subgame Nash gap is not the
+    safety target. We therefore run to the iteration/time budget and report
+    `converged = (ran the full max_iters within budget)` -- a budget proxy the EV gate's
+    non-converged margin (H1) consumes the same way it does for solve_river."""
+    cfr = RiverCFR(tree, ba)
+    hero_reach = np.asarray(hero_reach, float)
+    villain_reach = np.asarray(villain_reach, float)
+    optout = np.asarray(optout, float)
+    t0 = time.time()
+    done = 0
+    per_iter = None
+    while done < max_iters:
+        step = min(check_every, max_iters - done)
+        if time_budget is not None:
+            remaining = time_budget - (time.time() - t0)
+            if remaining <= 0:
+                break
+            if per_iter and per_iter > 0:
+                step = max(1, min(step, int(remaining / per_iter)))
+        bt = time.time()
+        cfr.run_gadget(hero_reach, villain_reach, optout, villain_seat, iters=step)
+        per_iter = (time.time() - bt) / step
+        done += step
+        if time_budget is not None and (time.time() - t0) >= time_budget:
+            break
+    return cfr, {'iters': done, 'gap': None, 'seconds': time.time() - t0,
+                 'converged': bool(done >= max_iters)}
+
+
+# Below this compatible-villain-mass the per-action EVs are undefined: dividing the
+# tiny `vals` row by a tiny `z` blows the chip-EVs up to garbage that would dominate the
+# EV-gate margin and spuriously deviate/keep. Return None so the caller keeps the
+# blueprint baseline instead (M1).
+_EV_MIN_MASS = 1e-9
+
+
 def hand_action_evs(cfr, node, hand_row, reach0, reach1):
     """Per-action chip EV (length = #actions at `node`) for the hand at `hand_row`,
     under the solved average strategy. Normalised by the hand's compatible villain
     mass so the values are in chips per dealt matchup (makes the EV-gate margin an
-    interpretable chip amount)."""
+    interpretable chip amount). Returns None when that mass is ~zero (EV undefined)."""
     p = node.player
     villain = np.asarray(reach1 if p == 0 else reach0, float)
-    vals = cfr.node_action_values(node, reach0, reach1)        # [H, A] measures
     z = compatible_mass(cfr.ba, villain)[hand_row]
-    row = vals[hand_row]
-    return row / z if z > 0 else row
+    if z <= _EV_MIN_MASS:
+        return None                                            # no compatible villain mass
+    vals = cfr.node_action_values(node, reach0, reach1)        # [H, A] measures
+    return vals[hand_row] / z
 
 
 def ev_gate(actions, solved_dist, baseline_dist, action_evs, margin):

@@ -57,7 +57,14 @@ __pycache__/
 !.env.example
 *.pem
 *.key
+*.p12
+*.pfx
 aws-credentials.json
+.aws/
+.envrc
+id_rsa*
+secrets.json
+.docker/config.json
 terraform.tfstate
 terraform.tfstate.*
 .terraform/

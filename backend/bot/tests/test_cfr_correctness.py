@@ -1252,8 +1252,31 @@ def test_preflop_bucket_vs_equity_ordering():
 # RUNNER
 # ===========================================================================
 
+def test_resume_monotonicity_guard():
+    """H2: train_blueprint must REFUSE a resume whose start_iteration is behind the loaded
+    discount clocks (which would silently corrupt the alpha/gamma decay), and must accept a
+    monotonic one. iterations=0 exercises the guard without running training."""
+    trainer = BlueprintTrainer()                       # discount_enabled (single-thread)
+    iset = InformationSet()
+    iset.last_visited_iteration = 50000
+    iset.last_strategy_iteration = 50000
+    trainer.info_sets['dummy_key'] = iset
+
+    raised = False
+    try:
+        trainer.train_blueprint(iterations=0, start_iteration=0)   # behind the clocks
+    except ValueError:
+        raised = True
+    assert raised, "expected ValueError for start_iteration behind the discount clocks"
+
+    # A monotonic resume (start_iteration >= the max clock) must NOT trip the guard.
+    trainer.train_blueprint(iterations=0, start_iteration=50001)
+    print("PASS test_resume_monotonicity_guard")
+
+
 ALL_TESTS = [
     # CFR invariants
+    test_resume_monotonicity_guard,
     test_cfr_cumulative_regrets_nonnegative,
     test_cfr_average_strategy_sums_to_one,
     test_cfr_ev_is_finite,

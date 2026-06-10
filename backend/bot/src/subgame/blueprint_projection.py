@@ -80,6 +80,33 @@ def blueprint_strategy_on_tree(tree, ba, raw_strategy, postflop_menu=None):
                     postflop_menu)
 
 
+def blueprint_cfv(tree, ba, raw_strategy, reach0, reach1, villain_seat,
+                  postflop_menu=None):
+    """Per-villain-hand counterfactual value at the river-entry root, with BOTH
+    players playing the blueprint from the root to showdown -- the opt-out values
+    for the safe-solving gadget (Phase 5a, SAFE_RIVER_SOLVING_PLAN.md piece 1).
+
+    `v_blueprint(h)` is what villain hand h is already guaranteed by NOT entering
+    the re-solve: the value of staying on the blueprint. Giving the villain this as
+    a per-hand floor in the gadget game is what makes the re-solved strategy
+    no-more-exploitable than the blueprint (Burch/Moravcik/Brown).
+
+    reach0/reach1 are the river-ENTRY reaches (same snapshot the solve uses, so the
+    opt-out is consistent with the gadget constraint). `villain_seat` is the
+    non-hero seat. Returns a length-H vector in MEASURE units (weighted by the
+    HERO's reach -- the opponent of the villain), matching node_action_values /
+    the gadget value floor. `postflop_menu` selects the blueprint's arm (see
+    blueprint_strategy_on_tree).
+    """
+    from .river_cfr import RiverCFR
+
+    cfr = RiverCFR(tree, ba)
+    strat = blueprint_strategy_on_tree(tree, ba, raw_strategy, postflop_menu)
+    v0, v1 = cfr._eval(tree.root, np.asarray(reach0, float),
+                       np.asarray(reach1, float), lambda nid: strat[nid])
+    return v1 if villain_seat == 1 else v0
+
+
 def blueprint_turn_strategy_on_tree(tree, ba, raw_strategy, postflop_menu=None):
     """Turn analogue of blueprint_strategy_on_tree (Stage 3): the blueprint's TURN
     strategy projected onto a TurnTree, for measuring how exploitable the blueprint's

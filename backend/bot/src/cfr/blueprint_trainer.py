@@ -86,6 +86,18 @@ class BlueprintTrainer:
         # convergent regret-minimiser; just don't expect canonical-DCFR behaviour
         # when tuning alpha.
         self.alpha = 1.5
+        # gamma = 2.0 weights iteration t's strategy contribution by ~(t/T)**2, so the
+        # served AVERAGE is heavily recent-weighted -- it tracks the current iterate (avg
+        # vs iterate TV ~0.09 on the 25M run) instead of being a stable uniform time-
+        # average. Late in training the abstract iterate PURIFIES (avg max action-prob
+        # rises 0.71 -> 0.85 across 0.5M -> 28M), and a more deterministic strategy loses
+        # GTO mixing -> MORE exploitable -> the U-shaped BR/LBR curve (rises late). It is
+        # NOT a code bug (the parallel gamma-clock was audited clean; H1 averaging is
+        # correct -- Kuhn-verified in tests/h1_kuhn_check.py). A less aggressive discount
+        # retains the earlier, more-mixed play. ===> NEXT RETRAIN: use gamma = 1.0 (true
+        # Linear-CFR) and BR-sweep to confirm the tail flattens. Keep serving the BEST
+        # snapshot (not the last) regardless. See analysis/training_curve + the U-curve
+        # probe (2026-06-10).
         self.gamma = 2.0
 
         # Cumulative EV gauge, persisted across resumes. `ev_sum` / `ev_count`
@@ -458,6 +470,21 @@ class BlueprintTrainer:
         print(f"  Checkpoint every  : {checkpoint_every:,}")
         print(f"  Starting stack    : {STARTING_STACK}")
         print()
+
+        # H2: resume monotonicity guard. On a resumed run the loaded info sets carry
+        # discount clocks (last_visited/last_strategy_iteration) up to the prior run's
+        # final iteration. If start_iteration is BEHIND those, the once-per-iteration decay
+        # guard (`clock != iteration`) mis-fires and the Linear-CFR weighting is silently
+        # corrupted. The correct resume passes start_iteration = resume_from_db() (= the
+        # stored total_iterations, which exceeds every stored clock). Refuse otherwise.
+        if self.discount_enabled and self.info_sets:
+            max_clock = max(max(iset.last_visited_iteration, iset.last_strategy_iteration)
+                            for iset in self.info_sets.values())
+            if start_iteration < max_clock:
+                raise ValueError(
+                    f"resume start_iteration={start_iteration} is behind the loaded "
+                    f"discount clocks (max={max_clock}); pass start_iteration="
+                    f"resume_from_db(...) so the iteration counter stays monotonic.")
 
         session_ev_sum = 0.0
         t_start = time.time()

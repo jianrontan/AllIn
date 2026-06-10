@@ -29,17 +29,22 @@ def main():
                              "parallel). Bit-identical to serial for the same "
                              "(seed, samples) -- only faster. Default 1 (serial). "
                              "Each worker opens its own read-only DB connection.")
+    parser.add_argument('--purify', type=float, default=0.0,
+                        help="Strategy purification threshold for the A/B (drop blueprint "
+                             "actions below this prob, renormalise; >max => argmax). "
+                             "0.0 = off (default). Try 0.01 (1%%) / 0.05 / 1.0 (full).")
     args = parser.parse_args()
 
     db_path = args.db or resolve_blueprint_path()
     print(f"Blueprint : {db_path}")
     print(f"Samples   : {args.samples}  (seed {args.seed}, workers {args.workers})")
+    print(f"Purify    : {args.purify}  ({'OFF' if args.purify <= 0 else 'threshold'})")
 
     db = BlueprintDB(db_path, read_only=True)
     try:
         # menu_mode auto-derived from the DB metadata (control for a pre-stamp DB)
         # so a capped blueprint is walked on its own tree.
-        ev = BestResponseEvaluator(db, seed=args.seed)
+        ev = BestResponseEvaluator(db, seed=args.seed, purify_threshold=args.purify)
         print(f"Menu mode : {ev.menu_mode}")
         t0 = time.time()
         if args.workers and args.workers > 1:

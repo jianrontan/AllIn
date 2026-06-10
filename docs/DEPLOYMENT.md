@@ -350,10 +350,19 @@ shipped, and how it changes deployment:
 - **C1 — real WSGI entrypoint.** `backend/api/wsgi.py` exposes `app` (and a `create_app()`
   factory). `python strategy_api.py` is now **dev-only**: it binds **loopback** (`127.0.0.1`)
   and gates the Werkzeug debugger behind `ALLIN_DEBUG` (default on for dev). Production never
-  runs that block — it imports `wsgi:app`. Run commands:
+  runs that block — it imports `wsgi:app`. **In Docker the entrypoint is `docker-entrypoint.sh`**
+  which builds the gunicorn invocation with worker count chosen from `ALLIN_SESSION_STORE` /
+  `ALLIN_STORE_BACKEND` (1 if either is in-memory, 2 if both DynamoDB) and adds `--max-requests`,
+  `--graceful-timeout`, `--access-logfile -`, `--error-logfile -`. Override via env: `ALLIN_WORKERS`,
+  `ALLIN_THREADS` (default 4), `ALLIN_TIMEOUT` (120), `ALLIN_GRACEFUL_TIMEOUT` (120),
+  `ALLIN_MAX_REQUESTS` (500), `ALLIN_MAX_REQUESTS_JITTER` (50), `ALLIN_BIND` (`0.0.0.0:5000`).
+  Run outside Docker (rare — only for prod-server smoke tests on a Linux host):
   ```bash
-  # Linux deploy box:
-  gunicorn --chdir backend/api wsgi:app --workers 2 --threads 4 --timeout 120 --bind 0.0.0.0:5000
+  # Linux (matches the entrypoint's defaults; see docker-entrypoint.sh for the canonical command)
+  gunicorn --chdir backend/api wsgi:app \
+      --workers 2 --threads 4 --timeout 120 --graceful-timeout 120 \
+      --max-requests 500 --max-requests-jitter 50 \
+      --access-logfile - --error-logfile - --bind 0.0.0.0:5000
   # Windows / cross-platform (test the prod server locally):
   waitress-serve --listen=0.0.0.0:5000 --call wsgi:create_app   # or: python backend/api/wsgi.py
   ```
@@ -374,8 +383,43 @@ shipped, and how it changes deployment:
 - **H1/H2/H3 hardening.** `get_json(silent=True)` everywhere (malformed body → 400, never a
   500/traceback); `MAX_CONTENT_LENGTH=64 KB` (oversized → 413); a river-solve **semaphore**
   (`max(1, CPUs−1)` permits/process, 503 when saturated); dropped `supports_credentials` from
-  CORS (auth is stateless). Per-IP **rate limiting** is still expected at the **Cloudflare**
-  edge (D3) — not done in-app.
+  CORS (auth is stateless). **In-process rate limit floor** on `/api/player` (10/min per
+  playerId + 30/min per IP) and `/api/auth/google` (20/min per IP) — defense in depth so a
+  client misbehaving (loop, fork-bomb) gets a 429 even before Cloudflare WAF; the Cloudflare
+  edge limit is still expected as the primary anti-abuse layer (D3).
+- **Security headers.** `@app.after_request` adds `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: strict-origin-when-cross-origin`, `Cross-Origin-Resource-Policy: cross-origin`,
+  and `Strict-Transport-Security: max-age=31536000; includeSubDomains`. HSTS is also issued by
+  the TLS terminator (Lightsail / Cloudflare), but a second copy is cheap defense-in-depth.
+- **`playerId` validation.** `^[A-Za-z0-9_-]{1,64}$` enforced on `/me`, `/player`,
+  `/auth/google`, `/game/new`. Rejects garbage / oversized values before they become DynamoDB
+  keys or comparison subjects. Frontend mints v4 UUIDs; tests use simple ids (both pass).
+- **Blueprint load resilience.** A missing/corrupt blueprint at import no longer crashes the
+  container opaquely — `_BLUEPRINT_LOAD_ERROR` is stashed and `/api/healthz` returns **503**
+  with the reason. A `before_request` guard 503s every non-healthz endpoint while degraded.
+  Lightsail's rolling-deploy probe sees the 503 + JSON reason and aborts cleanly.
+- **CSRF state on Cognito redirect.** `config.js:hostedUiUrl()` generates a cryptographically
+  random `state`, stores it in `sessionStorage`, and includes it in the authorize URL.
+  `AuthCallback.jsx` rejects the callback if the echoed state doesn't match. Closes the
+  login-CSRF / session-fixation attack class.
+- **Sign-out flow.** `signOutLocal()` clears localStorage; the UI then bounces through
+  `hostedUiSignOutUrl()` to drop Cognito's Hosted UI cookie — without this, a subsequent
+  "Sign in with Google" on a shared computer silently re-binds whichever Google session is
+  still in the browser.
+- **Boto3 adaptive retries** (`Config(retries={'mode':'adaptive','max_attempts':5})`) on every
+  DynamoDB-backed store. Closes the silent leaderboard-miss-on-throttle path.
+- **Hand-end hook split per-store** with playerId + sessionId in every log line; previously a
+  single bare `Exception` log made the "counter doesn't move" failure mode uncorrelatable to
+  user reports. Recap idempotency now pins `recap_ts_ms` to the session on first record so
+  retried hooks produce the IDENTICAL handKey rather than a fresh ms-epoch each call (no
+  duplicate `allin-hands` rows under retry).
+- **Per-hand state reset.** `_deal_hand` now resets `result_recorded`, `pending_translation`,
+  and `recap_ts_ms` — same family of bug (per-hand anchor surviving across hands). The first
+  two were silent decision/counter corruption; the third is the recap idempotency anchor.
+- **DynamoDB PITR** enabled in every `create_table_if_missing` (idempotent, tolerates moto).
+  Hand-recap data is otherwise irrecoverable on a wiped table.
+- **Session lock lease bumped** 30s → 60s so a long river solve under the lock can't leak the
+  lease before release.
 - **M3** — `BlueprintDB` now uses **thread-local** SQLite connections (the Flask thread pool no
   longer shares one connection). **M4** — frontend error message uses `API_BASE`, not a
   hardcoded `:5000`. **M2** (the debug overlay leaking the bot's bucket) is **intentionally left
@@ -596,11 +640,12 @@ plumbing added): `/api/game/new`, `/api/game/state`, `/api/game/action`,
 
 | Endpoint | Purpose | Notes |
 |---|---|---|
-| `GET /api/stats` | The +EV counter source. | 5s in-process cache (hottest endpoint, polled by every browser every 30s). |
-| `GET /api/leaderboard?n=10&min_hands=50&accounts_only=true` | Ranked board (accounts only) or Most-active (anonymous OK). | Rows redacted (no `playerId`/`email`). |
-| `POST /api/player` | Upsert the caller's handle. | Validates regex + profanity, 400 on reject. |
-| `POST /api/auth/google` | Bind a Google account (via Cognito) to the caller's existing playerId. | 503 if Cognito unconfigured, 401 on bad token, 403 if the playerId already belongs to another account. |
-| `GET /api/healthz` (alias of `/api/test`) | Health probe. | Reports blueprint, iterations, baked-table presence, session store class, debug overlay flag, `ALLIN_GIT_SHA`. |
+| `GET /api/stats` | The +EV counter source. | 5s in-process cache (hottest endpoint, polled every 60s by every browser). |
+| `GET /api/leaderboard?n=10&min_hands=50&accounts_only=true` | Ranked board (accounts only) or Most-active (anonymous OK). | Rows redacted (no `playerId`/`email`). 10s in-process cache. |
+| `GET /api/me?playerId=…` | The caller's own curated row (lifetime hands + netBB + bb/100). | Public by UUID — anyone with the UUID can read curated stats; UUID is unguessable + not enumerable. Returns a 0-state row for unknown ids so the UI renders cleanly. |
+| `POST /api/player` | Upsert the caller's handle. | Validates regex + profanity, 400 on reject; 10/min per playerId + 30/min per IP → 429. |
+| `POST /api/auth/google` | Bind a Google account (via Cognito) to the caller's existing playerId. | 503 if Cognito unconfigured, 401 on bad token (generic message; reason logged server-side), 403 if the playerId already belongs to another account; 20/min per IP → 429. |
+| `GET /api/healthz` (alias of `/api/test`) | Health probe. | Returns 503 with `_BLUEPRINT_LOAD_ERROR` if the blueprint failed to load (degraded mode); else 200 with blueprint, iterations, baked-table presence, session store class, debug overlay flag, river-gadget mode, `ALLIN_GIT_SHA`. |
 
 ### What's stubbed vs wired
 
@@ -645,15 +690,259 @@ plumbing added): `/api/game/new`, `/api/game/state`, `/api/game/action`,
   backend, for Google-sign-in ID-token validation. **Optional in dev**: when any is unset,
   `/api/auth/google` returns 503 and gameplay (playerId-routed) is unaffected.
 - `ALLIN_DEBUG_OVERLAY` — `1` exposes the per-decision bot trace (`botDebug`, which leaks the
-  bot's bucketed hand class mid-hand) in game responses; **default `0` (off)**. Set `1` only in
-  local dev. Must stay unset/`0` in prod — the repo is public, so a hot debug overlay is a leak.
-- `ALLIN_LOG_LEVEL` — log level for the WSGI/dev server (default `INFO`).
+  bot's bucketed hand class mid-hand) in game responses. **Code default is `1` (ON)** so the
+  Debug button works in dev and local `docker run`. ⚠️ **In Lightsail you MUST set
+  `ALLIN_DEBUG_OVERLAY=0` explicitly** — otherwise the live public bot's bucket leaks mid-hand.
+  There is no automated guard; checklist it in your deploy.
+- `ALLIN_LOG_LEVEL` — log level (default `INFO`).
 - `ALLIN_GIT_SHA` — build commit, surfaced in `/api/healthz` (set by CI; absent in dev is fine).
+- `ALLIN_BLUEPRINT_CACHE_DIR` — only when `ALLIN_BLUEPRINT_SOURCE=s3`: local dir the
+  blueprint is downloaded into and re-opened from. Default is `tempfile.gettempdir()`; in a
+  container, set this to a stable mount (e.g. `/var/lib/allin/blueprints`) since `/tmp`
+  can be wiped on restart by some orchestrators.
+- `ALLIN_RIVER_CACHE_BOARDS` — `PostflopV2._RIVER_BOARD_CACHE` cap (default 100k).
+  Larger → more memory, faster eval; smaller → less RAM but more recomputation.
 - `ALLIN_DEBUG` — dev server only: `1` (default) enables the Werkzeug debugger, `0` disables.
   Irrelevant under gunicorn/waitress (that code path never runs).
 - `ALLIN_DEV_HOST` / `ALLIN_DEV_PORT` — dev server bind (default `127.0.0.1:5000`).
+- **Gunicorn / entrypoint tuning** (Docker only — read by `docker-entrypoint.sh`):
+  - `ALLIN_WORKERS` — override the entrypoint's auto-pick (1 if any memory store, 2 if both DynamoDB).
+  - `ALLIN_THREADS` — gunicorn threads per worker (default `4`).
+  - `ALLIN_TIMEOUT` — request timeout in seconds (default `120`; matches the river-solve ceiling).
+  - `ALLIN_GRACEFUL_TIMEOUT` — graceful shutdown timeout (default `120`).
+  - `ALLIN_MAX_REQUESTS` / `ALLIN_MAX_REQUESTS_JITTER` — worker cycling for memory hygiene
+    (defaults `500` / `50`).
+  - `ALLIN_BIND` — gunicorn listen address (default `0.0.0.0:5000`).
 - `VITE_API_BASE` — frontend API base URL (set at build time).
 - `VITE_COGNITO_DOMAIN` / `VITE_COGNITO_APP_CLIENT_ID` / `VITE_COGNITO_REDIRECT_URI` —
   frontend (build-time), for the "Sign in with Google" Hosted-UI redirect. **Public values**
   (not secrets). When unset, the sign-in button hides itself. The Google OAuth *client secret*
   is NEVER here — it lives only in the Cognito IdP config in AWS.
+
+## Cognito setup — one-time, in the AWS console
+
+You can't run this remotely; it's a sequence of clicks in two consoles (AWS + Google).
+**Do this once, in this exact order** — the Google Client ID has to be created BEFORE the
+Cognito IdP can be configured, and the Cognito Hosted UI domain has to exist BEFORE you can
+paste its `/oauth2/idpresponse` URL back into Google's allowed-redirect list.
+
+**Step 1 — Google Cloud Console:**
+1. Create a new project (e.g. `allin-prod`).
+2. **APIs & Services → OAuth consent screen.** External user type. App name `AllIn`,
+   support email. Scopes: `openid`, `email`, `profile`. Add your email as a test user
+   (or publish if you want anyone to sign in).
+3. **Credentials → Create credentials → OAuth client ID.** Type **Web application**,
+   name `allin-cognito`. **Leave authorized URIs blank for now** — Cognito will tell you
+   the redirect URI to paste in.
+4. **Save the Client ID and Client Secret.** You'll paste them into Cognito in Step 4.
+
+**Step 2 — Cognito User Pool (`ap-southeast-1`):**
+1. Cognito → Create user pool. Name `allin-users`. Sign-in option: **email**. Required attributes: `email`.
+2. Default password policy is fine. MFA: optional or none for v1.
+3. **App client:** "Public client". Name `allin-web`. **UNCHECK "Generate a client secret"** —
+   the frontend is a public SPA and can't carry a secret.
+4. **Hosted UI:** enable. **Cognito domain:** pick a prefix (e.g. `allin-prod`) →
+   gives you `allin-prod.auth.ap-southeast-1.amazoncognito.com`. (Custom domain
+   `auth.jianrontan.com` is post-launch — needs an ACM cert + DNS.)
+5. **Allowed callback URLs:** `https://allin.jianrontan.com/auth/callback` AND
+   `http://localhost:5173/auth/callback` (for dev).
+6. **Allowed sign-out URLs:** `https://allin.jianrontan.com/` AND `http://localhost:5173/`.
+7. **OAuth 2.0 grant types:** **Implicit grant** (the frontend uses `response_type=token`).
+8. **Allowed OAuth scopes:** `openid`, `email`, `profile`.
+9. Note the **User Pool ID** (e.g. `ap-southeast-1_XXXXXXX`) and the **App Client ID**.
+
+**Step 3 — Cognito → Google IdP federation:**
+1. In the User Pool → **Federation → Identity providers → Add Google.**
+2. **Google client ID** + **Google client secret**: paste from Step 1.
+3. **Authorized scopes:** `profile email openid`.
+4. **Attribute mapping:** `email → email`, `sub → username`, `name → name`.
+5. Save. Back in your App Client settings, **enable Google** under "Enabled identity providers".
+
+**Step 4 — back to Google Cloud Console:**
+1. Open your OAuth Client (from Step 1) → **Authorized redirect URIs** → add
+   `https://<your-cognito-domain>/oauth2/idpresponse` (the Hosted UI URL from Step 2.4 + that path).
+2. Save.
+
+**Step 5 — wire the env vars into Lightsail (and Cloudflare Pages):**
+
+Backend (Lightsail container deployment env):
+```
+ALLIN_COGNITO_REGION=ap-southeast-1
+ALLIN_COGNITO_USER_POOL_ID=<from Step 2.9>
+ALLIN_COGNITO_APP_CLIENT_ID=<from Step 2.9>
+```
+
+Frontend (Cloudflare Pages build env):
+```
+VITE_COGNITO_DOMAIN=<allin-prod>.auth.ap-southeast-1.amazoncognito.com
+VITE_COGNITO_APP_CLIENT_ID=<same App Client ID>
+VITE_COGNITO_REDIRECT_URI=https://allin.jianrontan.com/auth/callback
+```
+
+**Verification:** `/api/healthz` should show your blueprint loaded. The frontend's
+"Sign in with Google" button should appear (it hides itself if `VITE_COGNITO_DOMAIN` is
+empty). Clicking it should bounce through `<cognito-domain>/oauth2/authorize` → Google →
+back to `/auth/callback` with a token. The callback should show "Welcome back, …".
+
+## Deploy runbook — what to do in what order
+
+You've done Step 0 (AWS account + IAM + Cloudflare domain). The rest, in order:
+
+**1. Provision the four DynamoDB tables.** From your laptop with `aws configure` already done:
+
+```python
+# scripts/provision_dynamodb.py — run once
+import sys; sys.path.insert(0, 'backend/bot/src')
+from game.session_store      import DynamoDBSessionStore
+from game.player_store       import DynamoDBPlayerStore
+from game.global_stats_store import DynamoDBGlobalStatsStore
+from game.hand_store         import DynamoDBHandStore
+
+R = 'ap-southeast-1'
+DynamoDBSessionStore.create_table_if_missing('allin-sessions', region=R)
+DynamoDBPlayerStore.create_table_if_missing('allin-players',  region=R)
+DynamoDBGlobalStatsStore.create_table_if_missing('allin-global', region=R)
+DynamoDBHandStore.create_table_if_missing('allin-hands',     region=R)
+print('done')
+```
+
+```powershell
+python scripts/provision_dynamodb.py
+```
+
+All four tables are PAY_PER_REQUEST; PITR is enabled idempotently.
+
+**2. Create the ECR repo.**
+
+```powershell
+aws ecr create-repository --repository-name allin --region ap-southeast-1
+```
+
+Note the URL it prints (`<account>.dkr.ecr.ap-southeast-1.amazonaws.com/allin`).
+
+**3. Create an IAM user for the container runtime.** Console → IAM → Users → Create.
+Attach an inline policy granting DynamoDB read/write on the four `allin-*` tables. Save
+its access key + secret.
+
+**4. Cognito setup.** Follow the "Cognito setup" section above.
+
+**5. Create the Lightsail container service.** `ap-southeast-1`, name `allin`, plan
+**Micro** for residency or **Small** (1 GB) if you want headroom for 2 workers on DynamoDB.
+
+**6. Build, tag, push the Docker image.**
+
+```powershell
+docker build --pull -t allin .
+# Smoke-test locally:
+docker run -p 5000:5000 -e ALLIN_SESSION_STORE=memory -e ALLIN_STORE_BACKEND=memory allin
+# In another shell:
+curl http://localhost:5000/api/healthz   # expect 200 + blueprint name
+
+aws ecr get-login-password --region ap-southeast-1 | docker login --username AWS --password-stdin <YOUR-ECR-URL>
+docker tag allin:latest <YOUR-ECR-URL>:v0.1.0
+docker push <YOUR-ECR-URL>:v0.1.0
+```
+
+**7. Deploy to Lightsail.** Lightsail console → your container service → Deployments → Create.
+Image = `<YOUR-ECR-URL>:v0.1.0`. Open port `5000` publicly. Health-check path `/api/healthz`.
+**Environment variables — ALL of these (the ⚠️ ones are easy to forget):**
+
+```
+ALLIN_SESSION_STORE=dynamodb
+ALLIN_STORE_BACKEND=dynamodb
+AWS_REGION=ap-southeast-1
+AWS_ACCESS_KEY_ID=<from step 3>
+AWS_SECRET_ACCESS_KEY=<from step 3>
+ALLIN_CORS_ORIGINS=https://allin.jianrontan.com
+ALLIN_COGNITO_REGION=ap-southeast-1
+ALLIN_COGNITO_USER_POOL_ID=<from Cognito step 2.9>
+ALLIN_COGNITO_APP_CLIENT_ID=<from Cognito step 2.9>
+ALLIN_DEBUG_OVERLAY=0                     ⚠️ leaks bot bucket if forgotten
+ALLIN_GIT_SHA=v0.1.0
+```
+
+**8. Cloudflare Pages for the frontend.** Connect the repo. Root `frontend/`, build
+`npm install && npm run build`, output `dist`. Production env (see "Cognito setup → Step 5").
+
+**9. Cloudflare DNS + edge rate limits.** `allin` → Pages (CNAME, proxied/orange cloud).
+`api.allin` → Lightsail public URL (CNAME, DNS-only/gray cloud).
+
+While in Cloudflare, add two **Rate Limiting rules** (Security → WAF → Rate limiting rules)
+to close the unprotected-endpoint gap flagged in pre-launch review (HIGH). The Free plan
+includes one rule; if you want both, the $5/mo Pro plan covers 10 rules. Pick the higher-
+severity rule (river-solve) first:
+
+| Path | Limit | Reason |
+|---|---|---|
+| `api.allin.jianrontan.com/api/strategy/river-solve` | **10 req/min per IP**, action: block | CPU DoS (each solve ~50-200 ms; ~20 concurrent saturates Micro) |
+| `api.allin.jianrontan.com/api/game/new` | **30 req/min per IP**, action: block | Anti-farming of the +EV leaderboard via rotating UUIDs |
+
+CF edge rules are preferred over in-code rate limits because (a) they don't burn Lightsail
+CPU on rejected requests, (b) they work cross-worker. If CF is ever bypassed (someone hits
+the raw Lightsail URL directly), revisit "in-code per-IP limits" in the post-launch
+hardening checklist below.
+
+**10. Smoke test.** Open `https://allin.jianrontan.com`. Play a hand. Sign in with Google.
+`/api/healthz` should show `debugOverlay: false`.
+
+**11. Tag `v1.0.0`** and draft a GitHub Release.
+
+## Runbooks (post-launch operations)
+
+- **Rotate the IAM access key.** Console → IAM → Users → `allin-runtime` → Security credentials
+  → Create a new access key. Paste both into the Lightsail container deployment env (replacing
+  the old pair). Save. Once Lightsail confirms the deploy is healthy, deactivate the old key
+  back in IAM. Delete it after a few days.
+
+- **Upgrade the blueprint.** Drop the new `blueprint_*.db` at the top level of
+  `backend/bot/analysis/blueprints/` (NOT under `snapshots/`). The auto-resolver picks the
+  highest-iteration file. Rebuild, push a new image tag, deploy. **No DB migration is needed**
+  — the blueprint is immutable runtime data baked into the image.
+
+- **Wipe the leaderboard.** Console → DynamoDB → table → "Delete items" by scanning, OR drop the
+  whole table and re-create via `create_table_if_missing()` (PITR-restorable for the next 35d).
+  Don't wipe `allin-hands` if you ever want the recap-derived analytics.
+
+- **Diagnose a failed deploy.** First: `curl https://api.allin.jianrontan.com/api/healthz`.
+  A 503 with `"status": "degraded"` shows the blueprint load error. A 502/connect-refused means
+  the container is restarting — Lightsail console → Containers → Logs. The entrypoint prints
+  `[entrypoint] in-memory store detected (...) -> --workers N` on each start; if you see the
+  oscillation symptom, that's `ALLIN_STORE_BACKEND` accidentally on memory.
+
+- **Roll back a bad deploy.** Lightsail console → your container service → Deployments →
+  "Deploy a previous version" → pick the last green tag. DynamoDB state survives (the schema
+  is forward-compatible for the changes in v1).
+
+## Post-launch hardening checklist (deferred from v1.0 launch)
+
+These were flagged HIGH/MED in pre-launch review but were not blockers, and were deferred to
+keep the launch path clean. Work through them in the first 1–2 weeks after v1.0 is live.
+
+- **Measure the deployed bot's true exploitability.** The BR evaluator (`run_evaluation.py`)
+  reads the raw blueprint table, and the LBR victim model still plays the raw blueprint on the
+  river — so neither captures what the *served* bot actually does (gadget anchor, untrained-
+  node equity guards, purification). Wire the served river solver into LBR's river decision
+  and run a paired BR/LBR pass. The number we publish in `docs/ROADMAP.md` is **stale until
+  this is done.** Owner: us; not user-visible. Severity: HIGH (truth-in-numbers).
+
+- **In-code per-IP rate limits as belt-and-suspenders to the CF edge rules.** v1.0 ships with
+  CF Rate Limiting rules on `/api/strategy/river-solve` (10/min/IP) and `/api/game/new`
+  (30/min/IP). If we ever discover the raw Lightsail URL leaking into the frontend bundle or
+  external scrapers, the CF rules are bypassable. Add `_rate_limited()` wrapping these two
+  routes (the helper already exists; `/api/player` and `/api/auth/google` use it). Severity:
+  MED (defence-in-depth, not the primary fence).
+
+- **Drop the `AmazonDynamoDBFullAccess` policy on `allin-runtime`.** The launch IAM user has
+  full DynamoDB rights for speed; tighten to a custom inline policy granting only
+  Get/Put/Update/Query/Scan on `arn:aws:dynamodb:ap-southeast-1:*:table/allin-*`. Severity:
+  MED (least-privilege hygiene).
+
+- **CI/CD via GitHub Actions.** v1.0 is manual `docker build → push → Lightsail redeploy`.
+  Add `.github/workflows/backend-deploy.yml` (OIDC → ECR push → Lightsail webhook). Cloudflare
+  Pages already auto-builds the frontend on push. Severity: LOW (developer ergonomics, not
+  user-facing).
+
+- **Move the IAM access key to AWS Secrets Manager.** Long-lived keys in Lightsail env vars
+  are tolerable for v1.0 but not ideal. Once the runtime IAM user has a least-privilege policy
+  (above), publish the keys via Secrets Manager and have the entrypoint fetch on boot.
+  Severity: LOW.

@@ -67,6 +67,20 @@ export const setAccount = (row) => {
     }));
 };
 
+// Sign out: clear ALL local identity (playerId, account cache, active session).
+// Callers typically follow with `window.location.href = hostedUiSignOutUrl()`
+// so the Cognito session cookie is also dropped (otherwise a subsequent
+// "Sign in with Google" silently re-binds whatever Google session is in the
+// browser). Mints a fresh anonymous playerId on next page load via getPlayerId.
+export function signOutLocal() {
+    try {
+        localStorage.removeItem(PLAYER_ID_KEY);
+        localStorage.removeItem(ACCOUNT_KEY);
+        localStorage.removeItem(SESSION_ID_KEY);
+    } catch { /* private mode / quota issues — best effort */ }
+    playerId = null;
+}
+
 async function request(path, options) {
     let res;
     try {

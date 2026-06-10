@@ -217,22 +217,31 @@ Game:
 - `POST /api/game/next-hand` — deal the next hand in a session.
 
 Leaderboard / accounts:
-- `GET /api/stats` — global +EV counter (cached ~5s).
-- `GET /api/leaderboard` — ranked board (cached ~10s).
-- `POST /api/player` — set the caller's unique username.
-- `POST /api/auth/google` — verify a Cognito Google ID token, resolve the canonical account.
+- `GET /api/stats` — global +EV counter (5s in-process cache; polled by every browser ~60s).
+- `GET /api/leaderboard` — ranked board (10s in-process cache).
+- `GET /api/me?playerId=` — caller's own curated row (lifetime hands + netBB + bb/100); public-by-UUID by design, returns 0-state for unknown ids.
+- `POST /api/player` — set the caller's unique username; rate-limited (10/min/player + 30/min/IP → 429).
+- `POST /api/auth/google` — verify a Cognito Google ID token, resolve the canonical account; rate-limited (20/min/IP → 429); generic 401 on bad token (reason logged server-side).
 
-Health: `GET /api/test` (alias `GET /api/healthz`) — status, blueprint, baked-table presence, session-store class, commit.
+Health: `GET /api/test` (alias `GET /api/healthz`) — returns 200 with `{status:"ok", blueprint, iterations, postflopTables, sessionStore, debugOverlay, riverGadget, purify, commit}` when healthy; **503 with `{status:"degraded", error}`** when the blueprint failed to load at import (a `before_request` guard then 503s every other endpoint while degraded).
 
 ### Environment Variables
 
 The full, authoritative list is in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) ("Environment variables"). The essentials:
 - `ALLIN_BLUEPRINT_DB` — explicit path to the blueprint DB (overrides auto-resolution).
+- `ALLIN_BLUEPRINT_SOURCE` — `local` (default) | `s3`; `ALLIN_BLUEPRINT_S3_URI` paired with the latter.
 - `ALLIN_CORS_ORIGINS` — comma-separated allowed CORS origins (defaults to `localhost:5173`/`5174`).
-- `ALLIN_SESSION_STORE` / `ALLIN_STORE_BACKEND` — `memory` (default) | `dynamodb` for sessions / leaderboard stores.
+- `ALLIN_SESSION_STORE` / `ALLIN_STORE_BACKEND` — `memory` (default) | `dynamodb` for sessions / leaderboard stores. Entrypoint picks 1 worker if either is memory, 2 if both DynamoDB.
+- `ALLIN_DYNAMODB_TABLE` / `ALLIN_PLAYERS_TABLE` / `ALLIN_GLOBAL_TABLE` / `ALLIN_HANDS_TABLE` — table names.
+- `ALLIN_SESSION_TTL_SECONDS` (86400) / `ALLIN_HANDS_PER_WINDOW` (500) / `ALLIN_HAND_WINDOW_SECONDS` (3600).
 - `ALLIN_COGNITO_REGION` / `ALLIN_COGNITO_USER_POOL_ID` / `ALLIN_COGNITO_APP_CLIENT_ID` — Google-sign-in token validation (unset = `/api/auth/google` 503s, gameplay unaffected).
-- `ALLIN_DEBUG_OVERLAY` — `1` exposes the bot-bucket debug overlay (default off).
-- `VITE_API_BASE` / `VITE_COGNITO_*` — frontend build-time config.
+- `ALLIN_DEBUG_OVERLAY` — `1` exposes the bot-bucket debug overlay. **Code default is `1` (ON for dev / local Docker); MUST set `0` in Lightsail env to hide the live bot's bucket mid-hand.**
+- `ALLIN_LOG_LEVEL` (INFO) / `ALLIN_GIT_SHA` (build commit, surfaced in healthz).
+- `ALLIN_BLUEPRINT_CACHE_DIR` — where S3 source caches the downloaded blueprint (default OS tempdir; set to a stable mount in containers).
+- `ALLIN_RIVER_CACHE_BOARDS` — `PostflopV2` river board LRU cap (default 100k).
+- **Gunicorn / entrypoint tuning (Docker only):** `ALLIN_WORKERS`, `ALLIN_THREADS` (4), `ALLIN_TIMEOUT` (120), `ALLIN_GRACEFUL_TIMEOUT` (120), `ALLIN_MAX_REQUESTS` (500), `ALLIN_MAX_REQUESTS_JITTER` (50), `ALLIN_BIND` (`0.0.0.0:5000`).
+- `ALLIN_DEBUG` (1) / `ALLIN_DEV_HOST` / `ALLIN_DEV_PORT` — dev server only; irrelevant under gunicorn.
+- `VITE_API_BASE` / `VITE_COGNITO_DOMAIN` / `VITE_COGNITO_APP_CLIENT_ID` / `VITE_COGNITO_REDIRECT_URI` — frontend build-time config.
 
 ## Git
 
@@ -283,18 +292,33 @@ as input, so the range tracker has to exist before the solver.
   consistency break needing continual re-solving, an architecture rebuild). See
   [docs/DEPTH_LIMITED_SOLVER_PLAN.md](docs/DEPTH_LIMITED_SOLVER_PLAN.md) and
   [docs/NN_LEAF_PLAN.md](docs/NN_LEAF_PLAN.md) (both on hold).
-- **Phase 5 — Safety + depth** ⬜ (multi-week; deferred). 5a: reach/gadget for the river solver
-  (provably no-more-exploitable than the blueprint). 5b: continual-re-solving turn/flop depth-limited
-  solving with **blueprint counterfactual values as the leaf value function** — the revival path for
-  the shelved turn solver.
+- **Phase 5 — Safety + depth.** 5a ✅ **SHIPPED (2026-06-10)** / 5b ⬜ (multi-week; deferred).
+  **5a — safe river re-solving gadget** (`subgame/blueprint_projection.blueprint_cfv` +
+  `river_cfr.run_gadget` + `solve_control.solve_river_gadget`): the villain gets a per-hand opt-out
+  paying the blueprint's river-entry CFV, so the re-solved bot is provably no-more-exploitable than
+  the blueprint. Served via `RiverSubgameSolver(safe_gadget=True, gadget_anchor='auto')`: per spot it
+  EXPLOITS the read (unsafe-v1) when a self-check proves it's within the blueprint, else CLAMPS to the
+  blueprint-anchored gadget (anchors: `belief`/`blueprint`/`confidence`/`auto`). Validated ≤ blueprint
+  on every spot incl. a deliberately-wrong belief (`tests/test_safe_river_gadget.py`); off/A/B compared
+  live (`tests/compare_gadget_policies.py`). The blueprint CFV machinery is also the leaf-value piece
+  5b needs. See [docs/SAFE_RIVER_SOLVING_PLAN.md](backend/bot/docs/SAFE_RIVER_SOLVING_PLAN.md).
+  **5b** — continual-re-solving turn/flop depth-limited solving with **blueprint counterfactual values
+  as the leaf value function** — the revival path for the shelved turn solver.
 
 Dependency chain: **0 → 1 → 2 → 3 → 4 → 5** (1a and 1b are independent quick wins; 2 is
 high-leverage but technically optional before 3; 3 strictly gates 4).
 
+Strategy purification ✅ **done (2026-06-10)** — `cfr/purification.py` (drop sub-threshold
+actions, renormalise; argmax at threshold=1.0). A BR sweep (seed 42, 50 samples) found **1%
+optimal** (off 14621 → 1% 14534 mbb; 5% over-purifies, full=argmax catastrophic at 24091).
+**Served at `purify_threshold=0.01`** on the blueprint-path play (the opponent model is NOT
+purified). Wired into both the live bot and the BR scoreboard (`run_evaluation.py --purify`).
+NB this is the blueprint TABLE's exploitability — BR doesn't see the guards/gadget.
+
 Deferred / low-priority: opponent modeling (only coarse aggregate stats — aggression %,
 fold-to-c-bet — off by default; per-bucket modeling is infeasible in one human session due
-to data sparsity); strategy purification (cheap inference A/B once the harness exists);
-widening the betting abstraction (4th size / 3rd raise) only if LBR reveals missing-line leaks.
+to data sparsity); widening the betting abstraction (4th size / 3rd raise) only if LBR reveals
+missing-line leaks.
 
 Productionization (additive, the interfaces already exist for these):
 - Online 1v1 play deployed on AWS — swap `InMemorySessionStore` for a Redis/DynamoDB-backed

@@ -19,7 +19,13 @@ function EvCounter({ compact = false }) {
         const tick = () => getStats().then((s) => alive && setStats(s))
             .catch(() => alive && setErr(true));
         tick();
-        const id = setInterval(tick, 30000);
+        // 60s poll. The counter is a slow-moving lifetime stat (the bot's record
+        // vs the field is not seconds-sensitive), and the backend's per-worker
+        // 5s cache means more frequent client polling would barely change the
+        // displayed value anyway. The user's OWN stats (`getMe` in AiGame)
+        // refresh immediately on each hand_over so this poll is the field-aggregate
+        // only.
+        const id = setInterval(tick, 60000);
         return () => { alive = false; clearInterval(id); };
     }, []);
 

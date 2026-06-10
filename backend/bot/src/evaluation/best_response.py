@@ -78,8 +78,13 @@ from .showdown_kernel import (
 
 
 class BestResponseEvaluator:
-    def __init__(self, blueprint_db, seed=None, menu_mode=None):
+    def __init__(self, blueprint_db, seed=None, menu_mode=None, purify_threshold=0.0):
         self.db = blueprint_db
+        # Strategy purification of the (villain) blueprint before the BR walk -- the
+        # A/B knob for the purification experiment. 0.0 = off (default). The hero then
+        # best-responds to the PURIFIED blueprint, so exploitability(t) measures how
+        # exploitable the purified strategy is. Same transform the live bot uses.
+        self.purify_threshold = float(purify_threshold)
         # The eval game must use the SAME action abstraction the blueprint was
         # trained under, or the public-tree walk enumerates the wrong legal actions
         # / keys. menu_mode=None auto-reads it from the DB metadata (control for a
@@ -133,8 +138,11 @@ class BestResponseEvaluator:
             w = np.array([max(0.0, stored.get(a, 0.0)) for a in legal])
             total = w.sum()
             probs = w / total if total > 1e-12 else np.ones(n) / n
+            if self.purify_threshold > 0.0 and total > 1e-12:
+                from ..cfr.purification import purify_probs
+                probs = purify_probs(probs, self.purify_threshold)
         else:
-            probs = np.ones(n) / n
+            probs = np.ones(n) / n              # untrained key: uniform, never purified
 
         self._restricted_cache[cache_key] = probs
         return probs
@@ -351,7 +359,8 @@ class BestResponseEvaluator:
         # Split board indices into `workers` contiguous chunks. Each chunk is one
         # task: (db_path, menu_mode, board_sublist).
         chunks = [boards[i::workers] for i in range(workers)]
-        payloads = [(self.db.db_path, self.menu_mode, ch) for ch in chunks if ch]
+        payloads = [(self.db.db_path, self.menu_mode, ch, self.purify_threshold)
+                    for ch in chunks if ch]
 
         b0 = b1 = 0.0
         with Pool(processes=workers) as pool:
@@ -373,11 +382,12 @@ def _br_board_chunk(payload):
     """(db_path, menu_mode, boards) -> (seat0_chip_sum, seat1_chip_sum) over the
     chunk. Builds a fresh evaluator per process; menu_mode is forced so a capped
     blueprint is walked on the capped tree even though the worker re-opens the DB."""
-    db_path, menu_mode, boards = payload
+    db_path, menu_mode, boards, purify_threshold = payload
     from ..storage.blueprint_db import BlueprintDB
     db = BlueprintDB(db_path, read_only=True)
     try:
-        ev = BestResponseEvaluator(db, menu_mode=menu_mode)
+        ev = BestResponseEvaluator(db, menu_mode=menu_mode,
+                                   purify_threshold=purify_threshold)
         b0 = b1 = 0.0
         for board in boards:
             c0, c1 = ev.board_contribution(board)

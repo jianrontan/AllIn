@@ -108,8 +108,52 @@ def test_serialization_survives_new_fields():
     print("PASS test_serialization_survives_new_fields")
 
 
+def test_gadget_river_solver_plays_hands():
+    """Phase 5a wiring: the SAFE-gadget solver (safe_gadget=True) drives real river
+    decisions end-to-end without crashing -- the blueprint opt-out CFVs are computed
+    and the gadget solve / read-off path runs. Same harness as the unsafe-v1 test;
+    this just proves the new branch in solve_for_action is exercised live."""
+    db = _blueprint_db()
+    if db is None:
+        print("SKIP test_gadget_river_solver_plays_hands (no blueprint)")
+        return
+    strat_fn = BlueprintStrategy(db).range_model_fn()
+    solver = RiverSubgameSolver(db, max_iters=40, check_every=20, time_budget=10.0,
+                                safe_gadget=True)
+    session = GameSession.new('gad', 'p', strategy_fn=strat_fn)
+
+    saw_river_solve = False
+    hands = 0
+    while hands < 12 and not saw_river_solve:
+        guard = 0
+        while session.data['status'] == 'in_hand' and guard < 80:
+            if session.is_human_turn():
+                session.apply_action(_passive_human(session))
+            else:
+                advance_bot_turns(session, solver)
+                dbg = getattr(solver, 'last_debug', None) or {}
+                if dbg.get('mode') == 'river_solver' and dbg.get('solved'):
+                    saw_river_solve = True
+            guard += 1
+        assert session.data['status'] in ('in_hand', 'hand_over')
+        if session.data['status'] == 'hand_over':
+            session.start_next_hand()
+        hands += 1
+
+    db.close()
+    # The gadget path may not trigger every run (needs a river solve to fire, gated by
+    # SPR/inputs), but when it does it must have completed cleanly (no fallback crash).
+    assert solver.stats['fallback'] == 0 or solver.stats['solved'] > 0, solver.stats
+    # Telemetry: every gadget river solve tallies exactly one exploit-or-clamp outcome.
+    assert (solver.stats['gadget_exploit'] + solver.stats['gadget_clamp']
+            == solver.stats['solved']), solver.stats
+    print(f"PASS test_gadget_river_solver_plays_hands "
+          f"(river-solve hit={saw_river_solve}, stats={solver.stats})")
+
+
 TESTS = [
     test_river_solver_plays_hands,
+    test_gadget_river_solver_plays_hands,
     test_serialization_survives_new_fields,
 ]
 

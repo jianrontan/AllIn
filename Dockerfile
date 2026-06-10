@@ -13,6 +13,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Do not write .pyc files at runtime. The container's source tree is owned by
+# root (from COPY) and run by `USER allin`; without this flag Python tries to
+# create __pycache__/ next to source files and either silently fails (warnings
+# in logs) or writes into a per-user cache (~/.cache) that's wiped on restart.
+ENV PYTHONDONTWRITEBYTECODE=1
+
 # Python deps first (cached layer). gunicorn / waitress / boto3 are pinned in
 # requirements.txt, so no extra installs here.
 COPY backend/requirements.txt /tmp/requirements.txt
@@ -27,18 +33,20 @@ COPY backend/ /app/backend/
 # Defaults safe for a bare `docker run`. Prod overrides at deploy time (Lightsail
 # env): ALLIN_SESSION_STORE=dynamodb, ALLIN_STORE_BACKEND=dynamodb,
 # ALLIN_CORS_ORIGINS=https://allin.jianrontan.com, AWS_REGION, ALLIN_GIT_SHA,
-# ALLIN_COGNITO_*, etc. The debug overlay stays OFF (ALLIN_DEBUG_OVERLAY unset)
-# so the bot's bucket never leaks in production.
-# Blueprint resolution: NO ALLIN_BLUEPRINT_DB pin -- the auto-resolver
+# ALLIN_COGNITO_*, etc.
+# Blueprint resolution: NO ALLIN_BLUEPRINT_DB pin — the auto-resolver
 # (config.resolve_blueprint_path) globs only the top-level analysis/blueprints
 # and picks blueprint_final.db, which is the 25M snapshot.
+#
+# Debug overlay OFF by default IN THE IMAGE (secure-by-default): the per-decision
+# bot trace (`botDebug`) exposes the bot's hand-bucket mid-hand (a spoiler), so the
+# public artifact must not ship it even if the Lightsail env var is forgotten. The
+# strategy_api.py CODE default stays ON for local dev (`python strategy_api.py`); a
+# local container that wants the overlay can `docker run -e ALLIN_DEBUG_OVERLAY=1`.
 ENV PYTHONUNBUFFERED=1 \
     ALLIN_LOG_LEVEL=INFO \
-    ALLIN_SESSION_STORE=memory
-# Debug overlay default is ON in code (strategy_api.py). The image does NOT
-# force it off — set ALLIN_DEBUG_OVERLAY=0 in the Lightsail env vars at deploy
-# time if you want the public bot's bucket hidden mid-hand. Local docker runs
-# inherit the dev-friendly ON default.
+    ALLIN_SESSION_STORE=memory \
+    ALLIN_DEBUG_OVERLAY=0
 
 EXPOSE 5000
 

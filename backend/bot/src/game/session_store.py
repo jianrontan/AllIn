@@ -135,16 +135,24 @@ class DynamoDBSessionStore(SessionStore):
     """
 
     def __init__(self, table_name, region=None, endpoint_url=None,
-                 ttl_seconds=3600, lock_lease_seconds=30,
+                 ttl_seconds=3600, lock_lease_seconds=60,
                  lock_acquire_timeout=10.0, lock_poll_seconds=0.05):
         import boto3                       # lazy: only when this store is selected
         from botocore.exceptions import ClientError
+        from botocore.config import Config
         self._ClientError = ClientError
         self._ttl = ttl_seconds
+        # 60s lease (was 30s): a long-running river solve takes the session lock
+        # for the duration of the solve (up to time_budget). With a 30s lease the
+        # lock could expire mid-solve and a second request could grab it, breaking
+        # the contract. 60s comfortably exceeds the solver timeout.
         self._lease = lock_lease_seconds
         self._acquire_timeout = lock_acquire_timeout
         self._poll = lock_poll_seconds
-        kwargs = {}
+        # Adaptive retries on throttling / 5xx. The hand-end hook swallows
+        # ClientError → throttles would silently miss leaderboard updates;
+        # adaptive retries cut that surface significantly.
+        kwargs = {'config': Config(retries={'mode': 'adaptive', 'max_attempts': 5})}
         if region:
             kwargs['region_name'] = region
         if endpoint_url:
@@ -243,10 +251,29 @@ class DynamoDBSessionStore(SessionStore):
         except ClientError as e:
             if e.response.get('Error', {}).get('Code') != 'ResourceInUseException':
                 raise                      # already exists is fine
-        client.update_time_to_live(
-            TableName=table_name,
-            TimeToLiveSpecification={'Enabled': True, 'AttributeName': 'expiry'},
-        )
+        # TTL: idempotent — DynamoDB raises ValidationException
+        # ("TimeToLive is already enabled") on re-runs. Swallow that.
+        try:
+            client.update_time_to_live(
+                TableName=table_name,
+                TimeToLiveSpecification={'Enabled': True, 'AttributeName': 'expiry'},
+            )
+        except ClientError as e:
+            code = e.response.get('Error', {}).get('Code', '')
+            if code not in ('ValidationException', 'UnknownOperationException'):
+                raise
+        # PITR for disaster recovery. Sessions are ephemeral (24h TTL) so they're
+        # the lowest-stakes table to back up — but enabling consistently across
+        # all four tables means one fewer thing to forget at deploy time.
+        try:
+            client.update_continuous_backups(
+                TableName=table_name,
+                PointInTimeRecoverySpecification={'PointInTimeRecoveryEnabled': True})
+        except ClientError as e:
+            code = e.response.get('Error', {}).get('Code', '')
+            if code not in ('ContinuousBackupsUnavailableException',
+                            'UnknownOperationException', 'ValidationException'):
+                raise
 
 
 def make_session_store():

@@ -27,15 +27,22 @@ from src.evaluation.lbr import LBREvaluator
 from src.evaluation.lbr_solver import SolverLBREvaluator
 
 
-def run(hands, max_iters, time_budget, seed, also_blueprint, db_path=None):
+def run(hands, max_iters, time_budget, seed, also_blueprint, db_path=None,
+        safe_gadget=True, gadget_anchor='auto', purify=0.01):
     import numpy as np
     path = db_path or resolve_blueprint_path()
     print(f"blueprint: {path}", flush=True)
+    print(f"victim   : safe_gadget={safe_gadget} anchor={gadget_anchor} "
+          f"purify={purify}  (the DEPLOYED served config)", flush=True)
     every = max(1, hands // 10)
 
     db = BlueprintDB(path, read_only=True)
+    # Construct the solver EXACTLY as strategy_api.py serves it so the LBR number
+    # reflects the deployed bot's river play (gadget + purification), not unsafe-v1.
     solver = RiverSubgameSolver(db, max_iters=max_iters, time_budget=time_budget,
-                                rng=np.random.default_rng(seed))
+                                rng=np.random.default_rng(seed),
+                                safe_gadget=safe_gadget, gadget_anchor=gadget_anchor,
+                                purify_threshold=purify)
     t0 = time.time()
     res = SolverLBREvaluator(db, solver, seed=seed).evaluate(
         num_hands=hands, progress_every=every, paired=True)
@@ -78,6 +85,14 @@ if __name__ == '__main__':
                         "CURRENT training run on its own abstraction.")
     p.add_argument('--no-blueprint', action='store_true',
                    help="Skip the paired blueprint LBR baseline.")
+    p.add_argument('--unsafe', action='store_true',
+                   help="Score the UNSAFE-v1 solver (safe_gadget off) instead of the "
+                        "deployed gadget bot -- for an unsafe-vs-gadget A/B.")
+    p.add_argument('--anchor', default='auto', choices=['belief', 'blueprint', 'confidence', 'auto'],
+                   help="Gadget anchor when safe_gadget is on (default: auto = deployed).")
+    p.add_argument('--purify', type=float, default=0.01,
+                   help="Purification threshold on the river bot (default 0.01 = deployed).")
     args = p.parse_args()
     run(args.hands, args.max_iters, args.time_budget, args.seed,
-        not args.no_blueprint, db_path=args.db)
+        not args.no_blueprint, db_path=args.db,
+        safe_gadget=not args.unsafe, gadget_anchor=args.anchor, purify=args.purify)

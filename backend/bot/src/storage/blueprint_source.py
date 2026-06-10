@@ -59,6 +59,12 @@ class S3ObjectSource(BlueprintSource):
     def __init__(self, s3_uri, cache_dir=None, client=None):
         self._uri = s3_uri
         self._bucket, self._key = self._parse_uri(s3_uri)
+        # Default cache dir is the OS temp dir ONLY in dev. In a container,
+        # /tmp can be wiped on restart by some orchestrators; also it's the
+        # default home for SQLite's WAL/SHM sidecars. Surface via the env so
+        # ops can pin it to a stable mount (e.g. /var/lib/allin/blueprints).
+        # If ALLIN_BLUEPRINT_CACHE_DIR isn't set we still fall back to tmp
+        # rather than failing; that's the historical behavior.
         self._cache_dir = Path(cache_dir or os.environ.get('ALLIN_BLUEPRINT_CACHE_DIR')
                                or tempfile.gettempdir())
         self._client = client            # injected (tests) or lazily created
@@ -86,11 +92,29 @@ class S3ObjectSource(BlueprintSource):
         dest = self._cache_dir / Path(self._key).name
         if not dest.exists():
             dest.parent.mkdir(parents=True, exist_ok=True)
-            # get_object (not download_file) so the call is directly stubbable with
-            # botocore.stub.Stubber and writes are explicit.
+            # Two safety properties baked in here:
+            #   1. Write to dest.with_suffix(...+'.partial') then rename to
+            #      `dest` so a half-finished download (network blip during
+            #      `Body.read()`) never leaves a TRUNCATED file at the final
+            #      path that SQLite would happily open and find corrupt.
+            #   2. `os.replace` is atomic on the same filesystem, so a
+            #      concurrent reader either sees the OLD file (absent) or
+            #      the COMPLETE new one — never a partial.
+            # get_object (not download_file) so the call is directly stubbable
+            # with botocore.stub.Stubber and writes are explicit.
+            tmp = dest.with_suffix(dest.suffix + '.partial')
             resp = self._get_client().get_object(Bucket=self._bucket, Key=self._key)
-            with open(dest, 'wb') as f:
-                f.write(resp['Body'].read())
+            try:
+                with open(tmp, 'wb') as f:
+                    f.write(resp['Body'].read())
+                os.replace(tmp, dest)
+            except Exception:
+                # Best-effort cleanup of the partial; ignore secondary errors.
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+                raise
         self._cached = dest
         return dest
 

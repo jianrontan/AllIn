@@ -22,6 +22,7 @@ blueprint<->tree bridge (step 6b); until then the solver returns the solved
 strategy when the solve converged and otherwise falls back to the blueprint.
 """
 import logging
+import threading
 from collections import OrderedDict
 
 import numpy as np
@@ -34,7 +35,7 @@ from ..cfr.poker_game import make_custom_action
 from ..evaluation.showdown_kernel import build_board_arrays
 from .river_tree import build_river_tree, is_sized, sized_chips, DEFAULT_MENU
 from .river_cfr import RiverCFR  # noqa: F401  (re-exported convenience)
-from .solve_control import solve_river, ev_gate, hand_action_evs
+from .solve_control import solve_river, solve_river_gadget, ev_gate, hand_action_evs
 from .range_inputs import (
     project_tracker, blend_villain, hand_index_map, hand_row,
     read_action_strategy, DEFAULT_TEMPER_BETA)
@@ -157,6 +158,22 @@ class RiverSubgameSolver(BlueprintStrategy):
     # See BUG-022. (Preflop only; the postflop EMD strength buckets aren't equity-ordered.)
     JAM_RANGE_FRACTION = 0.20
 
+    # Inference #1: at an UNTRAINED first-to-act postflop node the passive fallback checks
+    # 100%; value-bet a trained size only when equity clears this high bar (so it's a thin/
+    # no-bluff value bet -- hard to exploit -- never a stray aggressive size).
+    FIRST_ACT_VALUE_EQ = 0.65
+
+    # H1: how much larger an EV edge an UNDER-converged river solve must show before it
+    # is allowed to deviate from the (trained) blueprint baseline -- a partial solve is
+    # least trustworthy exactly where it most wants to move, so distrust it.
+    _NONCONVERGED_MARGIN_MULT = 4.0
+
+    # 'auto' gadget anchor: how much MORE exploitable (relative slack on the blueprint's
+    # river best-response) the unsafe exploit strategy may be on a spot before the
+    # self-check falls back to the safe blueprint-anchored gadget. A small positive slack
+    # tolerates finite-iteration solve noise so the check doesn't flap on a near-tie.
+    _AUTO_SAFE_MARGIN = 0.05
+
     # A belief is treated as UNINFORMED (don't trust the tracked range for a stack-off)
     # only when its effective-hand-count / live-hand-count is AT/ABOVE this -- i.e. the
     # belief is essentially still uniform (no real read). Set very near 1.0 on purpose:
@@ -170,9 +187,34 @@ class RiverSubgameSolver(BlueprintStrategy):
     def __init__(self, blueprint_db, *, max_iters=400, check_every=40,
                  time_budget=8.0, gap_threshold=None, temper_beta=DEFAULT_TEMPER_BETA,
                  ev_margin=1.0, menu=DEFAULT_MENU, rng=None,
-                 guard_confidence=0.2, guard_margin=1.0, value_jam=False):
-        super().__init__(blueprint_db)
+                 guard_confidence=0.2, guard_margin=1.0, value_jam=False,
+                 safe_gadget=False, gadget_anchor='belief', purify_threshold=0.0):
+        super().__init__(blueprint_db, purify_threshold=purify_threshold)
         self.value_jam = value_jam
+        # Phase 5a: solve the river under the re-solving GADGET (provably
+        # no-more-exploitable than the blueprint) instead of the unsafe-v1 direct
+        # solve against the tracked ranges. Default OFF until the exploitability
+        # validation (SAFE_RIVER_SOLVING_PLAN.md piece 4) clears it to flip on.
+        self.safe_gadget = safe_gadget
+        # Which villain range anchors the gadget's opt-out / reach (the safety vs
+        # read-exploitation fork):
+        #   'blueprint' -- UNIFORM (card-removal) villain range: the no-more-exploitable
+        #     guarantee then holds vs ANY villain hand (robust to a narrow-WRONG belief),
+        #     trading away read-based exploitation. The provable anchor.
+        #   'belief' -- the tracked river-entry belief: safe RELATIVE to that belief and
+        #     still read-aware, but a narrow-wrong belief isn't fully clamped to blueprint.
+        #   'confidence' (A) -- exploit (unsafe-v1) on a trusted+informative read, else
+        #     clamp to the 'blueprint' anchor. Cheap (one BR-walk-free gate), but clamps
+        #     even where the exploit was safe.
+        #   'auto' (B) -- like 'confidence' but, on an untrusted read, runs a per-spot
+        #     safety self-check and STILL exploits when that is within the blueprint's
+        #     river best-response. Gets unsafe-v1 exploitation when the read is good AND
+        #     the safe clamp when it isn't, at the cost of the self-check's BR walks.
+        # All built so the anchor can be chosen from measured exploitability / win-rate.
+        if gadget_anchor not in ('belief', 'blueprint', 'confidence', 'auto'):
+            raise ValueError("gadget_anchor must be 'belief', 'blueprint', 'confidence' "
+                             f"or 'auto', got {gadget_anchor!r}")
+        self.gadget_anchor = gadget_anchor
         # Postflop size menu the served blueprint was trained under (control vs
         # capped), so the EV-gate baseline projection maps the blueprint's stored
         # sizes (incl. capped's overbet2) onto the river tree correctly.
@@ -192,6 +234,14 @@ class RiverSubgameSolver(BlueprintStrategy):
         # edge clears this chip margin (avoid flipping on a knife-edge / MC noise).
         self.guard_confidence = guard_confidence
         self.guard_margin = guard_margin
+        # The served BOT is a MODULE-LEVEL SINGLETON shared across concurrent gunicorn
+        # threads (--threads 4). The two LRU equity caches below and the numpy RNG are
+        # mutable shared state: an unsynchronised OrderedDict move_to_end/popitem can
+        # corrupt its linked list, and numpy Generator.choice is not thread-safe (could
+        # silently mis-sample the solved action). This lock guards those small critical
+        # sections (NOT the expensive equity compute, which stays outside it). last_debug
+        # is already thread-local; per-request solve state (tree/CFR/ba) is not shared.
+        self._lock = threading.Lock()
         # Seedable RNG for the final action sample, so scoring runs / tests are
         # reproducible (the mix itself is correct either way).
         self._rng = rng if rng is not None else np.random.default_rng()
@@ -214,7 +264,11 @@ class RiverSubgameSolver(BlueprintStrategy):
         # Diagnostics: why does / doesn't the solver change the bot's action?
         self.stats = {'river_calls': 0, 'solved': 0, 'fallback': 0,
                       'deviated': 0, 'kept_blueprint': 0, 'allin_guard': 0,
-                      'deep_raise_guard': 0, 'premium_no_fold': 0}
+                      'deep_raise_guard': 0, 'premium_no_fold': 0,
+                      # Safe-gadget anchor outcome (Phase 5a): how often the gadget
+                      # EXPLOITED (unsafe-v1 cleared by pre-filter/self-check) vs CLAMPED
+                      # to a safe gadget solve. 0/0 when safe_gadget is off.
+                      'gadget_exploit': 0, 'gadget_clamp': 0}
 
     # -- BotStrategy interface -------------------------------------------------
     def decide(self, info_set_key, legal_actions, public_state):
@@ -246,6 +300,15 @@ class RiverSubgameSolver(BlueprintStrategy):
             deep = self._safe_untrained_call(info_set_key, legal_actions, ps)
         if deep is not None:
             return deep
+        # Inference #1: at an UNTRAINED first-to-act postflop node, super().decide() checks
+        # 100% (passive fallback) and surrenders value with a strong made hand. Value-bet
+        # a trained size on high equity instead (never a stray/off-grid size).
+        try:
+            first_act = self._first_act_value_guard(info_set_key, legal_actions, ps)
+        except Exception:
+            first_act = None
+        if first_act is not None:
+            return first_act
         spec = self._solver_inputs(ps)
         if spec is None:
             self.last_debug = {'mode': 'blueprint', 'street': ps.get('street')}
@@ -298,21 +361,40 @@ class RiverSubgameSolver(BlueprintStrategy):
         """EV-gate the solved strategy against the blueprint baseline (mapped onto the
         tree), record diagnostics, and emit the engine action. Shared by the river and
         turn solve paths -- both produce (dist, node, info) of the same shape."""
-        bp_engine = self._state_distribution(info_set_key, legal_actions, ps)
+        # M2: use the raw-key blueprint distribution (NOT _state_distribution's
+        # translation blend) so the baseline is consistent with the _is_untrained check
+        # below -- they must agree on "trained?". On the river the solver injects the
+        # exact realized size via _navigate, so the off-grid translation blend is
+        # redundant here and only introduces a baseline/untrained-check mismatch.
+        bp_engine = self._distribution(info_set_key, legal_actions)
         baseline = blueprint_to_tree_dist(bp_engine, node, self._postflop_menu)
         row = hand_row(info['ba'], spec['hole'], info['idx'])
         evs = hand_action_evs(info['cfr'], node, row, info['reach0'], info['reach1'])
-        # C3: at an UNTRAINED key the baseline is BlueprintStrategy's passive coin-flip
-        # fallback -- EV-gating the converged solve against that garbage can wrongly
-        # KEEP it. Trust the solve outright there (the only real signal at a beyond-cap
-        # river node). Trained keys keep the normal gate against a real baseline.
-        if self._is_untrained(info_set_key, legal_actions):
+        untrained = self._is_untrained(info_set_key, legal_actions)
+        # C3: at an UNTRAINED key the baseline is the passive coin-flip fallback -- gating
+        # the solve against that garbage can wrongly KEEP it, so trust the solve outright.
+        # Trained keys gate against a real baseline.
+        if evs is None:
+            # M1: no compatible villain mass for the bot's exact hand -> EVs undefined,
+            # can't gate. Untrained -> trust the solve (no real baseline); trained -> keep
+            # the real blueprint baseline rather than gate on garbage.
+            chosen = dist if untrained else baseline
+            gate = {'ev_solved': 0.0, 'ev_baseline': 0.0, 'delta': 0.0,
+                    'used': 'solved_untrained' if untrained else 'baseline'}
+        elif untrained:
             ev_s = float(sum(dist.get(a, 0.0) * v for a, v in zip(node.actions, evs)))
             chosen = dist
             gate = {'ev_solved': ev_s, 'ev_baseline': 0.0, 'delta': 0.0,
                     'used': 'solved_untrained'}
         else:
-            chosen, gate = ev_gate(node.actions, dist, baseline, evs, self.ev_margin)
+            # H1: an UNDER-converged solve is least trustworthy exactly where it most
+            # wants to deviate. Require a larger EV edge to leave the (real) baseline
+            # when the solve did not converge -- the warm-start prior is unwired, so this
+            # is the graceful-degradation safety net for a partial solve.
+            margin = self.ev_margin
+            if not info.get('converged', False):
+                margin = self.ev_margin * self._NONCONVERGED_MARGIN_MULT
+            chosen, gate = ev_gate(node.actions, dist, baseline, evs, margin)
         self.stats['solved'] += 1
         deviated = gate['used'] != 'baseline'
         self.stats['deviated' if deviated else 'kept_blueprint'] += 1
@@ -328,7 +410,14 @@ class RiverSubgameSolver(BlueprintStrategy):
             'iters': int(info.get('iters', 0)),
             'gap': (round(float(info['gap']), 4) if info.get('gap') is not None else None),
             'converged': bool(info.get('converged', False)),
+            'anchor': info.get('anchor'),            # safe-gadget path taken (None = unsafe-v1)
         }
+        # Telemetry: tally exploit vs clamp for the safe-gadget anchors. 'exploit' in the
+        # label = unsafe-v1 was served (pre-filter or self-check cleared it); everything
+        # else ('*_safe_fallback', 'belief', 'blueprint') ran a gadget solve = clamp.
+        anchor = info.get('anchor')
+        if anchor is not None:
+            self.stats['gadget_exploit' if 'exploit' in anchor else 'gadget_clamp'] += 1
         return self._pick_engine_action(chosen, legal_actions, spec, node)
 
     # -- facing-an-all-in terminal guard (preflop / flop / turn) ---------------
@@ -501,14 +590,15 @@ class RiverSubgameSolver(BlueprintStrategy):
             # gets here any-two). Vs-uniform over-estimates and stacks off dominated hands
             # (T8o/KQo/A5s/55) -- BUG-022 + B1. Judge vs the top-fraction jam range.
             eq = self._jam_range_equity(hole, [], self.JAM_RANGE_FRACTION)
-        elif street == 'turn' and to_call >= bot_stack - 1e-6:
-            # FACED ALL-IN on the TURN, uninformed: judge vs the top-fraction range ranked
-            # by the EMD strength bucket's centroid-MEAN equity (the buckets aren't index-
-            # ordered but their centroid means are usable + draw-aware). River is solver-
-            # owned (_solver_inputs); flop is rarely an all-in. The postflop-gap fix.
-            eq = self._jam_range_equity(hole, board, self.JAM_RANGE_FRACTION)
         else:
-            eq = self._uniform_floor_equity(hole, board)   # money-behind postflop / flop
+            # FLOP / TURN beyond-cap node, uninformed read -- a FACED ALL-IN *or* a
+            # money-behind deep raise both face a SELECTED range (4+ aggressions to get
+            # here), so judge vs the top-fraction range ranked by the EMD bucket's
+            # centroid-MEAN equity (not vs uniform, which over-values -- BUG-023 class).
+            # Centroid means are equity-ordered + draw-aware. (Inference #5 extended the
+            # earlier turn-all-in-only fix to the money-behind case; same implied-odds
+            # trade as B1. River is solver-owned (_solver_inputs returns early above).)
+            eq = self._jam_range_equity(hole, board, self.JAM_RANGE_FRACTION)
         # EV(call) vs EV(fold)=0, with all-in-for-less handled (mirror the all-in
         # guard's chip math). For the money-behind deep-raise case this is the eq >=
         # pot-odds rule but scored as if the call runs out -- the documented v1
@@ -545,16 +635,18 @@ class RiverSubgameSolver(BlueprintStrategy):
         values). 200 runouts is ample for a coarse floor where a premium sits far from
         any pot-odds boundary; turn/river are exact regardless of the count."""
         ck = (frozenset(hole), frozenset(board))   # order-free: a board is a set of cards
-        cached = self._uniform_eq_cache.get(ck)
-        if cached is not None:
-            self._uniform_eq_cache.move_to_end(ck)   # mark most-recently-used
-            return cached
+        with self._lock:                            # OrderedDict isn't thread-safe
+            cached = self._uniform_eq_cache.get(ck)
+            if cached is not None:
+                self._uniform_eq_cache.move_to_end(ck)   # mark most-recently-used
+                return cached
         from ..game.range_tracker import RangeTracker
-        eq = float(RangeTracker(list(hole), self._cards).hero_equity(
+        eq = float(RangeTracker(list(hole), self._cards).hero_equity(   # outside the lock
             list(hole), list(board), n_runouts=200))
-        self._uniform_eq_cache[ck] = eq
-        if len(self._uniform_eq_cache) > self._uniform_eq_cap:
-            self._uniform_eq_cache.popitem(last=False)   # evict LRU; no flush cliff
+        with self._lock:
+            self._uniform_eq_cache[ck] = eq
+            if len(self._uniform_eq_cache) > self._uniform_eq_cap:
+                self._uniform_eq_cache.popitem(last=False)   # evict LRU; no flush cliff
         return eq
 
     def _postflop_means(self, n_board):
@@ -597,10 +689,11 @@ class RiverSubgameSolver(BlueprintStrategy):
         the uniform floor would stack off; premiums still clear pot odds. Cached on
         (hole, board, frac); 200 MC runouts is ample for a coarse range floor."""
         ck = (frozenset(hole), frozenset(board), round(frac, 3))
-        cached = self._jam_eq_cache.get(ck)
-        if cached is not None:
-            self._jam_eq_cache.move_to_end(ck)
-            return cached
+        with self._lock:                            # OrderedDict isn't thread-safe
+            cached = self._jam_eq_cache.get(ck)
+            if cached is not None:
+                self._jam_eq_cache.move_to_end(ck)
+                return cached
         from ..game.range_tracker import RangeTracker
         t = RangeTracker(list(hole), self._cards)
         if board:
@@ -615,10 +708,11 @@ class RiverSubgameSolver(BlueprintStrategy):
         for i in range(len(t.w)):
             if i not in keep:
                 t.w[i] = 0.0
-        eq = float(t.hero_equity(list(hole), list(board), n_runouts=200))
-        self._jam_eq_cache[ck] = eq
-        if len(self._jam_eq_cache) > self._uniform_eq_cap:
-            self._jam_eq_cache.popitem(last=False)
+        eq = float(t.hero_equity(list(hole), list(board), n_runouts=200))   # outside lock
+        with self._lock:
+            self._jam_eq_cache[ck] = eq
+            if len(self._jam_eq_cache) > self._uniform_eq_cap:
+                self._jam_eq_cache.popitem(last=False)
         return eq
 
     def _belief_is_informative(self, tracker):
@@ -690,6 +784,39 @@ class RiverSubgameSolver(BlueprintStrategy):
                                    'hand': ''.join(hole), 'overrode': 'fold->call'}
                 return 'call'
         return action
+
+    def _first_act_value_guard(self, info_set_key, legal_actions, ps):
+        """Inference #1: at an UNTRAINED FIRST-TO-ACT postflop node (no bet faced) the
+        blueprint passive fallback checks 100%, surrendering value with a strong made
+        hand. If the hand's equity vs the range clears FIRST_ACT_VALUE_EQ, value-bet ONE
+        conservative TRAINED size (a `bet_*` that's already in legal -- never a constructed
+        / off-grid size, so no BUG-011 stray-raise); otherwise defer (-> check). Scoped to
+        flop/turn (preflop opens are well-trained; the river is solver-owned). Returns the
+        bet action or None."""
+        if 'call' in legal_actions or 'fold' in legal_actions or 'check' not in legal_actions:
+            return None                                  # facing a bet (the guards own it)
+        if ps.get('street') not in ('flop', 'turn'):
+            return None                                  # preflop trained / river -> solver
+        sized = next((a for a in ('bet_medium', 'bet_small', 'bet_large')
+                      if a in legal_actions), None)
+        if sized is None:
+            return None                                  # no trained sized bet available
+        if not self._is_untrained(info_set_key, legal_actions):
+            return None                                  # trained -> the blueprint plays
+        tracker = ps.get('opp_range')
+        hole = ps.get('hole_cards')
+        board = ps.get('community')
+        if tracker is None or not hole or board is None or ps.get('seat') is None:
+            return None
+        if self._trust_read(tracker):
+            eq = float(tracker.hero_equity(list(hole), list(board), n_runouts=200))
+        else:
+            eq = self._uniform_floor_equity(hole, board)
+        if eq >= self.FIRST_ACT_VALUE_EQ:
+            self.last_debug = {'mode': 'first_act_value', 'street': ps.get('street'),
+                               'action': sized, 'eq': round(eq, 3)}
+            return sized
+        return None                                      # not strong enough -> check (defer)
 
     def _solver_inputs(self, ps):
         """Extract the river-solve inputs from public_state, or None to signal
@@ -764,21 +891,109 @@ class RiverSubgameSolver(BlueprintStrategy):
         if node.player != bot_seat:
             raise ValueError(f"path landed on seat {node.player}, not the bot ({bot_seat})")
 
+        if self.safe_gadget:
+            cfr, info = self._safe_solve(tree, ba, reach0, reach1, hero, villain,
+                                         bot_seat, villain_tracker, idx)
+        else:
+            cfr, info = solve_river(
+                tree, ba, reach0, reach1, max_iters=self.max_iters,
+                check_every=self.check_every, gap_threshold=self.gap_threshold,
+                time_budget=self.time_budget)
+
+        # Reaches INTO this node (root reaches conditioned on the realized river
+        # betting), needed for the EV gate AND the deep-node zero-reach guard below.
+        node_reach0, node_reach1 = cfr.reach_into(edge_path, reach0, reach1)
+        # Guard a silent UNIFORM read-off at the DECISION node, not just the root: if the
+        # bot's actual hand has ~zero reach INTO this realized node, its strat_sum row
+        # there never moved, so average_strategy returns uniform 1/A -> a near-random
+        # action read off as the solve's recommendation. The root-reach guard above
+        # doesn't catch a hand that reaches the root but rarely takes the realized line.
+        # Treat as unsolvable -> decide() falls back to the blueprint cleanly.
+        hero_node_reach = node_reach0 if bot_seat == 0 else node_reach1
+        if hero_node_reach[row] <= 1e-12:
+            raise ValueError("bot hand has ~zero reach into the realized node; "
+                             "read-off would be uniform")
+        dist = read_action_strategy(cfr, node, hole, ba, idx)
+        # Carry the solve context so decide() can run the EV gate without re-solving.
+        info.update({'cfr': cfr, 'ba': ba, 'idx': idx,
+                     'reach0': node_reach0, 'reach1': node_reach1})
+        return dist, node, info
+
+    # -- safe-gadget solve policy (belief / blueprint / auto) ------------------
+    def _safe_solve(self, tree, ba, reach0, reach1, hero, villain, bot_seat,
+                    villain_tracker, idx):
+        """Run the river solve under the safe-gadget policy (self.gadget_anchor) and
+        return (cfr, info). 'belief'/'blueprint' anchor the re-solving gadget directly
+        (tracked reach vs uniform card-removal range). 'auto' EXPLOITS (unsafe-v1) when
+        that is provably within the blueprint's river best-response on THIS spot, and
+        otherwise falls back to the blueprint-anchored gadget -- the Phase-5a per-spot
+        safety self-check (mirrors tests/test_safe_river_gadget.py). A confidence
+        PRE-FILTER skips the check (and its best-response walks) when the read is already
+        trusted+informative -- the narrow-WRONG belief the self-check guards against is
+        unlikely there.
+
+        Latency note: 'auto' runs TWO solves (unsafe + gadget) ONLY on the rare spot where
+        the read is untrusted AND the self-check trips; the pre-filter avoids the double
+        solve in the common (trusted) case, and 'belief'/'blueprint' always run one."""
+        from .blueprint_projection import blueprint_cfv, blueprint_strategy_on_tree
+        villain_seat = 1 - bot_seat
+        raw = self.db.get_average_strategy if self.db else (lambda k: None)
+        # Uniform card-removal villain range -- the robust ('blueprint') anchor + the
+        # range the self-check measures exploitability over.
+        uniform_villain = (project_tracker(villain_tracker, ba, idx) > 0).astype(float)
+
+        def gadget(anchor_villain, optout=None):
+            g0, g1 = (hero, anchor_villain) if bot_seat == 0 else (anchor_villain, hero)
+            if optout is None:
+                # Opt-out CFVs must be on the SAME reaches the gadget weights with.
+                optout = blueprint_cfv(tree, ba, raw, g0, g1, villain_seat,
+                                       self._postflop_menu)
+            return solve_river_gadget(
+                tree, ba, hero, anchor_villain, optout, villain_seat,
+                max_iters=self.max_iters, check_every=self.check_every,
+                time_budget=self.time_budget)
+
+        if self.gadget_anchor == 'belief':
+            cfr, info = gadget(villain)
+            info['anchor'] = 'belief'
+            return cfr, info
+        if self.gadget_anchor == 'blueprint':
+            cfr, info = gadget(uniform_villain)
+            info['anchor'] = 'blueprint'
+            return cfr, info
+
+        # --- 'confidence' (A) and 'auto' (B): solve unsafe, exploit on a trusted read ---
         cfr, info = solve_river(
             tree, ba, reach0, reach1, max_iters=self.max_iters,
             check_every=self.check_every, gap_threshold=self.gap_threshold,
             time_budget=self.time_budget)
-
-        dist = read_action_strategy(cfr, node, hole, ba, idx)
-        # Carry the solve context so decide() can run the EV gate without re-solving.
-        # The EV gate needs the reaches INTO this node (root reaches conditioned on
-        # the realized river betting), not the root reaches -- otherwise the villain
-        # range at a non-root node still includes hands that wouldn't have taken the
-        # line, biasing the deviate/keep decision.
-        node_reach0, node_reach1 = cfr.reach_into(edge_path, reach0, reach1)
-        info.update({'cfr': cfr, 'ba': ba, 'idx': idx,
-                     'reach0': node_reach0, 'reach1': node_reach1})
-        return dist, node, info
+        if self._trust_read(villain_tracker):
+            info['anchor'] = ('confidence_exploit' if self.gadget_anchor == 'confidence'
+                              else 'auto_exploit_trusted')   # pre-filter: skip the BR walks
+            return cfr, info
+        if self.gadget_anchor == 'confidence':
+            # A: untrusted read -> straight to the safe blueprint-anchored gadget. Cheaper
+            # than 'auto' (no self-check / BR walks), but clamps even on the spots where the
+            # exploit would have been safe -- it gives up that exploitation.
+            cfr_g, info_g = gadget(uniform_villain)
+            info_g['anchor'] = 'confidence_safe'
+            return cfr_g, info_g
+        # B 'auto': self-check -- villain best-response (over the robust UNIFORM range) to
+        # the unsafe strategy vs to the blueprint -- the exact comparison the battery makes.
+        bp_strat = blueprint_strategy_on_tree(tree, ba, raw, self._postflop_menu)
+        e_unsafe = float((uniform_villain * cfr._br_value(
+            tree.root, villain_seat, hero, cfr.average_strategy)).sum())
+        e_bp = float((uniform_villain * cfr._br_value(
+            tree.root, villain_seat, hero, lambda nid: bp_strat[nid])).sum())
+        diag = {'eUnsafe': round(e_unsafe, 3), 'eBlueprint': round(e_bp, 3)}
+        if e_unsafe <= e_bp + self._AUTO_SAFE_MARGIN * (abs(e_bp) + 1.0):
+            info['anchor'] = 'auto_exploit_safe'         # exploit is within blueprint
+            info['autoSelfCheck'] = diag
+            return cfr, info
+        cfr_g, info_g = gadget(uniform_villain)          # over-exploiting -> safe gadget
+        info_g['anchor'] = 'auto_safe_fallback'
+        info_g['autoSelfCheck'] = diag
+        return cfr_g, info_g
 
     # -- navigation along the realized river path ------------------------------
     def _navigate(self, tree, river_path):
@@ -854,7 +1069,8 @@ class RiverSubgameSolver(BlueprintStrategy):
         if weights.sum() <= 0:
             choice = labels[0]
         else:
-            choice = str(self._rng.choice(labels, p=weights / weights.sum()))
+            with self._lock:                        # numpy Generator isn't thread-safe
+                choice = str(self._rng.choice(labels, p=weights / weights.sum()))
 
         bot_seat = spec['bot_seat']
         if choice in ('check', 'fold', 'call') and choice in legal_actions:

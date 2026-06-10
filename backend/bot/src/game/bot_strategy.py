@@ -36,8 +36,15 @@ class BotStrategy(ABC):
 class BlueprintStrategy(BotStrategy):
     """Looks the situation up in the trained blueprint DB."""
 
-    def __init__(self, blueprint_db):
+    def __init__(self, blueprint_db, purify_threshold=0.0):
         self.db = blueprint_db
+        # Inference-only strategy purification of the blueprint average (see
+        # cfr/purification.py). 0.0 = off (default). Applied to the trained-key
+        # distribution the bot samples from AND the EV-gate baseline, so the served
+        # play and its baseline stay consistent. The opponent model (range_model_fn)
+        # is deliberately NOT purified -- it must mirror the real blueprint the tracker
+        # assumes the opponent plays. Set via the A/B once BR picks a threshold.
+        self.purify_threshold = float(purify_threshold)
         # Per-decision diagnostics for the optional "what is the bot thinking"
         # debug overlay, populated by decide() and read by advance_bot_turns.
         # None for a plain blueprint lookup (the info-set key + strategy already
@@ -74,7 +81,11 @@ class BlueprintStrategy(BotStrategy):
             weights = {a: max(0.0, stored.get(a, 0.0)) for a in legal_actions}
             total = sum(weights.values())
             if total > 1e-12:
-                return {a: w / total for a, w in weights.items()}
+                dist = {a: w / total for a, w in weights.items()}
+                if self.purify_threshold > 0.0:
+                    from ..cfr.purification import purify_dist
+                    dist = purify_dist(dist, self.purify_threshold)
+                return dist
         # Untrained key: fall back to PASSIVE actions only (check/call/fold), never
         # uniform over the full legal set. Live play uncaps re-raises
         # (GameSession passes max_raises_per_street=inf), so at a beyond-cap node

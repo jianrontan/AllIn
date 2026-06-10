@@ -294,8 +294,103 @@ def test_solve_deep_reraise_war():
           f"dist={ {k: round(v,2) for k,v in dist.items()} })")
 
 
+def test_safe_gadget_solve_for_action():
+    """Phase 5a: solve_for_action with safe_gadget=True runs the re-solving gadget
+    end-to-end (blueprint opt-out CFVs computed + gadget solve + read-off) and returns
+    a valid action distribution for the bot's hand. Same spot as the unsafe path; this
+    just proves the safe branch produces a well-formed strategy on the real blueprint."""
+    db = _blueprint_db()
+    if db is None:
+        print("SKIP test_safe_gadget_solve_for_action (no blueprint)")
+        return
+    villain, hero = _trackers()
+    solver = RiverSubgameSolver(db, max_iters=80, check_every=40, time_budget=30.0,
+                                safe_gadget=True)
+    dist, node, info = solver.solve_for_action(
+        board=_BOARD, pot_entry=24.0, stacks=(88.0, 88.0), bot_seat=1, hole=_HOLE,
+        villain_tracker=villain, hero_tracker=hero, confidence=1.0, river_path=[])
+    db.close()
+    assert node.player == 1
+    assert set(dist.keys()) == set(node.actions)
+    assert abs(sum(dist.values()) - 1.0) < 1e-9
+    assert all(p >= -1e-12 for p in dist.values())
+    assert info['gap'] is None, "gadget solve reports no Nash gap (range-reshaped)"
+    print(f"PASS test_safe_gadget_solve_for_action (iters={info['iters']}, "
+          f"converged={info['converged']}, dist={ {k: round(v,2) for k,v in dist.items()} })")
+
+
+def test_auto_anchor_branches_wiring():
+    """Phase 5a 'auto'/'confidence' wiring (review gap H1): solve_for_action must return
+    the right info['anchor'] for EVERY branch -- including the CLAMP (auto_safe_fallback),
+    the safety point of the feature, which the maniac never triggered live. The self-check
+    outcome is forced deterministically via _AUTO_SAFE_MARGIN (+/- huge) so the branch
+    WIRING (correct anchor label, the second gadget solve on clamp) is exercised without
+    depending on a particular belief over-exploiting. A uniform belief is auto-untrusted
+    (uninformative); a concentrated one is trusted."""
+    import numpy as np
+    db = _blueprint_db()
+    if db is None:
+        print("SKIP test_auto_anchor_branches_wiring (no blueprint)")
+        return
+
+    def anchor_for(gadget_anchor, margin, *, trusted):
+        villain, hero = _trackers()
+        if trusted:
+            live = np.where(np.asarray(villain.w) > 0)[0]
+            villain.w[:] = 0.0
+            villain.w[live[0]] = 1.0            # dominant hand -> informative
+            villain.w[live[1:20]] = 0.01        # tiny mass -> non-degenerate range
+            villain.confidence = 1.0
+        else:
+            villain.confidence = 0.0            # untrusted (also uniform = uninformative)
+        s = RiverSubgameSolver(db, max_iters=60, check_every=30, time_budget=30.0,
+                               safe_gadget=True, gadget_anchor=gadget_anchor)
+        if margin is not None:
+            s._AUTO_SAFE_MARGIN = margin
+        _, _, info = s.solve_for_action(
+            board=_BOARD, pot_entry=24.0, stacks=(88.0, 88.0), bot_seat=1, hole=_HOLE,
+            villain_tracker=villain, hero_tracker=hero, confidence=villain.confidence,
+            river_path=[])
+        return info['anchor']
+
+    assert anchor_for('auto', None, trusted=True) == 'auto_exploit_trusted'
+    assert anchor_for('auto', 1e9, trusted=False) == 'auto_exploit_safe'
+    assert anchor_for('auto', -1e9, trusted=False) == 'auto_safe_fallback'   # the CLAMP
+    assert anchor_for('confidence', None, trusted=True) == 'confidence_exploit'
+    assert anchor_for('confidence', None, trusted=False) == 'confidence_safe'
+    db.close()
+    print("PASS test_auto_anchor_branches_wiring (all 5 anchor branches reached)")
+
+
+def test_safe_gadget_auto_records_decision():
+    """Phase 5a 'auto' anchor: the solver runs the unsafe solve, then either exploits
+    (confidence pre-filter or self-check passes) or falls back to the blueprint-anchored
+    gadget -- and records which via info['anchor']. Just proves the auto path runs end-to-
+    end on the real blueprint and tags a decision (the exploitability guarantee is covered
+    by tests/test_safe_river_gadget.py)."""
+    db = _blueprint_db()
+    if db is None:
+        print("SKIP test_safe_gadget_auto_records_decision (no blueprint)")
+        return
+    villain, hero = _trackers()
+    solver = RiverSubgameSolver(db, max_iters=80, check_every=40, time_budget=30.0,
+                                safe_gadget=True, gadget_anchor='auto')
+    dist, node, info = solver.solve_for_action(
+        board=_BOARD, pot_entry=24.0, stacks=(88.0, 88.0), bot_seat=1, hole=_HOLE,
+        villain_tracker=villain, hero_tracker=hero, confidence=0.0, river_path=[])
+    db.close()
+    assert abs(sum(dist.values()) - 1.0) < 1e-9
+    assert info.get('anchor') in (
+        'auto_exploit_trusted', 'auto_exploit_safe', 'auto_safe_fallback'), info.get('anchor')
+    print(f"PASS test_safe_gadget_auto_records_decision (anchor={info['anchor']}, "
+          f"selfCheck={info.get('autoSelfCheck')})")
+
+
 TESTS = [
     test_solver_gated_off_on_high_spr_small_pot,
+    test_safe_gadget_solve_for_action,
+    test_auto_anchor_branches_wiring,
+    test_safe_gadget_auto_records_decision,
     test_solve_deep_reraise_war,
     test_blueprint_to_tree_dist_mapping,
     test_blueprint_to_tree_dist_reraise_node,

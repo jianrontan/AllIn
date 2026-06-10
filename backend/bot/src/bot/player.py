@@ -63,13 +63,18 @@ class Player(BasePokerPlayer):
         else:
             strategy = [0.0] * len(cfr_actions)
 
-        # Fall back to uniform when the stored strategy has no mass on the CURRENT
-        # legal actions (unknown key, or the blueprint trained a different legal
-        # set here). Without this, random.choices raises "Total of weights must be
-        # greater than zero". Mirrors BlueprintStrategy._distribution.
+        # Fall back when the stored strategy has no mass on the CURRENT legal actions
+        # (unknown key, or the blueprint trained a different legal set here). Mirror
+        # BlueprintStrategy._distribution EXACTLY: uniform over PASSIVE actions only
+        # (check/call/fold), never over the full set -- a uniform-over-everything fallback
+        # stray-jams/raises at random from an untrained key (the BUG-011 failure mode the
+        # live path was hardened against; this PyPokerEngine path had drifted). Falls
+        # through to the full set only if no passive action is legal (degenerate node).
         if sum(strategy) <= 1e-12:
-            strategy = [1.0 / len(cfr_actions)] * len(cfr_actions)
-            print(f"[CFR_Bot] Unknown/zero-mass: {info_set_key}, using uniform strategy")
+            passive = [a for a in cfr_actions if a in ('check', 'call', 'fold')]
+            pool = passive or cfr_actions
+            strategy = [1.0 / len(pool) if a in pool else 0.0 for a in cfr_actions]
+            print(f"[CFR_Bot] Unknown/zero-mass: {info_set_key}, using passive fallback")
 
         print(f"[CFR_Bot] Strategy: {dict(zip(cfr_actions, strategy))}")
 

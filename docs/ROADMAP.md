@@ -747,37 +747,52 @@ What ships in the API + Docker image before infrastructure provisioning.
   consumer yet; the point is that launch-window hands aren't lost forever
   when those features ship post-launch.
 
-**Pending — must land before deploy 🚧**
-1. **`PlayerStore` + `GlobalStatsStore`** (interface + `InMemory*` + `DynamoDB*`).
-   Schema is account-ready: `playerId` PK, optional `{email, authProvider,
-   providerSub, isRegistered}`. `link_account()` is the non-destructive merge.
-2. **Per-hand result hook** at the API layer (not in `GameSession`). Fires on
-   the `status != 'hand_over' → status == 'hand_over'` transition inside the
-   session lock — idempotent against retried requests.
-3. **Leaderboard endpoints:** `GET /api/stats`, `GET /api/leaderboard`,
-   `POST /api/player`, `POST /api/auth/google`. The ranked board filters
-   `accounts_only=True`; redact `playerId`/`email`.
-4. **Google OAuth via Cognito** (`backend/api/auth.py`): JWKS fetch + cache,
-   ID-token validation (signature, `iss`, `aud`, `exp`, `token_use`),
-   `@require_account` decorator (stubbed for v1, used by saved-hands in v1.1).
-5. **Frontend identity + counter + login:** localStorage UUID, handle prompt,
-   `<EvCounter />`, `<Leaderboard />` (Ranked + Most-active cuts), Cognito
-   Hosted UI redirect + `/auth/callback`, non-destructive account upgrade.
+**All originally-pending items SHIPPED ✅** (2026-06-08 → 2026-06-10 hardening pass):
 
-**Decisions settled after the original handoff doc went out (must be reflected
-in 5a code):**
-- **Handles:** `^[A-Za-z0-9_-]{1,20}$`, profanity-blocklist (small curated list
-  via `better-profanity` or similar). Not unique.
-- **Hand cap:** 500 hands per rolling 1-hour window, per `playerId`. Store
-  `{window_start, count}` on the player row; reset window when > 1h elapsed.
-- **Session TTL:** 24 h (`ALLIN_SESSION_TTL_SECONDS=86400`).
-- **First-time popup:** 5-bullet "how this works" (heads-up vs AI, 100 BB
-  fresh each hand but cross-hand P/L tracked, custom bet sizing welcome,
-  trained-not-scripted + river re-solve, your record feeds the +EV counter).
-  Gated on `allin.introDismissed=true` in localStorage. Reopenable via a `?`
-  icon in the header.
-- **M2 (bot-bucket leak)** — already gated in the frontend toggle (default
-  off) **and** at the API via `_redact_view()`. No further work needed.
+1. **`PlayerStore` + `GlobalStatsStore` + `HandStore`** — all three with
+   `InMemory*` (dev) + `DynamoDB*` (prod) + factories. Schema is account-ready;
+   `link_account()` does first-bind + canonical-adoption. `playerId` ≠ `handle`:
+   playerId regex `^[A-Za-z0-9_-]{1,64}$` (the opaque identifier); handle regex
+   `^[A-Za-z0-9_-]{1,20}$` + profanity (the display name).
+2. **Per-hand result hook** at the API layer — fires on the
+   `in_hand → hand_over` transition inside the session lock. Idempotent via the
+   persisted `result_recorded` anchor; recap PutItem idempotent via the pinned
+   `recap_ts_ms` anchor (no duplicate `allin-hands` rows on retry).
+3. **Leaderboard endpoints** — `GET /api/stats`, `GET /api/leaderboard`,
+   `GET /api/me`, `POST /api/player`, `POST /api/auth/google`,
+   `GET /api/healthz`. Rate-limited where it matters (per-player + per-IP).
+4. **Google OAuth via Cognito** — `backend/api/auth.py` validates the ID token
+   (signature, `iss`, `aud`, `exp`, `token_use`); JWKS cached. Error messages
+   genericized client-side; reason logged server-side.
+5. **Frontend identity + counter + login** — localStorage UUID, handle prompt,
+   `<EvCounter />`, two `<Leaderboard />` cuts, Cognito Hosted UI redirect with
+   **CSRF state parameter**, `/auth/callback`, **non-destructive sign-out**.
+
+**Hardening pass (2026-06-10) closed the security + ops audit:**
+- Blueprint load wrapped — degraded `/api/healthz` 503 + reason; before_request
+  guard 503s every non-healthz endpoint while degraded.
+- Security headers via `@app.after_request` (XCTO, RP, CORP, HSTS).
+- DynamoDB PITR enabled idempotently in every `create_table_if_missing`.
+- Adaptive boto3 retries on all four stores.
+- `_deal_hand` resets `result_recorded`, `pending_translation`, `recap_ts_ms`.
+- Session lock lease 30s → 60s (covers river-solve duration).
+- S3ObjectSource writes `.partial` then `os.replace` for atomicity.
+- Docker entrypoint validates env values, exits 64 on typo; adds
+  `--max-requests`, `--graceful-timeout`, `--access-logfile -`.
+- `PYTHONDONTWRITEBYTECODE=1` in Dockerfile (no __pycache__ write races).
+- `provision_dynamodb.py` script: one-shot table creation across all four.
+
+**Pre-launch decisions (already in code):**
+- **Handles:** `^[A-Za-z0-9_-]{1,20}$` + profanity blocklist. Display name only.
+- **playerId:** `^[A-Za-z0-9_-]{1,64}$`. Opaque identifier (UUID in prod, simple
+  strings in tests).
+- **Hand cap:** 500/h rolling per playerId → 429 + Retry-After on `/game/new`
+  and `/next-hand`. Env-tunable.
+- **Session TTL:** 24h (`ALLIN_SESSION_TTL_SECONDS=86400`).
+- **First-time popup:** wired in `AiGame.jsx`, gated on `allin_intro_dismissed`.
+- **Debug overlay:** code default ON for dev / local Docker. **MUST set
+  `ALLIN_DEBUG_OVERLAY=0` in Lightsail env** (see DEPLOYMENT.md checklist).
+- **Repo public** with these guards in place + secrets scrubbed via `.gitignore`.
 
 ### 5b — Infrastructure (user does this, post-5a)
 

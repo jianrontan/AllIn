@@ -164,8 +164,9 @@ class DynamoDBHandStore(HandStore):
     def __init__(self, table_name, region=None, endpoint_url=None):
         import boto3
         from botocore.exceptions import ClientError
+        from botocore.config import Config
         self._ClientError = ClientError
-        kwargs = {}
+        kwargs = {'config': Config(retries={'mode': 'adaptive', 'max_attempts': 5})}
         if region:
             kwargs['region_name'] = region
         if endpoint_url:
@@ -242,6 +243,17 @@ class DynamoDBHandStore(HandStore):
                 ],
                 BillingMode='PAY_PER_REQUEST')
             client.get_waiter('table_exists').wait(TableName=table_name)
+            # PITR for disaster recovery. Hand recaps are the most precious
+            # launch-window data — a wipe is unrecoverable without this.
+            try:
+                client.update_continuous_backups(
+                    TableName=table_name,
+                    PointInTimeRecoverySpecification={'PointInTimeRecoveryEnabled': True})
+            except ClientError as e2:
+                code2 = e2.response.get('Error', {}).get('Code', '')
+                if code2 not in ('ContinuousBackupsUnavailableException',
+                                 'UnknownOperationException', 'ValidationException'):
+                    raise
         except ClientError as e:
             if e.response.get('Error', {}).get('Code') != 'ResourceInUseException':
                 raise

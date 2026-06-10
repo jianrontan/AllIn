@@ -96,11 +96,18 @@ def sanitize_display_name(name):
 
 def _new_row(player_id):
     now = _now()
+    # IMPORTANT: do NOT initialize window_start/hands_in_window here. The
+    # DynamoDB conditional reset uses `attribute_not_exists(window_start) OR
+    # window_start < :cutoff`. If we wrote `window_start: None` at create time
+    # the attribute exists as NULL → first branch is False AND `NULL < n` is
+    # also False under DynamoDB type-mismatch semantics, so the first-ever
+    # window NEVER resets. Leaving the attributes absent until the first
+    # record_hand_result lets `attribute_not_exists` correctly fire.
     return {
         'playerId': player_id, 'handle': None,
         'hands': 0, 'netBB': 0.0,
         'firstSeen': now, 'lastSeen': now,
-        'window_start': None, 'hands_in_window': 0,
+        # window_start / hands_in_window deliberately absent (see comment above).
         'isRegistered': False,
     }
 
@@ -275,9 +282,10 @@ class DynamoDBPlayerStore(PlayerStore):
         import boto3
         from botocore.exceptions import ClientError
         from boto3.dynamodb.conditions import Attr
+        from botocore.config import Config
         self._ClientError = ClientError
         self._Attr = Attr
-        kwargs = {}
+        kwargs = {'config': Config(retries={'mode': 'adaptive', 'max_attempts': 5})}
         if region:
             kwargs['region_name'] = region
         if endpoint_url:
@@ -410,7 +418,9 @@ class DynamoDBPlayerStore(PlayerStore):
 
     @staticmethod
     def create_table_if_missing(table_name, region=None, endpoint_url=None):
-        """One-time provisioning helper (run once at deploy)."""
+        """One-time provisioning helper (run once at deploy). Also enables
+        Point-In-Time Recovery so a wiped table is restorable (the leaderboard
+        is the most precious launch-window data; without PITR, gone is gone)."""
         import boto3
         from botocore.exceptions import ClientError
         kwargs = {}
@@ -428,6 +438,17 @@ class DynamoDBPlayerStore(PlayerStore):
             client.get_waiter('table_exists').wait(TableName=table_name)
         except ClientError as e:
             if e.response.get('Error', {}).get('Code') != 'ResourceInUseException':
+                raise
+        # PITR: idempotent — already-enabled returns ContinuousBackupsUnavailable
+        # or succeeds silently. moto / DynamoDB Local doesn't support PITR; tolerate.
+        try:
+            client.update_continuous_backups(
+                TableName=table_name,
+                PointInTimeRecoverySpecification={'PointInTimeRecoveryEnabled': True})
+        except ClientError as e:
+            code = e.response.get('Error', {}).get('Code', '')
+            if code not in ('ContinuousBackupsUnavailableException',
+                            'UnknownOperationException', 'ValidationException'):
                 raise
 
 

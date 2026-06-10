@@ -502,6 +502,56 @@ def test_informativeness_gate():
           s._trust_read(_StubTracker(0.9, 1.0)) is True)
 
 
+# --- Inference #1: first-to-act untrained value-bet -------------------------
+
+_LEGAL_FIRST_ACT = ['check', 'bet_small', 'bet_medium', 'bet_large']
+_FLOP = ['HK', 'SQ', 'D7']
+
+
+def test_first_act_value_bets_strong_untrained():
+    """An untrained first-to-act flop node with a strong hand value-bets a trained size
+    instead of checking 100% (the passive fallback). Stub tracker @ high confidence ->
+    _trust_read uses its eq 0.85 >= FIRST_ACT_VALUE_EQ -> bet_medium."""
+    s = _solver()
+    out = s._first_act_value_guard('flopkey', _LEGAL_FIRST_ACT,
+                                   _ps(0.85, street='flop', community=_FLOP, hole=('CA', 'SA')))
+    check('first-act untrained strong -> value bet', out == 'bet_medium', f"got {out!r}")
+
+
+def test_first_act_value_checks_weak():
+    s = _solver()
+    out = s._first_act_value_guard('flopkey', _LEGAL_FIRST_ACT,
+                                   _ps(0.40, street='flop', community=_FLOP, hole=('C7', 'D2')))
+    check('first-act untrained weak -> check (None)', out is None, f"got {out!r}")
+
+
+def test_first_act_value_defers_facing_bet():
+    s = _solver()
+    out = s._first_act_value_guard('flopkey', _LEGAL,
+                                   _ps(0.85, street='flop', community=_FLOP))
+    check('facing a bet -> defer (guards own it)', out is None, f"got {out!r}")
+
+
+def test_first_act_value_defers_trained():
+    class _FlopDB:                                      # mass ON the first-act legal set
+        def get_average_strategy(self, k):
+            return {'check': 0.6, 'bet_medium': 0.4}
+    s = _solver()
+    s.db = _FlopDB()
+    out = s._first_act_value_guard('k', _LEGAL_FIRST_ACT,
+                                   _ps(0.85, street='flop', community=_FLOP, hole=('CA', 'SA')))
+    check('trained -> blueprint plays (None)', out is None, f"got {out!r}")
+
+
+def test_first_act_value_preflop_and_river_defer():
+    s = _solver()
+    pf = s._first_act_value_guard('pf', _LEGAL_FIRST_ACT, _ps(0.85, street='preflop', hole=('CA', 'SA')))
+    rv = s._first_act_value_guard('rk', _LEGAL_FIRST_ACT,
+                                  _ps(0.85, street='river', community=_FLOP + ['C2', 'H9'], hole=('CA', 'SA')))
+    check('preflop defers (trained opens)', pf is None, f"got {pf!r}")
+    check('river defers (solver owns it)', rv is None, f"got {rv!r}")
+
+
 TESTS = [
     test_untrained_premium_calls,
     test_untrained_trash_folds,
@@ -518,6 +568,11 @@ TESTS = [
     test_decide_routes_through_deep_guard,
     test_decide_trusted_allin_handled_by_allin_guard,
     test_decide_untrained_jam_low_conf_routes_to_deep_guard,
+    test_first_act_value_bets_strong_untrained,
+    test_first_act_value_checks_weak,
+    test_first_act_value_defers_facing_bet,
+    test_first_act_value_defers_trained,
+    test_first_act_value_preflop_and_river_defer,
     test_uniform_floor_caches_and_is_sane,
     test_safe_untrained_call_untrained_facing_bet,
     test_safe_untrained_call_trained_defers,

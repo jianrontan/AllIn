@@ -5,7 +5,8 @@
 // show the player's carried-over record - never a 0-state.
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { authGoogle, setAccount, adoptPlayerId } from '../api';
+import { authGoogle, setAccount, adoptPlayerId, clearStoredSessionId } from '../api';
+import { takeOAuthState } from '../config';
 import UsernameModal from '../components/UsernameModal';
 
 function AuthCallback() {
@@ -37,12 +38,33 @@ function AuthCallback() {
             return;
         }
         if (!idToken) { setErr('No ID token in the callback URL.'); setState('error'); return; }
+        // CSRF guard: the state we set in sessionStorage at hostedUiUrl() time
+        // MUST match the state Cognito echoed back. Without this check, an
+        // attacker can pre-stage an ID token and force-bind a victim's playerId
+        // to the attacker's Google account by getting them to visit the callback
+        // URL. sessionStorage is per-tab + per-origin, so even a malicious tab
+        // can't read our state.
+        const expectedState = takeOAuthState();
+        const gotState = frag.get('state');
+        if (!expectedState || expectedState !== gotState) {
+            console.warn('OAuth state mismatch:',
+                         { hasExpected: !!expectedState, hasGot: !!gotState });
+            setErr('This sign-in link is invalid or has already been used. Please try again from the home page.');
+            setState('error');
+            window.history.replaceState(null, '', window.location.pathname);
+            return;
+        }
         // Scrub the token from the address bar.
         window.history.replaceState(null, '', window.location.pathname);
         authGoogle(idToken)
             .then((r) => {
                 adoptPlayerId(r.playerId);   // localStorage write — always lands
                 setAccount(r);               // localStorage write — always lands
+                // The pre-sign-in session was owned by the OLD anonymous playerId;
+                // after adopt it would 404 ownership on every subsequent call.
+                // Clear it so AiGame on next mount mints a fresh session under
+                // the canonical id.
+                clearStoredSessionId();
                 if (!alive) return;
                 setRow(r);
                 setNeedUsername(!r.usernameSet);

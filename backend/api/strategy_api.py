@@ -51,20 +51,38 @@ from bot.src.subgame.river_tree import is_sized, sized_chips
 # The blueprint DB is opened read-only so a concurrent training run is safe. The
 # source (local file in v1; an S3 object later) is chosen by ALLIN_BLUEPRINT_SOURCE
 # behind make_blueprint_source(); local_path() returns a path BlueprintDB can open.
-_BLUEPRINT_PATH = make_blueprint_source().local_path()
-BLUEPRINT_DB = BlueprintDB(_BLUEPRINT_PATH, read_only=True)
-# Action-abstraction arm the served blueprint was trained under ('control'|'capped'),
-# read from its DB metadata. The serving engine (GameSession.game) MUST match it, or
-# a capped blueprint served through a control engine re-introduces the dropped
-# voluntary all-in node -> untrained -> uniform fallback -> the bot stray-jams. A
-# pre-stamp DB defaults to 'control'.
-from bot.src.abstractions.sizing import db_menu_mode
-BLUEPRINT_MENU_MODE = db_menu_mode(BLUEPRINT_DB)
+#
+# Wrapped so a misconfigured deploy (missing blueprint, corrupt DB) doesn't kill
+# Flask at import. Without this, `gunicorn wsgi:app` import fails → workers
+# CrashLoopBackOff → Lightsail's health-check sees nothing on port 5000 →
+# deployment fails opaquely with no signal. Now the import survives, every
+# strategy/game endpoint 503s with a clear "blueprint not loaded" reason, and
+# /api/healthz exposes the load error for ops.
+_BLUEPRINT_LOAD_ERROR = None
+_BLUEPRINT_PATH = None
+BLUEPRINT_DB = None
+BLUEPRINT_MENU_MODE = 'control'
+try:
+    _BLUEPRINT_PATH = make_blueprint_source().local_path()
+    BLUEPRINT_DB = BlueprintDB(_BLUEPRINT_PATH, read_only=True)
+    from bot.src.abstractions.sizing import db_menu_mode
+    BLUEPRINT_MENU_MODE = db_menu_mode(BLUEPRINT_DB)
+except Exception as _bp_err:
+    _BLUEPRINT_LOAD_ERROR = f"{type(_bp_err).__name__}: {_bp_err}"
+    _LOG.error("blueprint load failed; serving in degraded mode (healthz=503): %s",
+               _BLUEPRINT_LOAD_ERROR)
 # Postflop action-translation grid for the SERVED blueprint's menu (capped adds the
 # 2.0x 'overbet2' tier). The Hand Explorer must translate off-grid bets onto THIS
 # grid, or a 1.75-2.0x bet clamps to 'o' (1.5x) and the explorer shows a different
 # line than the live bot (which translates against the same menu). See BUG-019.
 _POSTFLOP_GRID = translation.postflop_grid_for(BLUEPRINT_MENU_MODE)
+# Sentinel for the degraded-mode bail-out: every strategy/game endpoint short-
+# circuits with 503 + this message if the blueprint failed to load at import.
+def _blueprint_unavailable_503():
+    return jsonify({
+        "error": "blueprint not loaded; the deploy is in a degraded state. "
+                 "Check /api/healthz for details."
+    }), 503
 # Phase-4 bot: the river subgame solver. Off the river (or whenever the solve
 # inputs are missing) it delegates to the blueprint exactly like
 # ConfidenceAwareStrategy; on the river it solves the actual subgame and plays the
@@ -75,17 +93,33 @@ _POSTFLOP_GRID = translation.postflop_grid_for(BLUEPRINT_MENU_MODE)
 # analysis/blueprints/blueprint_*.db (snapshots/ is not searched), so the served
 # default is blueprint_final.db (the 25M snapshot). Pin ALLIN_BLUEPRINT_DB only to
 # override that (e.g. a different-sizing blueprint).
-BOT = RiverSubgameSolver(BLUEPRINT_DB, max_iters=200, check_every=40, time_budget=5.0)
-# A separate solver for the Strategy Explorer's on-demand river solve. It is NOT
-# latency-critical (an explicit "solve" click, not a live turn), so it gets more
-# iterations for a better-converged answer and a slightly larger time budget; the
-# smaller check_every bounds a deep-stack/small-pot (high-SPR) solve closer to the
-# budget. Shares the same read-only blueprint DB.
-EXPLORER_BOT = RiverSubgameSolver(BLUEPRINT_DB, max_iters=2000, check_every=25,
-                                  time_budget=8.0)
+# Served live bot. safe_gadget + gadget_anchor='auto' (Phase 5a, "policy B"): on the
+# river it exploits the tracked read (unsafe-v1) ONLY when a per-spot safety self-check
+# proves that is no-more-exploitable than the blueprint, else it clamps to the
+# blueprint-anchored re-solving gadget -- provably ≤ blueprint on the wrong-belief tail.
+# Validated to match unsafe-v1 on EV + latency vs a maniac while carrying the guarantee
+# (docs/SAFE_RIVER_SOLVING_PLAN.md; tests/test_safe_river_gadget.py,
+# tests/compare_gadget_policies.py). To revert to pure max-exploit: drop both kwargs.
+# purify_threshold=0.01: 1% strategy purification of the blueprint-path play -- the BR
+# sweep (seed 42, 50 samples) found 1% the optimum (off 14621 -> 1% 14534 mbb; 5% and
+# full=argmax both WORSE), a small safe win that keeps genuine mixes. EXPLORER_BOT below
+# is left UNpurified (it inspects the raw blueprint). See docs/ROADMAP.md (purify track).
+if BLUEPRINT_DB is not None:
+    BOT = RiverSubgameSolver(BLUEPRINT_DB, max_iters=200, check_every=40,
+                             time_budget=5.0, safe_gadget=True, gadget_anchor='auto',
+                             purify_threshold=0.01)
+    # A separate solver for the Strategy Explorer's on-demand river solve. It is
+    # NOT latency-critical (an explicit "solve" click, not a live turn), so it
+    # gets more iterations for a better-converged answer and a slightly larger
+    # time budget; the smaller check_every bounds a deep-stack/small-pot (high-
+    # SPR) solve closer to the budget. Shares the same read-only blueprint DB.
+    EXPLORER_BOT = RiverSubgameSolver(BLUEPRINT_DB, max_iters=2000, check_every=25,
+                                      time_budget=8.0)
+else:
+    BOT = EXPLORER_BOT = None
 # Opponent model for the hand-level range tracker (Phase 3); injected into every
 # GameSession so the bot maintains a belief over the human's hand as it plays.
-BOT_RANGE_FN = BOT.range_model_fn()
+BOT_RANGE_FN = BOT.range_model_fn() if BOT is not None else None
 
 # SessionStore: chosen by ALLIN_SESSION_STORE (default 'memory'). Set it to
 # 'dynamodb' for a multi-worker / multi-box deploy so games are shared and
@@ -131,8 +165,9 @@ def _redact_view(view):
     return view
 
 
-_LOG.info("Loaded blueprint: %s (%s iterations)", _BLUEPRINT_PATH.name,
-          BLUEPRINT_DB.get_metadata('total_iterations', 0))
+if BLUEPRINT_DB is not None:
+    _LOG.info("Loaded blueprint: %s (%s iterations)", _BLUEPRINT_PATH.name,
+              BLUEPRINT_DB.get_metadata('total_iterations', 0))
 
 app = Flask(__name__)
 
@@ -159,8 +194,13 @@ def _too_large(_e):
 
 @app.errorhandler(SessionLockTimeout)
 @app.errorhandler(TimeoutError)
-def _server_busy(_e):
+def _server_busy(e):
     # Couldn't get a session lock or a river-solve permit in time: shed load.
+    # Log with the contended session id (when available via the URL) so a wedged
+    # session can be diagnosed instead of just seeing 503s in aggregate.
+    sid = request.args.get('id') or '(unknown)'
+    _LOG.warning("server busy on %s (session=%s, ip=%s): %s",
+                 request.path, sid, request.remote_addr or '?', e)
     return jsonify({"error": "server busy, please retry"}), 503
 
 
@@ -177,6 +217,36 @@ def handle_preflight():
         response.headers.add('Access-Control-Allow-Headers', "Content-Type")
         response.headers.add('Access-Control-Allow-Methods', "GET, POST, OPTIONS")
         return response
+
+
+@app.before_request
+def _degraded_mode_guard():
+    """When the blueprint failed to load at import, every endpoint EXCEPT
+    /api/healthz returns 503 (instead of 500-ing on a None reference deeper in).
+    Lightsail's rolling-deploy probe hits /api/healthz, sees 503, fails fast,
+    and ops can read the load error from the healthz JSON. Live users get a
+    clean "service unavailable" instead of an opaque crash."""
+    if _BLUEPRINT_LOAD_ERROR is None:
+        return None
+    if request.method == "OPTIONS":
+        return None                  # let preflight pass; the next request 503s
+    if request.path in ("/api/healthz", "/api/test"):
+        return None
+    return _blueprint_unavailable_503()
+
+
+@app.after_request
+def _security_headers(resp):
+    """Defense-in-depth response headers. Cheap, harmless on a JSON API. HSTS is
+    also added by the TLS terminator (Lightsail/Cloudflare) but a second copy is
+    fine. Specifically NOT adding CSP — JSON responses don't execute, and a CSP
+    on the API would only constrain a misconfigured browser anyway."""
+    resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    resp.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+    resp.headers.setdefault('Cross-Origin-Resource-Policy', 'cross-origin')
+    resp.headers.setdefault('Strict-Transport-Security',
+                            'max-age=31536000; includeSubDomains')
+    return resp
 
 
 # =============================================================================
@@ -837,24 +907,89 @@ def _record_hand_end(session, pre_status, pre_net):
     # crash between the two can't double-count on retry (a lost stat is acceptable;
     # a double-count is not). The endpoint's own put() afterward is idempotent.
     session.data['result_recorded'] = True
+    # Pin the recap timestamp ONCE so a retried hook (e.g. throttled DynamoDB +
+    # adaptive retry path) produces the IDENTICAL handKey instead of a fresh ms
+    # epoch each call → duplicate rows in `allin-hands`. The session-stored
+    # timestamp survives any in-process retry path.
+    if 'recap_ts_ms' not in session.data:
+        from bot.src.game.hand_store import _now_ms
+        session.data['recap_ts_ms'] = _now_ms()
+    sid = session.data['session_id']
     try:
-        SESSIONS.put(session.data['session_id'], session.to_dict())
+        SESSIONS.put(sid, session.to_dict())
     except Exception:
         session.data['result_recorded'] = False
-        _LOG.warning("could not persist hand-end anchor; deferring", exc_info=True)
+        session.data.pop('recap_ts_ms', None)
+        _LOG.warning("could not persist hand-end anchor for session %s; deferring",
+                     sid, exc_info=True)
         return
+    # Split the leaderboard updates into separate try/excepts so a per-store
+    # failure (e.g. throttle on one table) doesn't strand the other. Each store
+    # call is independently idempotent on retry via the result_recorded anchor.
     try:
         PLAYERS.record_hand_result(player_id, delta_bb)
+    except Exception:
+        _LOG.warning("PLAYERS.record_hand_result failed for player=%s session=%s",
+                     player_id, sid, exc_info=True)
+    try:
         GLOBAL.record_hand_result(delta_bb, is_new_player=False)
     except Exception:
-        _LOG.warning("leaderboard hand-end update failed", exc_info=True)
-    # Capture the recap (write-only; no v1 consumer). Wrapped + swallowed so a
-    # store outage never breaks a hand; idempotent on retried requests via the
-    # pre_status guard above + the (playerId, handKey) row identity.
+        _LOG.warning("GLOBAL.record_hand_result failed for player=%s session=%s",
+                     player_id, sid, exc_info=True)
+    # Capture the recap (write-only; no v1 consumer). Same per-call try/except
+    # discipline + a pinned ts so retries don't pile up duplicate rows.
     try:
-        HANDS.put(recap_from_session(session, blueprint_name=_BLUEPRINT_PATH.name))
+        HANDS.put(recap_from_session(
+            session, blueprint_name=_BLUEPRINT_PATH.name,
+            ts_ms=session.data['recap_ts_ms']))
     except Exception:
-        _LOG.warning("hand-recap capture failed", exc_info=True)
+        _LOG.warning("hand-recap capture failed for player=%s session=%s",
+                     player_id, sid, exc_info=True)
+
+
+import re as _re
+
+# playerId is opaque to the backend: a client-generated identifier that becomes
+# a DynamoDB key and the subject of ownership checks. We don't require strict
+# UUID shape (test fixtures use simple ids like "alice"; the frontend api.js
+# generates v4 UUIDs in production — both are fine). What we DO enforce is a
+# length cap (defends against a 64KB-body attack stuffing a giant key) and a
+# safe character set (defends against injection-shaped values and accidental
+# whitespace/control bytes).
+_PLAYER_ID_RE = _re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+
+
+def _valid_player_id(pid):
+    return isinstance(pid, str) and bool(_PLAYER_ID_RE.match(pid))
+
+
+# Lightweight in-process rate limit. NOT a substitute for the Cloudflare edge
+# limits the deploy doc relies on; this just prevents a single client from
+# accidentally hammering an endpoint (e.g. a misbehaving fetch loop) and a
+# floor for the "no Cloudflare in front yet" early-launch window.
+_RATE_LIMITS = {}                         # (route, key) -> [count, window_start_epoch]
+_RATE_LIMITS_LOCK = threading.Lock()
+
+
+def _rate_limited(route, key, *, limit, window_seconds):
+    """True if (route, key) has burst past `limit` within `window_seconds`."""
+    now = time.time()
+    with _RATE_LIMITS_LOCK:
+        entry = _RATE_LIMITS.get((route, key))
+        if entry is None or now - entry[1] >= window_seconds:
+            _RATE_LIMITS[(route, key)] = [1, now]
+            return False
+        entry[0] += 1
+        return entry[0] > limit
+
+
+def _client_ip():
+    """The originating client IP. Honors X-Forwarded-For (Cloudflare/Lightsail
+    populate it) but only the LEFTMOST entry, which is the original caller."""
+    xff = request.headers.get('X-Forwarded-For') or ''
+    if xff:
+        return xff.split(',')[0].strip() or (request.remote_addr or 'unknown')
+    return request.remote_addr or 'unknown'
 
 
 def _hand_cap_response(player_id):
@@ -879,7 +1014,13 @@ def _hand_cap_response(player_id):
 def game_new():
     """Start a new game session and deal the first hand."""
     data = request.get_json(silent=True) or {}
-    player_id = data.get('playerId') or str(uuid.uuid4())
+    raw_pid = data.get('playerId')
+    # Mint a fresh UUID if the client didn't send one OR sent garbage. Don't
+    # blindly trust a non-UUID-shaped string into a DynamoDB key.
+    if raw_pid and _valid_player_id(raw_pid):
+        player_id = raw_pid
+    else:
+        player_id = str(uuid.uuid4())
 
     # Rolling hand-cap: refuse a new hand once the player is over quota (429).
     capped = _hand_cap_response(player_id)
@@ -1090,12 +1231,13 @@ def leaderboard():
 @app.route('/api/me', methods=['GET'])
 def me():
     """Return the caller's own player row (lifetime stats for the AiGame header).
-    Unlike /api/leaderboard, this is unredacted (the caller sees their own email
-    + bb/100), but it's still scoped to ONE playerId — no enumeration. Missing
-    player or no playerId → empty row so the UI can render a 0-state cleanly
-    (don't 404 here; that would log noise on first-load before any hand)."""
+    Public-by-UUID-by-design: anyone who knows your playerId UUID can read your
+    curated stats (handle, hands, netBB, bbPer100, isRegistered). UUIDs are
+    unguessable and not enumerable, so this is a deliberate design — the
+    leaderboard already publishes curated rows. Missing/invalid playerId → empty
+    0-state so the UI renders cleanly on first load."""
     player_id = (request.args.get('playerId') or '').strip()
-    if not player_id:
+    if not player_id or not _valid_player_id(player_id):
         return jsonify({"playerId": None, "handle": None, "hands": 0,
                         "netBB": 0.0, "bbPer100": 0.0, "isRegistered": False})
     row = PLAYERS.get(player_id)
@@ -1113,8 +1255,14 @@ def player_upsert():
     data = request.get_json(silent=True) or {}
     player_id = data.get('playerId')
     handle = data.get('handle')
-    if not player_id:
-        return jsonify({"error": "playerId required"}), 400
+    if not _valid_player_id(player_id):
+        return jsonify({"error": "playerId required (UUID format)"}), 400
+    # Rate-limit handle changes per-player AND per-IP. The per-IP guard catches a
+    # malicious caller fanning out across UUIDs; the per-player guard catches a
+    # legit-but-buggy client looping the rename.
+    if _rate_limited('player', player_id, limit=10, window_seconds=60) or \
+       _rate_limited('player_ip', _client_ip(), limit=30, window_seconds=60):
+        return jsonify({"error": "too many handle changes; slow down"}), 429
     # Count a newly-seen player exactly once. /api/game/new is the usual first
     # touch, but a player can hit /api/player first (setting a name before
     # playing). Without this, upsert_handle creates the row silently and
@@ -1123,7 +1271,7 @@ def player_upsert():
         if PLAYERS.create_if_absent(player_id):
             GLOBAL.record_new_player()
     except Exception:
-        _LOG.warning("new-player counting failed", exc_info=True)
+        _LOG.warning("new-player counting failed for player=%s", player_id, exc_info=True)
     try:
         row = PLAYERS.upsert_handle(player_id, handle)
     except InvalidHandle as e:
@@ -1147,17 +1295,26 @@ def auth_google():
     import auth
     if not auth.is_configured():
         return jsonify({"error": "auth not configured"}), 503
+    # Rate-limit per IP BEFORE the JWT verify (which costs CPU on every attempt).
+    # 20/min is generous for legitimate retries; an attacker bursting fake tokens
+    # bounces off here without burning JWKS lookups + RSA verifies.
+    if _rate_limited('auth_google', _client_ip(), limit=20, window_seconds=60):
+        return jsonify({"error": "too many auth attempts; slow down"}), 429
     data = request.get_json(silent=True) or {}
     id_token = data.get('idToken')
     player_id = data.get('playerId')
-    if not id_token or not player_id:
-        return jsonify({"error": "idToken and playerId required"}), 400
+    if not isinstance(id_token, str) or not _valid_player_id(player_id):
+        return jsonify({"error": "idToken and a valid playerId required"}), 400
     try:
         claims = auth.verify_cognito_id_token(id_token)
     except auth.AuthNotConfigured:
         return jsonify({"error": "auth not configured"}), 503
     except auth.AuthError as e:
-        return jsonify({"error": str(e)}), 401
+        # Generic message to the client — PyJWT's reason ("Signature has expired",
+        # "no JWKS key matches the token's kid") is an oracle for token-forging
+        # attempts. Log the detail for ops.
+        _LOG.info("auth rejected (ip=%s, reason=%s)", _client_ip(), e)
+        return jsonify({"error": "invalid token"}), 401
     # Trust `sub` as identity; require a verified email before storing/using it.
     ev = claims.get('email_verified')
     if not (ev is True or str(ev).lower() == 'true'):
@@ -1170,7 +1327,7 @@ def auth_google():
         if PLAYERS.create_if_absent(player_id):
             GLOBAL.record_new_player()
     except Exception:
-        _LOG.warning("new-player counting failed", exc_info=True)
+        _LOG.warning("new-player counting failed for player=%s", player_id, exc_info=True)
     try:
         row = PLAYERS.link_account(player_id, email=email, auth_provider='google',
                                    provider_sub=sub)
@@ -1197,6 +1354,17 @@ def _postflop_table_status():
 
 
 def _health_payload():
+    if _BLUEPRINT_LOAD_ERROR is not None:
+        # Degraded: blueprint failed to load at import. /api/healthz returns 503
+        # with the reason so a rolling-deploy probe correctly fails AND ops sees
+        # the cause (instead of an opaque CrashLoopBackOff with no signal).
+        return {
+            "status": "degraded",
+            "error": _BLUEPRINT_LOAD_ERROR,
+            "blueprint": None,
+            "sessionStore": type(SESSIONS).__name__,
+            "commit": os.environ.get('ALLIN_GIT_SHA'),
+        }
     return {
         "status": "ok",
         "blueprint": _BLUEPRINT_PATH.name,
@@ -1204,6 +1372,12 @@ def _health_payload():
         "postflopTables": _postflop_table_status(),
         "sessionStore": type(SESSIONS).__name__,
         "debugOverlay": _DEBUG_OVERLAY,
+        # River safe-gadget policy + purification threshold actually in force on the served
+        # bot -- so a deploy can confirm them without reading the code. None in degraded
+        # mode (BOT failed to load), so guard against it (healthz must still answer).
+        "riverGadget": (None if BOT is None
+                        else ("off" if not BOT.safe_gadget else BOT.gadget_anchor)),
+        "purify": (None if BOT is None else BOT.purify_threshold),
         "commit": os.environ.get('ALLIN_GIT_SHA'),
     }
 
@@ -1212,8 +1386,11 @@ def _health_payload():
 @app.route('/api/healthz', methods=['GET'])
 def test():
     """Health/diagnostics for the load balancer + a quick manual check. The
-    /api/healthz alias is the rolling-deploy probe."""
-    return jsonify(_health_payload())
+    /api/healthz alias is the rolling-deploy probe. Returns 503 (not 200) when
+    the blueprint failed to load, so Lightsail rolling-deploy correctly aborts."""
+    payload = _health_payload()
+    status = 503 if _BLUEPRINT_LOAD_ERROR is not None else 200
+    return jsonify(payload), status
 
 
 if __name__ == "__main__":
