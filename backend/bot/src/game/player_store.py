@@ -105,7 +105,7 @@ def _new_row(player_id):
     # record_hand_result lets `attribute_not_exists` correctly fire.
     return {
         'playerId': player_id, 'handle': None,
-        'hands': 0, 'netBB': 0.0,
+        'hands': 0, 'netBB': 0,  # int (not 0.0) -- DynamoDB rejects bare floats;
         'firstSeen': now, 'lastSeen': now,
         # window_start / hands_in_window deliberately absent (see comment above).
         'isRegistered': False,
