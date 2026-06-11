@@ -46,6 +46,14 @@ class SessionStore(ABC):
     def delete(self, session_id):
         """Remove a session. No error if it does not exist."""
 
+    def iter_active(self):
+        """Yield (session_id, data) for every non-expired session as a SNAPSHOT
+        (a list, not a live cursor), so a caller can iterate without holding any
+        store lock. Used by the inactivity sweeper to find abandoned hands. The
+        default returns nothing (a store that can't enumerate simply isn't swept);
+        the concrete stores override it."""
+        return []
+
     @contextmanager
     def lock(self, session_id):
         """Serialize the load-modify-put of one session so concurrent requests
@@ -87,6 +95,14 @@ class InMemorySessionStore(SessionStore):
             self._data.pop(session_id, None)
         with self._locks_guard:
             self._locks.pop(session_id, None)
+
+    def iter_active(self):
+        # Snapshot the non-expired sessions under the guard, then release it so the
+        # sweeper can take per-session locks without holding the cross-session guard.
+        now = time.time()
+        with self._data_guard:
+            return [(sid, data) for sid, (exp, data) in self._data.items()
+                    if now <= exp]
 
     @contextmanager
     def lock(self, session_id):
@@ -182,6 +198,37 @@ class DynamoDBSessionStore(SessionStore):
     def delete(self, session_id):
         self._table.delete_item(Key={'session_id': session_id})
         self._table.delete_item(Key={'session_id': self._lock_key(session_id)})
+
+    def iter_active(self):
+        # Full table scan, skipping lock items and TTL-expired-but-unswept items.
+        # Fine at launch scale (a few hundred sessions); a sparse GSI on a deadline
+        # attribute would be the optimisation if the table ever grows large.
+        # A scan error (throttle / 5xx mid-pagination) returns what was collected so
+        # far rather than raising -- a partial sweep pass beats a lost one (the
+        # caller iterates the returned list, not a live cursor).
+        now = int(time.time())
+        out = []
+        kwargs = {}
+        while True:
+            try:
+                resp = self._table.scan(**kwargs)
+            except self._ClientError:
+                break
+            for item in resp.get('Items', []):
+                sid = item.get('session_id', '')
+                if sid.startswith('__lock__'):
+                    continue
+                if int(item.get('expiry', 0)) <= now:
+                    continue
+                try:
+                    out.append((sid, json.loads(item['data'])))
+                except (KeyError, ValueError):
+                    continue
+            lek = resp.get('LastEvaluatedKey')
+            if not lek:
+                break
+            kwargs['ExclusiveStartKey'] = lek
+        return out
 
     @contextmanager
     def lock(self, session_id):

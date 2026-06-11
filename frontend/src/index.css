@@ -14,3 +14,11 @@ body {
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
 }
+
+/* One-shot entrance for the "last action" pill on the table: it remounts (via a
+   React key on the action signature) whenever a player's most recent action
+   changes, re-triggering this so the new action visibly pops in. */
+@keyframes lastActionIn {
+    from { opacity: 0; transform: translateY(3px) scale(0.94); }
+    to   { opacity: 1; transform: translateY(0)   scale(1); }
+}

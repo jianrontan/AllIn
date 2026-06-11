@@ -149,6 +149,19 @@ _EXPLORER_SEMAPHORE = threading.BoundedSemaphore(_EXPLORER_PERMITS)
 # How long a request will wait for a solve permit before giving up with 503.
 _SOLVE_WAIT_SECONDS = 30.0
 
+# Inactivity auto-fold: an in-hand session with no client progress for longer than
+# this is considered abandoned (tab closed / disconnected) and resolved by a
+# background sweeper, so it doesn't pin a session open and can't be used to dodge a
+# loss on the +EV leaderboard. The deadline is stamped on every in-hand persist
+# (regardless of whose turn it is) so a hand abandoned while the BOT is to act --
+# tab closed after /action but before /bot-action -- is also reaped. A normal
+# client re-stamps it within ms by driving the next step, so only a truly idle hand
+# expires. Backwards-compatible: a pre-existing session has no `inactivity_deadline`
+# so it's treated as legacy and left to the normal TTL -- never retroactively folded.
+_INACTIVITY_DEADLINE_SECONDS = int(os.environ.get('ALLIN_INACTIVITY_DEADLINE_SECONDS', '600'))
+_SWEEP_INTERVAL_SECONDS = int(os.environ.get('ALLIN_INACTIVITY_SWEEP_SECONDS', '60'))
+_SWEEP_ENABLED = os.environ.get('ALLIN_INACTIVITY_SWEEP', '1') == '1'
+
 # Debug overlay (the per-decision bot trace, `botDebug`) exposes the bot's bucketed
 # hand class MID-HAND -- a spoiler. Policy: ON by default (dev experience), the
 # PROD Dockerfile sets ALLIN_DEBUG_OVERLAY=0 explicitly so the public deploy is
@@ -947,6 +960,96 @@ def _record_hand_end(session, pre_status, pre_net):
                      player_id, sid, exc_info=True)
 
 
+def _persist(session):
+    """Persist a session, (re)stamping the inactivity deadline. The deadline is live
+    for the whole duration a hand is in progress (either turn), so a hand abandoned
+    while the bot is to act is reaped too; it's cleared once the hand is over. Use
+    this in place of a bare SESSIONS.put for any game-state write."""
+    d = session.data
+    if d.get('status') == 'in_hand':
+        d['inactivity_deadline'] = time.time() + _INACTIVITY_DEADLINE_SECONDS
+    else:
+        d.pop('inactivity_deadline', None)
+    SESSIONS.put(d['session_id'], session.to_dict())
+
+
+def _resolve_abandoned(session):
+    """Resolve an abandoned in-hand session. If the bot is to act (e.g. the tab
+    closed after /action but before /bot-action ran), advance the bot first; then,
+    if control is back with the human and the hand is still live, FOLD (the agreed
+    abandonment policy). Either branch reaches a terminal hand and records the
+    result. Fold is always legal for the human -- facing a bet, or via the live
+    free-fold when a check was available."""
+    pre_status = session.data['status']
+    pre_net = session.data.get('human_net', 0.0)
+    if not session.is_human_turn():
+        _run_bot(session)                        # advance the pending bot turn(s)
+    if session.data['status'] == 'in_hand' and session.is_human_turn():
+        session.apply_action('fold')
+    _record_hand_end(session, pre_status, pre_net)
+
+
+def _sweep_once():
+    """One inactivity-sweep pass: resolve every in-hand session whose deadline has
+    passed. Idempotent and lock-guarded so concurrent sweepers (one per gunicorn
+    worker) and a racing request can't double-resolve a hand."""
+    now = time.time()
+    for sid, data in SESSIONS.iter_active():
+        # Cheap pre-filter on the snapshot before taking the lock.
+        dl = data.get('inactivity_deadline')
+        if dl is None or now <= dl or data.get('status') != 'in_hand':
+            continue
+        try:
+            with SESSIONS.lock(sid):
+                fresh = SESSIONS.get(sid)
+                if fresh is None:
+                    continue
+                dl = fresh.get('inactivity_deadline')
+                if (dl is None or time.time() <= dl
+                        or fresh.get('status') != 'in_hand'):
+                    continue                     # changed since the snapshot
+                session = GameSession.from_dict(
+                    fresh, strategy_fn=BOT_RANGE_FN, menu_mode=BLUEPRINT_MENU_MODE)
+                _resolve_abandoned(session)
+                _persist(session)
+                _LOG.info("auto-resolved abandoned hand (session %s)", sid)
+        except (GameError, SessionLockTimeout, TimeoutError):
+            _LOG.warning("inactivity sweep could not resolve session %s", sid,
+                         exc_info=True)
+        except Exception:
+            _LOG.warning("inactivity sweep error on session %s", sid, exc_info=True)
+
+
+_sweeper_started = False
+_sweeper_guard = threading.Lock()
+
+
+def _start_sweeper():
+    """Start the daemon inactivity sweeper once per process (idempotent). Each
+    gunicorn worker runs its own; the per-session lock keeps them from clashing."""
+    global _sweeper_started
+    if not _SWEEP_ENABLED:
+        return
+    if 'pytest' in sys.modules:
+        return                                   # tests drive _sweep_once() directly
+    with _sweeper_guard:
+        if _sweeper_started:
+            return
+        _sweeper_started = True
+
+    def _loop():
+        while True:
+            time.sleep(_SWEEP_INTERVAL_SECONDS)
+            try:
+                _sweep_once()
+            except Exception:
+                _LOG.warning("inactivity sweep pass failed", exc_info=True)
+
+    threading.Thread(target=_loop, name="inactivity-sweeper", daemon=True).start()
+    _LOG.info("inactivity sweeper started (deadline=%ss interval=%ss)",
+              _INACTIVITY_DEADLINE_SECONDS, _SWEEP_INTERVAL_SECONDS)
+
+
 import re as _re
 
 # playerId is opaque to the backend: a client-generated identifier that becomes
@@ -1042,7 +1145,7 @@ def game_new():
         pre_status, pre_net = session.data['status'], session.data.get('human_net', 0.0)
         _run_bot(session)                    # bot may act first (when it is SB)
         _record_hand_end(session, pre_status, pre_net)   # rare: bot folds hand 1 outright
-        SESSIONS.put(session_id, session.to_dict())
+        _persist(session)
         view = _redact_view(session.public_view())
     view['playerId'] = player_id
     return jsonify(view)
@@ -1102,7 +1205,7 @@ def game_action():
             return jsonify({"error": str(e)}), 400
 
         _record_hand_end(session, pre_status, pre_net)
-        SESSIONS.put(session.data['session_id'], session.to_dict())
+        _persist(session)
         return jsonify(_redact_view(session.public_view()))
 
 
@@ -1127,7 +1230,7 @@ def game_bot_action():
         except GameError as e:
             return jsonify({"error": str(e)}), 400
         _record_hand_end(session, pre_status, pre_net)
-        SESSIONS.put(session.data['session_id'], session.to_dict())
+        _persist(session)
         return jsonify(_redact_view(session.public_view()))
 
 
@@ -1154,7 +1257,7 @@ def game_next_hand():
         except GameError as e:
             return jsonify({"error": str(e)}), 400
         _record_hand_end(session, pre_status, pre_net)
-        SESSIONS.put(session.data['session_id'], session.to_dict())
+        _persist(session)
         return jsonify(_redact_view(session.public_view()))
 
 
@@ -1391,6 +1494,11 @@ def test():
     payload = _health_payload()
     status = 503 if _BLUEPRINT_LOAD_ERROR is not None else 200
     return jsonify(payload), status
+
+
+# Start the inactivity sweeper at import time so it runs under BOTH gunicorn (which
+# imports `app` via wsgi.py) and the dev server below. Idempotent + env-gated.
+_start_sweeper()
 
 
 if __name__ == "__main__":

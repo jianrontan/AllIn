@@ -293,9 +293,21 @@ class GameSession:
         if self.data['status'] != 'in_hand':
             return []
         d = self.data
-        return self.game.get_legal_actions(
+        actions = self.game.get_legal_actions(
             d['street'], d['history'], d['starting_pot'], self.current_player(),
             d['p0_stack'], d['p1_stack'], d['p0_invested'], d['p1_invested'])
+        # LIVE affordance: let the HUMAN voluntarily fold even when checking is free
+        # (a normal poker-client option). The trained abstraction omits it because
+        # folding a free check is dominated, so CFR never needs it -- hence this is
+        # gated to the human's turn and added HERE (not in the engine), leaving the
+        # bot's option set and every blueprint key byte-identical to training. (An
+        # untrained-key bot uses a passive check/call/fold fallback; if the bot saw a
+        # free fold it could fold for free, so it must never see one.) `actions` may
+        # be a cached engine list -- build a new list, don't mutate it.
+        if (self.current_player() == d['human_seat']
+                and 'check' in actions and 'fold' not in actions):
+            actions = actions + ['fold']
+        return actions
 
     def _action_cost(self, action):
         d = self.data
@@ -710,12 +722,11 @@ class GameSession:
         two hole cards directly; phevaluator needs at least 5 cards.
         """
         if not board:
-            r0, r1 = cards[0][1], cards[1][1]
-            if r0 == r1:
-                return f"Pair of {_RANK_PLURAL[r0]}"
-            hi, lo = sorted((r0, r1), key=lambda r: RANK_MAP[r], reverse=True)
-            suited = ' suited' if cards[0][0] == cards[1][0] else ''
-            return f"{_RANK_NAMES[hi]}-{_RANK_NAMES[lo]}{suited} high"
+            # Use the SAME generic made-hand labels as postflop (a pocket pair is a
+            # "Pair"; anything else is "High card") so preflop reads consistently
+            # with the board streets, not "Ace-King suited high".
+            label = 'pair' if cards[0][1] == cards[1][1] else 'high_card'
+            return _HAND_TYPE_LABEL[label]
         hand_type, _ = self.evaluator.evaluate_hand_strength(cards, board)
         return _HAND_TYPE_LABEL[hand_type]
 

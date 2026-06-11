@@ -4,14 +4,21 @@ skinparam componentStyle rectangle
 skinparam defaultFontSize 13
 skinparam ArrowColor #555555
 
-' AllIn — heads-up Texas Hold'em CFR+ poker AI.
+' AllIn - heads-up Texas Hold'em CFR+ poker AI.
 ' Blueprint lives in SQLite; Flask API serves a strategy explorer and a
 ' play-vs-bot game; training is a separate offline process.
+'
+' Code-level logical architecture. For the deployed "what runs where"
+' (Cloudflare + Lightsail + DynamoDB + Cognito + GitHub Actions) see
+' infrastructure.puml.
 
-package "Frontend (React + Vite :5173)" {
+package "Frontend (React + Vite - dev :5173 / prod CF Pages)" {
   [HandExplorer]
   [KeyExplorer]
   [AiGame]
+  [Leaderboard]
+  [HandRecap]
+  [Auth - Cognito + Google]
   [api.js client]
 }
 
@@ -19,6 +26,7 @@ package "Backend API (Flask :5000, run from backend/api/)" {
   package "Strategy endpoints" {
     [GET /api/strategy]
     [POST /api/strategy/from-hand]
+    [POST /api/strategy/river-solve]
     [GET /api/abstractions]
   }
   package "Game endpoints" {
@@ -27,13 +35,24 @@ package "Backend API (Flask :5000, run from backend/api/)" {
     [POST /api/game/bot-action]
     [POST /api/game/next-hand]
   }
+  package "Account / Leaderboard endpoints" {
+    [GET /api/stats]
+    [GET /api/leaderboard]
+    [GET /api/me]
+    [POST /api/player]
+    [POST /api/auth/google]
+  }
+  package "Health" {
+    [GET /api/healthz]
+  }
 }
 
-package "Game core (game/, no Flask imports — transport-agnostic)" {
+package "Game core (game/, no Flask imports - transport-agnostic)" {
   [GameSession]
   [BotStrategy\nBlueprintStrategy\nConfidenceAwareStrategy]
   [RangeTracker]
-  [SessionStore\nInMemorySessionStore]
+  [SessionStore\nInMemorySessionStore / DynamoDBSessionStore]
+  [PlayersStore / GlobalStore / HandsStore\n(memory or DynamoDB)]
 }
 
 package "Inference / Bot (bot/)" {
@@ -41,7 +60,7 @@ package "Inference / Bot (bot/)" {
   [Player\n(PyPokerEngine path)]
 }
 
-package "Training (cfr/)  — offline" {
+package "Training (cfr/)  - offline" {
   [BlueprintTrainer]
   [ParallelTrainer]
   [PokerGame]
@@ -82,9 +101,15 @@ database "blueprint_<ts>.db\n(SQLite, WAL)" as BP #LightYellow
 [HandExplorer] --> [api.js client]
 [KeyExplorer] --> [api.js client]
 [AiGame] --> [api.js client]
+[Leaderboard] --> [api.js client]
+[HandRecap] --> [api.js client]
+[Auth - Cognito + Google] --> [api.js client]
 [api.js client] --> [GET /api/strategy] : REST (VITE_API_BASE)
 [api.js client] --> [POST /api/strategy/from-hand]
 [api.js client] --> [POST /api/game/action]
+[api.js client] --> [GET /api/leaderboard]
+[api.js client] --> [GET /api/me]
+[api.js client] --> [POST /api/auth/google]
 
 ' ---- Strategy explorer read path ----
 [POST /api/strategy/from-hand] --> [GameAdapter] : build key
@@ -96,7 +121,8 @@ database "blueprint_<ts>.db\n(SQLite, WAL)" as BP #LightYellow
 [POST /api/game/next-hand] --> [GameSession]
 [GameSession] --> [BotStrategy\nBlueprintStrategy\nConfidenceAwareStrategy] : decide()
 [GameSession] --> [RangeTracker] : observe / reveal
-[GameSession] --> [SessionStore\nInMemorySessionStore] : persist self.data
+[GameSession] --> [SessionStore\nInMemorySessionStore / DynamoDBSessionStore] : persist self.data
+[GameSession] --> [PlayersStore / GlobalStore / HandsStore\n(memory or DynamoDB)] : record net BB / hand recap / +EV counter
 [GameSession] --> [PokerGame] : drive a hand
 [BotStrategy\nBlueprintStrategy\nConfidenceAwareStrategy] --> DB : get_average_strategy(key)
 [BotStrategy\nBlueprintStrategy\nConfidenceAwareStrategy] --> [keys.make_info_set_key\naction_char]

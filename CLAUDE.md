@@ -6,11 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 AllIn is a heads-up Texas Hold'em poker AI using Monte Carlo CFR+ (Counterfactual Regret Minimization). The trained blueprint strategy lives in a SQLite database under `backend/bot/analysis/blueprints/`, is served by a Flask API, and powers two React frontend features: a strategy explorer and an interactive game against the bot.
 
+**Production status: live at https://allin.jianrontan.com as of v1.0.0.** Backend runs on AWS Lightsail Containers (Flask + gunicorn), frontend on Cloudflare Pages, state in DynamoDB (sessions, players, leaderboard, hand recaps), auth via Cognito + Google IdP, edge via Cloudflare (DNS, CDN, WAF rate limiting). CI/CD via GitHub Actions (`.github/workflows/backend-deploy.yml` + `frontend-deploy.yml`); the blueprint DB + postflop tables ship as GitHub Release assets (release `assets-v1`).
+
 ### Storage: JSON → SQLite
 
 The blueprint was originally exported as a single `analysis/blueprint.json` file, imported directly into the frontend bundle at build time. That was replaced with SQLite (`analysis/blueprints/blueprint_<timestamp>.db`) because:
 
-- The blueprint grew to ~26k info sets; bundling the JSON bloated the Vite build and shipped the whole strategy to every visitor.
+- The blueprint grew to ~128k info sets (in the served `blueprint_final.db`); bundling the JSON bloated the Vite build and shipped the whole strategy to every visitor.
 - SQLite supports **incremental checkpointing and resume** during long training runs (`BlueprintDB.save_batch` / `load_all_to_memory`).
 - WAL mode + read-only connections let the API and bot **read a blueprint while training is still writing** a separate run.
 

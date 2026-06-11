@@ -1,6 +1,6 @@
 # Ideas / Feature Backlog
 
-Last updated: 2026-06-08 (positioning notes §6 updated: river solver shipped, turn/flop shelved)
+Last updated: 2026-06-11 (added §10 post-launch UX / robustness TODO)
 
 Speculative features and "could we…" explorations that aren't yet committed phases.
 The committed, sequenced work lives in [ROADMAP.md](ROADMAP.md); this file is the
@@ -336,9 +336,11 @@ Resume line: *"Exposed a CFR poker solver as an MCP server — GTO engine availa
   "worker pool" — offload slow CFR solves + training jobs off the request thread. Pairs with WebSockets.
 - **OpenTelemetry** (L3/S3/Fit4) — current tracing standard; pairs with the observability dashboard (§5.3a).
 
-**🔴 Honest skips (resume-padding traps here):** Kubernetes (overkill vs App Runner/ECS), GraphQL (REST is
-fine — solves a problem we don't have), gRPC/Protobuf (tied to the gold-plating microservice), heavy auth
-(Cognito/Auth0 — deliberately chose a lightweight handle; revisit only if the leaderboard needs real identity).
+**🔴 Honest skips (resume-padding traps here):** Kubernetes (overkill vs Lightsail Containers / ECS),
+GraphQL (REST is fine — solves a problem we don't have), gRPC/Protobuf (tied to the gold-plating
+microservice). (Note: heavy auth was originally skipped here as a resume-padding trap, but Cognito
++ Google IdP **shipped in v1.0** for the ranked leaderboard. Auth0 is still an unnecessary
+duplication.)
 
 **Top 3 NEW picks for breadth-without-padding:** MCP server, Redis sorted-set leaderboard, LLM eval harness.
 
@@ -403,6 +405,36 @@ decision path."* Accurate and defensible — note it proves the **deck**, not th
 leaderboard launch where "is the bot honest?" is the obvious question).
 
 ---
+
+## 10. Post-launch UX / robustness TODO 💡
+
+Captured 2026-06-11 during CI/CD setup. Small, near-term polish/robustness items (not
+phases) to pick up after the AWS deploy settles.
+
+- **Auto-fold on inactivity timeout** (robustness, S). Fold the human's hand if they don't
+  act within ~30s (tune the threshold), to prevent stale/abandoned sessions from pinning
+  state. Server-authoritative (a client timer can be closed/tabbed-away). Natural seam:
+  stamp a `last_action_at` on the session and enforce it on the next request or via a sweep
+  — the `InMemorySessionStore._sweep_locked` / DynamoDB TTL machinery already exists for
+  expiry; this is a *shorter* per-turn deadline that resolves the open hand (fold) rather
+  than dropping the session. Decide the UX: silent auto-fold vs a visible countdown +
+  warning. Pairs with reconnect handling.
+- **Move the "Trained with Monte Carlo Counterfactual Regret Minimization" tagline above
+  the leaderboard** (UI copy/layout, XS). Currently below; promote it so the methodology
+  framing reads before the board. `pages/Home.jsx`.
+- **Surface the latest action on the table** (UI, S). Right now it's hard to tell what just
+  happened without reading the action log — the opponent's/your last move (fold/check/call/
+  bet/raise + size) isn't visible on the table itself. Show the most recent action inline near
+  each player's seat (a transient chip/bubble or a persistent "last action" label), so the
+  flow is readable at a glance without scanning the log. `pages/AiGame.jsx`.
+- **UI revamp** (UI, L — scope TBD). General visual/UX overhaul of the frontend. Fold in
+  the §4 fun-feature surfaces (the Read reveal, bad-beat meter, confidence HUD) and the §3
+  recap object when scoping, so the redesign has a home for them rather than a second pass.
+- **Version string on the site** (UI, XS). Surface a build version (e.g. `v1.0.0`) somewhere
+  unobtrusive — Home footer next to the CFR tagline, and/or a tooltip. Source it at build
+  time (`VITE_APP_VERSION` from `package.json` version or the git tag), not hardcoded, so it
+  tracks releases. The backend already exposes the build `commit` via `/api/healthz`; a
+  human-readable semver on the frontend complements it. Pairs with adopting git tags for releases.
 
 ## Cross-references
 - Committed phases & status: [ROADMAP.md](ROADMAP.md)

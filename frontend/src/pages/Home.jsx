@@ -17,7 +17,7 @@ function Home() {
 
 	return (
 		<div className="min-h-screen flex flex-col items-center px-6 py-6
-		                bg-[radial-gradient(ellipse_at_center,#0c2a1f_0%,#0a0a0a_72%)]">
+		                bg-[radial-gradient(ellipse_at_50%_26%,#0c2a1f_0%,#0a0a0a_72%)]">
 			{/* Header: sign-in / account in the true top-right corner (full-bleed,
 			    like the Play-with-AI page). Players are anonymous until they sign in;
 			    signing in is what puts them on the leaderboard. */}
@@ -37,7 +37,7 @@ function Home() {
 				<EvCounter />
 			</div>
 
-			<div className="flex flex-col sm:flex-row gap-4 mb-10">
+			<div className="flex flex-col sm:flex-row gap-4 mb-6">
 				<Link to="/ai-game"
 					className="px-9 py-4 rounded-xl text-lg font-semibold tracking-wide text-center
 					           bg-amber-500 text-neutral-950 shadow-lg shadow-amber-900/40
@@ -52,14 +52,15 @@ function Home() {
 				</Link>
 			</div>
 
+			{/* Methodology framing, between the CTAs and the leaderboard. */}
+			<p className="mb-8 text-xs text-neutral-600 text-center">
+				Trained with Monte&nbsp;Carlo Counterfactual Regret Minimization Algorithm
+			</p>
+
 			<div className="w-full max-w-2xl">
 				<Leaderboard title="Leaderboard" accountsOnly minHands={50}
-					note="Signed-in players with 50+ hands, ranked by BB/100." />
+					note="Signed-in players with 50+ hands, ranked by BB/hand." />
 			</div>
-
-			<p className="mt-10 text-xs text-neutral-600">
-				Trained with Monte&nbsp;Carlo Counterfactual Regret Minimization
-			</p>
 		</div>
 	);
 }

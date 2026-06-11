@@ -707,16 +707,20 @@ no-more-exploitable than the blueprint. Background: [1], [2].
 
 ---
 
-## Phase 5 — Online 1v1 play on AWS 🚧 IN PROGRESS
+## Phase 5 — Online 1v1 play on AWS ✅ SHIPPED (v1.0.0)
 
-Deploy for real-time online public heads-up play. Full plan in
-[DEPLOYMENT.md](DEPLOYMENT.md); the code-prep work stream is briefed in
-[HANDOFF_DEPLOYMENT_PREP.md](HANDOFF_DEPLOYMENT_PREP.md).
+**LIVE at https://allin.jianrontan.com.** Backend on AWS Lightsail Containers,
+frontend on Cloudflare Pages, state in DynamoDB, auth via Cognito + Google IdP,
+edge / DNS / WAF on Cloudflare. CI/CD via GitHub Actions
+(`.github/workflows/backend-deploy.yml` + `frontend-deploy.yml`); blueprint DB +
+postflop tables shipped as a GitHub Release asset (release `assets-v1`). Full
+plan in [DEPLOYMENT.md](DEPLOYMENT.md). The pre-launch code-prep handoff doc
+(`HANDOFF_DEPLOYMENT_PREP.md`) was retired once its work shipped.
 
-**v1 scope (decided 2026-06-08):** 25M blueprint + river solver, public +EV
-counter + ranked leaderboard, anonymous play **plus** Google OAuth accounts via
-Cognito. Repo to go **public** for portfolio visibility. Originally Google login
-was scoped as v1.1 fast-follow — promoted into v1 for launch credibility.
+**v1 scope (delivered):** 25M blueprint + river solver, public +EV counter +
+ranked leaderboard, anonymous play **plus** Google OAuth accounts via Cognito.
+Repo public for portfolio visibility. Google login was promoted from v1.1
+fast-follow into v1 for launch credibility.
 
 ### 5a — Code prep (the handoff stream)
 
@@ -794,28 +798,27 @@ What ships in the API + Docker image before infrastructure provisioning.
   `ALLIN_DEBUG_OVERLAY=0` in Lightsail env** (see DEPLOYMENT.md checklist).
 - **Repo public** with these guards in place + secrets scrubbed via `.gitignore`.
 
-### 5b — Infrastructure (user does this, post-5a)
+### 5b — Infrastructure ✅ SHIPPED
 
-- **Domain + DNS at Cloudflare** (bought ✅): `allin.jianrontan.com` →
-  Cloudflare Pages (auto-proxied), `api.allin.jianrontan.com` → Lightsail
-  (DNS-only / gray cloud). Apex left empty for the future portfolio landing.
-- **AWS in `ap-southeast-1`** (user in Singapore). IAM admin user ✅.
-  Provision: ECR repo, Lightsail container service, DynamoDB tables
-  (`allin-sessions`, `allin-players`, `allin-global`), Cognito User Pool +
-  Google IdP, IAM role for GitHub OIDC. Default Cognito domain
-  (`<prefix>.auth.ap-southeast-1.amazoncognito.com`) at launch; custom
-  `auth.jianrontan.com` deferred.
-- **Terraform** (state in S3 + DynamoDB lock); **GitHub Actions** for image
-  build → ECR push → Lightsail rolling deploy via OIDC.
-- **Cloudflare Pages** for the frontend; build env injects `VITE_API_BASE`,
+- **Domain + DNS at Cloudflare** ✅: `allin.jianrontan.com` → Cloudflare Pages
+  (auto-proxied), `api.allin.jianrontan.com` → Lightsail (DNS-only / gray cloud).
+- **AWS in `ap-southeast-1`** ✅. ECR repo, Lightsail container service, the four
+  DynamoDB tables (`allin-sessions`, `allin-players`, `allin-global`,
+  `allin-hands`), Cognito User Pool + Google IdP, IAM role for GitHub OIDC.
+  Default Cognito domain at launch; custom `auth.jianrontan.com` deferred.
+- **CI/CD** ✅ via GitHub Actions: `.github/workflows/backend-deploy.yml`
+  (image build → ECR push → Lightsail rolling deploy via OIDC) and
+  `frontend-deploy.yml` (Cloudflare Pages publish). The blueprint DB +
+  postflop tables are fetched at build time from GitHub Release `assets-v1`.
+- **Cloudflare Pages** for the frontend ✅. Build env injects `VITE_API_BASE`,
   `VITE_COGNITO_*`. Per-IP rate limit at the CF edge for `/api/game/new`,
-  `/api/player`, `/api/game/action`, `/api/auth/google`.
+  `/api/player`, `/api/game/action`, `/api/auth/google`, and
+  `/api/strategy/river-solve`.
 
-### 5c — Launch polish
+### 5c — Launch polish ✅ SHIPPED
 
-Landing copy ([draft in conversation, not yet committed]), LinkedIn launch
-post, the launch-month Lightsail bump (Containers Medium 2 vCPU ~$40/mo →
-scale back to residency tier).
+Landing copy, LinkedIn launch post, and the launch-month Lightsail bump
+(Containers Medium 2 vCPU ~$40/mo → scale back to residency tier post-launch).
 
 ### Deferred to v1.1
 

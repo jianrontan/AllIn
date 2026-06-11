@@ -55,6 +55,16 @@ __pycache__/
 .env
 .env.*
 !.env.example
+
+# Python virtualenv (per-developer, never committed). Created via
+# `python -m venv .venv` from the repo root.
+.venv/
+venv/
+# Vite's production config is non-secret (VITE_* values ship in the JS bundle
+# anyway). Committing it lets local builds + CI both auto-load the same
+# values without duplicating them into the workflow file. Only this specific
+# file is exempted -- a stray backend/.env.production stays excluded.
+!frontend/.env.production
 *.pem
 *.key
 *.p12
@@ -69,6 +79,7 @@ terraform.tfstate
 terraform.tfstate.*
 .terraform/
 ecr-policy.json
+ecr-lifecycle.json
 
 # Author-only operational notes (real account IDs, IAM role specifics, runbook
 # logs). Public-facing docs go in docs/ directly.

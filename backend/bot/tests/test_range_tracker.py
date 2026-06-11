@@ -248,6 +248,9 @@ def test_read_group_label():
     assert _read_group_label(('HA', 'HK'), {'H'}) == 'AKh'     # suited in hearts (flush draw)
     assert _read_group_label(('HA', 'CK'), {'H'}) == 'AKoh'    # offsuit, holds one heart (Ah)
     assert _read_group_label(('CA', 'HK'), {'H'}) == 'AKoh'    # offsuit, holds one heart (Kh)
+    # Two flush-relevant suits at once: both held suit letters trail, sorted.
+    assert _read_group_label(('HK', 'SQ'), {'H', 'S'}) == 'KQohs'   # offsuit, holds H and S
+    assert _read_group_label(('HA', 'CA'), {'H', 'C'}) == 'AAch'    # pair, holds C and H
     print("PASS test_read_group_label")
 
 

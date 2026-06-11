@@ -5,7 +5,7 @@
 //
 // All amounts are shown in big blinds (the backend works in chips; 1 BB = 2).
 import React, { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useBlocker } from 'react-router-dom';
 import { newGame, sendGameAction, sendBotAction, nextHand, getGameState,
     getPlayerId, adoptPlayerId, getAccount, getMe, getHealth,
     getStoredSessionId, setStoredSessionId, clearStoredSessionId } from '../api';
@@ -101,14 +101,46 @@ function EmptySlot({ onReveal }) {
         className="rounded-lg border-2 border-dashed border-white/10" />;
 }
 
-function Seat({ name, stackChips, active }) {
+function Seat({ name, stackChips, active, holding }) {
     return (
         <div className="flex items-center justify-center gap-2 text-sm">
             <span className={'inline-block w-2 h-2 rounded-full ' +
                 (active ? 'bg-amber-400 shadow-[0_0_8px] shadow-amber-400' : 'bg-transparent')} />
             <span className="text-neutral-200 font-medium">{name}</span>
             <span className="text-neutral-400">· {fmtBB(stackChips)} BB stack</span>
+            {holding && (
+                <span className="px-2 py-0.5 rounded-full bg-black/30 text-xs
+                                 text-neutral-200">
+                    {holding}
+                </span>
+            )}
         </div>
+    );
+}
+
+// Colour the "last action" pill by action family, matching the action buttons:
+// fold rose, check/call sky, all-in violet, bet/raise (incl. custom) emerald.
+const lastActionTone = (a) => {
+    if (a === 'fold') return 'bg-rose-500/20 text-rose-200';
+    if (a === 'check' || a === 'call') return 'bg-sky-500/20 text-sky-200';
+    if (a === 'allin') return 'bg-violet-500/20 text-violet-200';
+    if (a.startsWith('bet_') || a.startsWith('raise_')) return 'bg-emerald-500/20 text-emerald-200';
+    return 'bg-white/10 text-neutral-200';
+};
+
+// "What just happened": a small pill next to a seat showing that player's most
+// recent action this hand (verb + size), so the flow is readable at a glance
+// without scanning the action log. It re-animates on every change via a keyed
+// remount (see the lastActionIn keyframe in index.css).
+function LastActionPill({ entry }) {
+    if (!entry) return null;
+    const amt = entry.chips > 0 ? ` ${fmtBB(entry.chips)} BB` : '';
+    return (
+        <span key={`${entry.action}|${entry.chips}|${entry.street}`}
+            className={'px-2 py-0.5 rounded-full text-xs font-medium ' +
+                'animate-[lastActionIn_220ms_ease-out] ' + lastActionTone(entry.action)}>
+            {logVerb(entry.action, entry.street)}{amt}
+        </span>
     );
 }
 
@@ -247,6 +279,39 @@ function BotDebug({ debug }) {
     );
 }
 
+// Confirm leaving a live hand — styled like the app's other overlays
+// (IntroModal / LoginPrompt) instead of the browser's window.confirm.
+function LeaveHandModal({ open, busy, onConfirm, onCancel }) {
+    if (!open) return null;
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+            onClick={busy ? undefined : onCancel}>
+            <div className="w-full max-w-sm rounded-2xl border border-amber-600/40
+                            bg-neutral-900 p-6 shadow-2xl text-center"
+                onClick={(e) => e.stopPropagation()}>
+                <h2 className="text-lg font-bold text-amber-300 mb-2">Leave this hand?</h2>
+                <p className="text-sm text-neutral-400 mb-5">
+                    Your hand will be folded and the hand counts as a loss. You can
+                    start a fresh hand any time.
+                </p>
+                <div className="flex flex-col gap-2.5">
+                    <button onClick={onConfirm} disabled={busy}
+                        className="w-full px-5 py-3 rounded-xl font-semibold bg-rose-600
+                                   text-white hover:bg-rose-500 disabled:opacity-50
+                                   transition-colors">
+                        {busy ? 'Folding…' : 'Fold & leave'}
+                    </button>
+                    <button onClick={onCancel} disabled={busy}
+                        className="text-sm text-neutral-500 hover:text-neutral-300
+                                   disabled:opacity-50">
+                        Stay in the hand
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function AiGame() {
     const [view, setView] = useState(null);
     const [showDebug, setShowDebug] = useState(false);
@@ -271,6 +336,9 @@ function AiGame() {
     const [account, setAccountState] = useState(null);
     const [showIntro, setShowIntro] = useState(false);
     const [showLogin, setShowLogin] = useState(false);
+    // Leave-this-hand confirm overlay (driven by the navigation blocker below).
+    // `leaving` is true while the fold request is in flight so the buttons disable.
+    const [leaving, setLeaving] = useState(false);
     // Lifetime stats for THIS player (hands + net across all their sessions).
     // Refreshes on mount and again after every completed hand. Distinct from
     // view.handNumber / view.humanNet (which are PER-SESSION).
@@ -280,6 +348,30 @@ function AiGame() {
     // "Debug" button when the backend has ALLIN_DEBUG_OVERLAY=0.
     const [debugAvailable, setDebugAvailable] = useState(null);
     const loginAsked = useRef(false);
+    const navigate = useNavigate();
+    // Null-safe (view is null until the first deal). Shared by the unload guard and
+    // the leave confirm.
+    const liveHand = view?.status === 'in_hand';
+
+    // Intercept in-app navigation away from a live hand (browser Back, the Home
+    // link, anything) so it routes through the leave-this-hand confirm instead of
+    // silently abandoning the hand. The modal opens off `blocker.state` (below);
+    // confirm proceeds, cancel resets. Requires the data router (see App.jsx).
+    const blocker = useBlocker(
+        ({ currentLocation, nextLocation }) =>
+            liveHand && currentLocation.pathname !== nextLocation.pathname);
+
+    // While a hand is live, warn on a real page unload (tab close / reload). The
+    // browser only allows its own generic prompt here; the actual fold is the
+    // server's inactivity sweeper (a beforeunload handler can't reliably complete
+    // a request). In-app navigation away is handled by the Home link's confirm.
+    // Depend on the boolean, not `view`, so it only re-binds on the live transition.
+    useEffect(() => {
+        if (!liveHand) return;
+        const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
+        window.addEventListener('beforeunload', handler);
+        return () => window.removeEventListener('beforeunload', handler);
+    }, [liveHand]);
 
     useEffect(() => {
         getPlayerId();                       // ensure the anonymous id exists
@@ -478,6 +570,28 @@ function AiGame() {
 
     const handOver = view.status === 'hand_over';
     const yourTurn = view.toAct === 'you';
+
+    // Confirmed leave (modal "Fold & leave"): fold when it's the human's turn, then
+    // let the blocked navigation proceed to wherever the user was headed. If it's
+    // the bot's turn we can't fold — the inactivity sweeper resolves it server-side.
+    const confirmLeave = async () => {
+        if (leaving) return;                    // guard a fast double-click
+        setLeaving(true);
+        try {
+            if (view.toAct === 'you') await sendGameAction(view.sessionId, 'fold');
+        } catch {
+            // Ignore — the inactivity sweeper folds it server-side as a backstop.
+        }
+        if (blocker.state === 'blocked') blocker.proceed();
+        else navigate('/');                     // fallback if the blocker isn't active
+    };
+
+    // Cancelled leave: stay in the hand and release the blocked navigation.
+    const cancelLeave = () => {
+        if (leaving) return;
+        if (blocker.state === 'blocked') blocker.reset();
+    };
+
     // Fold run-out: community cards remain undealt when the hand ended before the
     // river. They can be revealed (dimmed) into the empty board slots on request.
     const community = view.community || [];
@@ -488,6 +602,11 @@ function AiGame() {
     // True once the fold run-out is revealed: the made-hand labels then show what
     // each player WOULD have had on the full board ("You would have:" etc.).
     const runoutShown = canRevealRunout && showRunout;
+
+    // Each seat's most recent action this hand (the action log is per-hand), for
+    // the on-table "last action" pills. Last entry per seat wins.
+    const lastBySeat = {};
+    for (const e of view.actionLog) lastBySeat[e.seat] = e;
 
     return (
         <div className="min-h-screen bg-[radial-gradient(ellipse_at_center,#0c2a1f_0%,#0a0a0a_62%)]">
@@ -555,6 +674,8 @@ function AiGame() {
 
                 <IntroModal open={showIntro} onClose={closeIntro} />
                 <LoginPrompt open={showLogin} onClose={() => setShowLogin(false)} />
+                <LeaveHandModal open={blocker.state === 'blocked'} busy={leaving}
+                    onConfirm={confirmLeave} onCancel={cancelLeave} />
 
                 {/* Body: left = read/debug/log, centre = table, right = actions.
                     The centre column flexes so the table sits in the middle of the
@@ -622,25 +743,28 @@ function AiGame() {
                 <div className="w-fit rounded-[1.75rem] sm:rounded-[2.25rem] ring-4 ring-amber-600/60
                                 shadow-2xl shadow-black/60 px-3 py-3 sm:px-6 sm:py-4"
                     style={{ ...FELT, '--card-w': 'clamp(2.75rem, min(7.5cqw, 8.5vh), 5rem)' }}>
-                    {/* Bot */}
+                    {/* Bot — the made hand ("???" until showdown) sits on the seat
+                        line; the prominent pill below the cards carries the dynamic
+                        last-action / "thinking" label. */}
                     <Seat name="Bot" stackChips={view.botStack}
-                        active={view.toAct === 'bot'} />
+                        active={view.toAct === 'bot'}
+                        holding={runoutShown
+                            ? `would have ${view.botFullHand}`
+                            : (view.botHand || '???')} />
                     <div className="flex justify-center gap-2 mt-1.5">
                         {(view.botCards || [null, null]).map((c, i) => (
                             <PlayingCard key={i} card={c} hidden={!view.botCards} />
                         ))}
                     </div>
-                    {/* Always shown so the table height doesn't jump; "???" until
-                        the bot's cards are revealed at showdown. */}
-                    <div className="flex justify-center mt-1.5">
-                        <span className="px-3 py-0.5 rounded-full bg-black/30 text-xs
-                                         tracking-wide text-amber-100/90 tabular-nums">
-                            {thinking
-                                ? <>Bot is thinking<span className="font-semibold">{dots}</span></>
-                                : runoutShown
-                                    ? <>Bot would have: <span className="font-semibold">{view.botFullHand}</span></>
-                                    : <>Bot has: <span className="font-semibold">{view.botHand || '???'}</span></>}
-                        </span>
+                    {/* Fixed height so the table never jumps between "no action yet",
+                        an action pill, and the thinking indicator. */}
+                    <div className="h-6 flex items-center justify-center mt-1.5">
+                        {thinking
+                            ? <span className="px-3 py-0.5 rounded-full bg-black/30 text-xs
+                                               tracking-wide text-amber-100/90">
+                                Bot is thinking<span className="font-semibold">{dots}</span>
+                              </span>
+                            : <LastActionPill entry={lastBySeat.bot} />}
                     </div>
                     <div className="h-6 flex items-center justify-center mt-1.5">
                         <BetChip chips={view.botBet} />
@@ -682,23 +806,21 @@ function AiGame() {
                         </p>
                     </div>
 
-                    {/* You */}
+                    {/* You — mirror of the bot: action pill above the seat line,
+                        your made hand on the seat line. */}
                     <div className="h-6 flex items-center justify-center mt-1.5">
                         <BetChip chips={view.yourBet} />
                     </div>
                     <div className="flex justify-center gap-2 mt-1.5">
                         {(view.yourCards || []).map((c, i) => <PlayingCard key={i} card={c} />)}
                     </div>
-                    <div className="flex justify-center my-1.5">
-                        <span className="px-3 py-0.5 rounded-full bg-black/30 text-xs
-                                         tracking-wide text-emerald-100/90">
-                            {runoutShown ? 'You would have: ' : 'You have: '}
-                            <span className="font-semibold">
-                                {runoutShown ? view.yourFullHand : view.yourHand}
-                            </span>
-                        </span>
+                    <div className="h-6 flex items-center justify-center my-1.5">
+                        <LastActionPill entry={lastBySeat.you} />
                     </div>
-                    <Seat name="You" stackChips={view.yourStack} active={yourTurn} />
+                    <Seat name="You" stackChips={view.yourStack} active={yourTurn}
+                        holding={runoutShown
+                            ? `would have ${view.yourFullHand}`
+                            : view.yourHand} />
                 </div>
 
                 {error && (
@@ -759,14 +881,18 @@ function AiGame() {
                             {sortedActions(view.legalActions).map((la) => (
                                 <button key={la.action} onClick={() => doAction(la.action)}
                                     disabled={busy}
-                                    className={'rounded-lg px-3 py-2.5 sm:py-2 text-center leading-tight ' +
+                                    className={'rounded-lg px-3 min-h-[3.25rem] flex flex-col ' +
+                                        'items-center justify-center text-center leading-tight ' +
                                         'text-white disabled:opacity-50 transition-colors ' +
                                         actionClasses(la.action)}>
-                                    <span className="block text-sm font-semibold">
+                                    {/* Fixed min-height + vertical centering keeps every button
+                                        the same size and centres its label whether or not it has
+                                        a bet-amount line (Bet/Raise vs Fold/Check). */}
+                                    <span className="text-sm font-semibold">
                                         {actionVerb(la.action, view.street)}
                                     </span>
                                     {la.chips > 0 && (
-                                        <span className="block text-[11px] opacity-80 tabular-nums">
+                                        <span className="text-[11px] opacity-80 tabular-nums">
                                             {fmtBB(la.chips)} BB
                                         </span>
                                     )}

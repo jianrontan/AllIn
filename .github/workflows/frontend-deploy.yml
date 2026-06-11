@@ -5,9 +5,9 @@
 # in CF's UI and can't be retroactively converted to Git-connected through the
 # dashboard. This workflow does the equivalent: deploys on push.
 #
-# Secrets used:
+# Secrets used (both stored in repo Settings -> Secrets and variables -> Actions):
 #   CLOUDFLARE_API_TOKEN -- scoped: Pages:Edit on this account
-#   CLOUDFLARE_ACCOUNT_ID -- ec4775d5e2de8b4767fc7ba5bb9cee88
+#   CLOUDFLARE_ACCOUNT_ID -- the account ID the Pages project lives under
 
 name: Frontend deploy
 
@@ -36,16 +36,12 @@ jobs:
         working-directory: frontend
         run: npm install
 
-      # Vite bakes VITE_* env vars at build time, so they must be set before
-      # `npm run build`. These are the same public values from the CF Pages
-      # Production environment (not secret -- they ship in the JS bundle).
+      # VITE_* values for the production build are in frontend/.env.production
+      # (committed to git -- they're public, ship in every visitor's JS bundle).
+      # Vite auto-loads .env.production when `npm run build` runs in production
+      # mode, which is the default. No inline env block needed here.
       - name: Build
         working-directory: frontend
-        env:
-          VITE_API_BASE: https://api-allin.jianrontan.com
-          VITE_COGNITO_DOMAIN: https://ap-southeast-1arey13gu9.auth.ap-southeast-1.amazoncognito.com
-          VITE_COGNITO_APP_CLIENT_ID: 2142vgjd5eo4v0ocfciom6n64s
-          VITE_COGNITO_REDIRECT_URI: https://allin.jianrontan.com/auth/callback
         run: npm run build
 
       - name: Deploy to Cloudflare Pages

@@ -6,7 +6,7 @@ skinparam defaultFontSize 12
 ' Current class structure. Signatures abbreviated for readability.
 ' Single sources of truth: cfr/keys.py (key + action char), abstractions/sizing.py (bet sizes).
 
-package "cfr — training and keys" {
+package "cfr - training and keys" {
   class BlueprintTrainer {
     + game : PokerGame
     + game_adapter : GameAdapter
@@ -59,7 +59,7 @@ package "abstractions" {
   }
 }
 
-package "bot — inference adapters" {
+package "bot - inference adapters" {
   class GameAdapter {
     + create_info_set_key(hole_card, round_state, position) : str
     + cfr_action_to_char(cfr_action) : str
@@ -70,7 +70,7 @@ package "bot — inference adapters" {
   }
 }
 
-package "game — transport-agnostic core (no Flask)" {
+package "game - transport-agnostic core (no Flask)" {
   class GameSession {
     + data : dict
     --
@@ -117,7 +117,7 @@ package "game — transport-agnostic core (no Flask)" {
   class InMemorySessionStore
 }
 
-package "subgame — Phase 4 river solver" {
+package "subgame - Phase 4 river solver" {
   class RiverSubgameSolver {
     + decide(info_set_key, legal_actions, public_state) : str
     + solve_for_action(board, pot_entry, stacks, bot_seat, hole, args) : str

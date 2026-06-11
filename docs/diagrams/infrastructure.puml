@@ -1,0 +1,149 @@
+@startuml infrastructure
+!theme plain
+skinparam defaultFontSize 12
+skinparam ArrowColor #555555
+skinparam rectangle {
+  RoundCorner 10
+}
+
+' =====================================================================
+' AllIn — production infrastructure (v1.0.0, live at allin.jianrontan.com).
+'
+' This is the CANONICAL "what's deployed where" reference. It documents
+' the real cloud topology that backs the public site: Cloudflare Pages
+' for the React SPA, Cloudflare DNS + WAF + Universal SSL at the edge,
+' an AWS Lightsail Container Service in ap-southeast-1 running the
+' gunicorn/Flask/bot image pulled from ECR, four DynamoDB tables for
+' sessions/players/global/hands, AWS Cognito federated with Google for
+' sign-in, and a GitHub Actions CI/CD pipeline (OIDC → IAM role) that
+' builds + pushes the container image and redeploys Lightsail on every
+' push to main. For code-level architecture (modules, classes, training
+' / inference flows) see system_architecture.puml and class_diagram.puml.
+' =====================================================================
+
+title AllIn v1.0.0 — deployed infrastructure
+
+actor "User\n(browser)" as User
+
+' ---------------------------------------------------------------------
+' Cloudflare edge
+' ---------------------------------------------------------------------
+cloud "Cloudflare" as CF {
+  node "DNS zone\njianrontan.com" as DNS
+  node "Cloudflare Pages\n(allin.jianrontan.com)\nReact/Vite SPA" as Pages
+  node "WAF\nrate-limit rule on\n/api/strategy/river-solve" as WAF
+  node "Reverse proxy + Universal SSL\napi-allin.jianrontan.com" as Edge
+  node "Origin rules / custom domain\n→ Lightsail container" as Origin
+  artifact "ACM cert\n(Lightsail-issued)\nfor api-allin.jianrontan.com" as Cert
+}
+
+' ---------------------------------------------------------------------
+' AWS ap-southeast-1
+' ---------------------------------------------------------------------
+cloud "AWS — ap-southeast-1" as AWS {
+
+  node "Lightsail Container Service\n'allin' (Micro plan, 1 node)\ngunicorn + Flask + bot\nport 5000" as Lightsail {
+    component "gunicorn workers\n(strategy_api.py)" as App
+    artifact "ACM cert\n(Lightsail-issued)" as LSCert
+  }
+
+  node "ECR repo\n'allin'\n(image registry)" as ECR {
+    artifact "container image\nallin:latest" as Image <<artifact>>
+  }
+
+  node "IAM" as IAM {
+    component "role: lightsail-ecr-puller\n(auto-created, ECR pull)" as RolePuller
+    component "user: allin-runtime\n(access keys → Lightsail env;\nDynamoDB read/write)" as UserRuntime
+    component "OIDC role:\ngithub-actions-allin-deploy\n(assumed by Actions)" as RoleGHA
+  }
+
+  node "Cognito" as Cognito {
+    component "User Pool" as CogPool
+    component "App Client\n(SPA, implicit grant)" as CogApp
+    component "Google IdP\nfederation" as CogGoogle
+  }
+
+  database "DynamoDB" as DDB {
+    component "allin-sessions\nTTL on 'expiry'\nPITR on" as TSessions <<persistent>>
+    component "allin-players\nPITR on" as TPlayers <<persistent>>
+    component "allin-global\n(singleton row)\nPITR on" as TGlobal <<persistent>>
+    component "allin-hands\nPK: playerId + handKey\nPITR on" as THands <<persistent>>
+  }
+}
+
+' ---------------------------------------------------------------------
+' Google identity provider
+' ---------------------------------------------------------------------
+cloud "Google" as Google {
+  node "Google Cloud\nOAuth consent screen" as GCPConsent
+  node "OAuth 2.0\nWeb client" as GoogleOAuth
+}
+
+' ---------------------------------------------------------------------
+' GitHub source + CI/CD
+' ---------------------------------------------------------------------
+cloud "GitHub" as GH {
+  node "Repository\njianrontan/AllIn\n(public — main + feature/*)" as Repo
+  node "GitHub Actions" as GHA {
+    component "backend-deploy.yml" as WfBackend
+    component "frontend-deploy.yml" as WfFrontend
+  }
+  artifact "Release v1.0.0\n(notes only)" as RelV1 <<artifact>>
+  artifact "Release assets-v1\nblueprint_final.db +\npostflop_table_flop.npz +\npostflop_table_turn.npz" as RelAssets <<artifact>>
+}
+
+' =====================================================================
+' Flows
+' =====================================================================
+
+' ---- Frontend (SPA) ----
+User --> DNS : allin.jianrontan.com
+DNS --> Pages
+Pages --> User : HTML / JS bundle
+
+' ---- API path (TLS, WAF, → Lightsail) ----
+User --> DNS : api-allin.jianrontan.com
+DNS --> Edge : TLS termination\n(Universal SSL)
+Edge --> WAF
+WAF --> Origin
+Origin --> Lightsail : HTTPS\n(ACM cert)
+Cert .. Edge
+LSCert .. Lightsail
+
+' ---- App → AWS data plane ----
+App --> TSessions : sessions
+App --> TPlayers : players
+App --> TGlobal : +EV counter
+App --> THands : hand recaps
+App --> CogApp : verify_cognito_id_token\n(/api/auth/google)
+UserRuntime ..> App : access keys\n(Lightsail env vars)
+
+' ---- ECR pull ----
+RolePuller ..> ECR : private pull
+Lightsail --> ECR : pull image\nallin:latest
+
+' ---- Sign-in (Google via Cognito Hosted UI) ----
+User --> CogApp : Hosted UI redirect
+CogApp --> CogGoogle
+CogGoogle --> GoogleOAuth : federated login
+GoogleOAuth --> GCPConsent
+GoogleOAuth --> User : auth code → ID token
+User --> Pages : redirect back to\n/auth/callback
+Pages --> App : POST /api/auth/google\n(ID token)
+
+' ---- CI/CD ----
+User --> Repo : git push origin main
+Repo --> GHA : trigger workflows
+
+' Backend pipeline
+WfBackend --> RoleGHA : OIDC assume
+RoleGHA --> RelAssets : fetch release assets-v1
+WfBackend --> Image : docker build
+WfBackend --> ECR : docker push
+WfBackend --> Lightsail : create-container-service-deployment
+RelV1 ..> Repo : tagged from main
+
+' Frontend pipeline
+WfFrontend --> Pages : wrangler deploy
+
+@enduml

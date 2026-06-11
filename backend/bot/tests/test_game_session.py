@@ -197,6 +197,104 @@ def test_untrained_key_passive_fallback():
     _passed("untrained key -> passive only (no stray raise/jam)")
 
 
+def test_voluntary_free_fold():
+    """LIVE play lets the HUMAN fold even when checking is free (a poker-client
+    affordance), but the BOT never sees that free fold (its option set must stay
+    byte-identical to training). Drive to a free-check node for each seat and check
+    the gating; then confirm a free-fold actually resolves the hand as a forfeit."""
+    session = GameSession.new("s", "p")          # human_seat = 0 (button/SB)
+    assert session.current_player() == 0
+    session.apply_action("call")                 # SB limps -> BB(bot) to act, can check
+    assert session.current_player() == 1
+    bot_legal = session.legal_actions()
+    assert "check" in bot_legal and "fold" not in bot_legal, bot_legal   # bot: no free fold
+    session.apply_action("check")                # -> flop; BB(bot, OOP) acts first
+    assert session.data["street"] == 1 and session.current_player() == 1
+    session.apply_action("check")                # bot checks -> human (button) to act
+    assert session.current_player() == 0
+    human_legal = session.legal_actions()
+    assert "check" in human_legal and "fold" in human_legal, human_legal  # human: free fold
+    net_before = session.data["human_net"]
+    session.apply_action("fold")                 # voluntary free-fold
+    assert session.data["status"] == "hand_over"
+    assert session.data["human_net"] < net_before, "folding must forfeit invested chips"
+
+    # Exact forfeit: human (SB) limped (1 blind + 1 call = 2 chips in) then folded,
+    # so the loss is exactly those 2 chips -- not an arbitrary number.
+    from src.cfr.poker_game import STARTING_STACK
+    result = session.data["result"]
+    assert result["winner"] == "bot" and result["reason"] == "fold"
+    assert result["humanDelta"] == -2.0, result
+    assert session.data["human_net"] == -2.0
+    # Chip conservation: stacks + final pot == both starting stacks (each hand
+    # resets stacks to STARTING_STACK; the pot is the chips committed this hand).
+    total = (session.data["p0_stack"] + session.data["p1_stack"]
+             + result["finalPot"])
+    assert abs(total - 2 * STARTING_STACK) < 1e-6, total
+    # Serialization survives the free-fold terminal state (the leaderboard hook and
+    # the inactivity sweeper both round-trip the session through the store).
+    rt = GameSession.from_dict(session.to_dict())
+    assert rt.public_view() == session.public_view()
+    assert rt.legal_actions() == []
+    _passed("voluntary free-fold: human-only, exact forfeit, conserves chips, round-trips")
+
+
+def test_bot_never_offered_free_fold_any_street():
+    """The free-fold must be gated to the human on EVERY street -- a regression that
+    leaked it to the bot would let an untrained-key fallback fold for free. Drive a
+    full check-down and assert the gating at every free-check node on both seats."""
+    session = GameSession.new("s", "p")          # human_seat = 0
+    human_seat = session.data["human_seat"]
+    human_freechecks = bot_freechecks = 0
+    guard = 0
+    while session.data["status"] == "in_hand" and guard < 40:
+        guard += 1
+        legal = session.legal_actions()
+        cur = session.current_player()
+        if "check" in legal:                     # a free-check node
+            if cur == human_seat:
+                assert "fold" in legal, (cur, legal)     # human: free fold offered
+                human_freechecks += 1
+            else:
+                assert "fold" not in legal, (cur, legal)  # bot: never
+                bot_freechecks += 1
+            session.apply_action("check")
+        elif "call" in legal:
+            session.apply_action("call")
+        else:
+            session.apply_action(legal[0])
+    assert session.data["status"] == "hand_over"
+    # A full check-down exercises a free-check node for each seat on flop/turn/river.
+    assert human_freechecks >= 3 and bot_freechecks >= 3, (human_freechecks, bot_freechecks)
+    _passed("bot never offered a free fold on any street; human always is")
+
+
+def test_describe_hand_preflop_labels():
+    """Preflop hand labels match the postflop vocabulary (generic 'High card' /
+    'Pair'), guarding against drift back to 'Ace-King suited high'."""
+    s = GameSession.__new__(GameSession)         # describe_hand preflop needs no state
+    assert s.describe_hand(("HA", "CK"), []) == "High card"
+    assert s.describe_hand(("HA", "HK"), []) == "High card"   # suited, still generic
+    assert s.describe_hand(("HA", "CA"), []) == "Pair"
+    _passed("preflop hand labels are the generic postflop 'High card' / 'Pair'")
+
+
+def test_iter_active_snapshot():
+    """The session store enumerates non-expired sessions (the inactivity sweeper's
+    input). Expired entries are excluded; the result is a detached snapshot list."""
+    import time
+    store = InMemorySessionStore(ttl_seconds=3600)
+    store.put("live", {"session_id": "live", "status": "in_hand"})
+    active = dict(store.iter_active())
+    assert "live" in active and active["live"]["status"] == "in_hand"
+    # Force-expire and confirm it drops out.
+    with store._data_guard:
+        _, data = store._data["live"]
+        store._data["live"] = (time.time() - 1, data)
+    assert dict(store.iter_active()) == {}, "expired session must not be enumerated"
+    _passed("iter_active snapshots only non-expired sessions")
+
+
 if __name__ == "__main__":
     tests = [
         test_card_conversion,
@@ -210,6 +308,10 @@ if __name__ == "__main__":
         test_live_engine_uncapped_training_capped,
         test_uncapped_custom_raise_past_cap,
         test_untrained_key_passive_fallback,
+        test_voluntary_free_fold,
+        test_bot_never_offered_free_fold_any_street,
+        test_describe_hand_preflop_labels,
+        test_iter_active_snapshot,
     ]
     print("Running GameSession tests...\n")
     for t in tests:

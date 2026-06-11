@@ -33,7 +33,7 @@ function Leaderboard({ title, accountsOnly = false, minHands = 50, n = 10, note 
                         <tr className="text-neutral-500 text-xs uppercase tracking-wider">
                             <th className="text-left font-medium pb-2">#</th>
                             <th className="text-left font-medium pb-2">Player</th>
-                            <th className="text-right font-medium pb-2">BB/100</th>
+                            <th className="text-right font-medium pb-2">BB/hand</th>
                             <th className="text-right font-medium pb-2">Hands</th>
                             <th className="text-right font-medium pb-2">Net BB</th>
                         </tr>
@@ -41,9 +41,12 @@ function Leaderboard({ title, accountsOnly = false, minHands = 50, n = 10, note 
                     <tbody>
                         {rows.map((r, i) => {
                             // Defensive defaults: a malformed row must not crash the table.
-                            const bb100 = Number(r.bbPer100) || 0;
                             const hands = Number(r.hands) || 0;
                             const net = Number(r.netBB) || 0;
+                            // BB/hand, matching the bot's EvCounter (net ÷ hands).
+                            // Ranking is unchanged: the backend still sorts by
+                            // bbPer100, which is just this ×100.
+                            const bbPerHand = hands ? net / hands : 0;
                             return (
                                 <tr key={i} className="border-t border-neutral-800/70">
                                     <td className="py-1.5 text-neutral-500 tabular-nums">{i + 1}</td>
@@ -55,8 +58,8 @@ function Leaderboard({ title, accountsOnly = false, minHands = 50, n = 10, note 
                                         )}
                                     </td>
                                     <td className={'py-1.5 text-right tabular-nums font-semibold '
-                                        + (bb100 >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
-                                        {bb100 > 0 ? '+' : ''}{bb100}
+                                        + (bbPerHand >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
+                                        {bbPerHand > 0 ? '+' : ''}{bbPerHand.toFixed(2)}
                                     </td>
                                     <td className="py-1.5 text-right tabular-nums text-neutral-400">
                                         {hands.toLocaleString()}
