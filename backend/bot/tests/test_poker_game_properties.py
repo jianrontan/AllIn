@@ -76,6 +76,16 @@ import os
 import sys
 import random as _r
 
+import pytest
+
+# Mark every test in this module as slow. Hypothesis property tests take ~11
+# min walltime; the CI pipeline runs `pytest -m "not slow"` to keep the
+# per-deploy feedback loop short. A separate nightly workflow runs the full
+# suite (including this file) so the invariants still get exercised. See
+# pytest.ini and .github/workflows/nightly-tests.yml.
+pytestmark = pytest.mark.slow
+
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from hypothesis import given, settings, strategies as st, HealthCheck, assume

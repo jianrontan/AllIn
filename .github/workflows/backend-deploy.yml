@@ -27,11 +27,6 @@ on:
       - docker-entrypoint.sh
       - .github/workflows/backend-deploy.yml
   workflow_dispatch:
-    inputs:
-      skip_tests:
-        description: 'Skip pytest (fast iteration for debugging)'
-        type: boolean
-        default: false
 
 permissions:
   id-token: write    # required for OIDC role assumption
@@ -44,7 +39,7 @@ env:
   LIGHTSAIL_SERVICE: allin
   # GitHub Release tag that holds the baked postflop tables as assets. Update
   # when re-baking (centroid changes). Tag must already exist.
-  POSTFLOP_TABLES_RELEASE: v1.0.0
+  POSTFLOP_TABLES_RELEASE: assets-v1
 
 jobs:
   build-test-deploy:
@@ -160,14 +155,13 @@ jobs:
       # that will deploy if these pass. Override entrypoint because the prod
       # entrypoint is gunicorn.
       #
-      # Skip conditions (for fast debug iteration -- USE SPARINGLY):
-      #   * commit message contains `[skip-tests]`
-      #   * workflow_dispatch with skip_tests=true
-      # Both default to running tests, so a normal `git push` always tests.
+      # `-m "not slow"` skips the Hypothesis property suite
+      # (test_poker_game_properties.py, ~11 min walltime) so per-deploy CI
+      # stays ~5 min. The full suite (including slow) runs on the
+      # nightly-tests.yml schedule so the property invariants still get
+      # exercised regularly. See backend/bot/pytest.ini for the marker
+      # registration.
       - name: Run backend tests
-        if: |
-          inputs.skip_tests != true &&
-          !contains(github.event.head_commit.message, '[skip-tests]')
         run: |
           docker run --rm \
             -e ALLIN_SESSION_STORE=memory \
@@ -175,15 +169,7 @@ jobs:
             -w /app/backend/bot \
             --entrypoint python \
             allin:test \
-            -m pytest tests/ -q --tb=short
-
-      - name: Tests skipped
-        if: |
-          inputs.skip_tests == true ||
-          contains(github.event.head_commit.message, '[skip-tests]')
-        run: |
-          echo "::warning::pytest skipped for this run (debug iteration)."
-          echo "::warning::Re-enable by removing [skip-tests] from your next commit."
+            -m pytest tests/ -m "not slow" -q --tb=short
 
       # Below this line we mutate prod (ECR + Lightsail). Test failure above
       # exits the job before we ever get here.
