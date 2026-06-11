@@ -56,9 +56,12 @@ def test_health_endpoint():
         print(f"SKIP test_health_endpoint (API import failed: {e!r})")
         return
     # Call the view inside an app context (avoids a werkzeug test_client version
-    # quirk with `as_tuple`); still exercises the real endpoint handler.
+    # quirk with `as_tuple`); still exercises the real endpoint handler. The
+    # view always returns (Response, status_code) -- the status is the rolling-
+    # deploy probe signal so it can't just be a bare Response.
     with strategy_api.app.app_context():
-        resp = strategy_api.test()
+        result = strategy_api.test()
+        resp = result[0] if isinstance(result, tuple) else result
         body = resp.get_json()
     check('/api/test reports a status', bool(body) and 'status' in body, f'(got {body})')
     check('/api/test reports the active blueprint', 'blueprint' in body, f'(got {body})')
