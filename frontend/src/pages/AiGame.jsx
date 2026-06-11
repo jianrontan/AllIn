@@ -806,21 +806,25 @@ function AiGame() {
                         </p>
                     </div>
 
-                    {/* You — mirror of the bot: action pill above the seat line,
-                        your made hand on the seat line. */}
+                    {/* You — mirror of the bot: action pill nearest the board (above
+                        your cards), your made hand on the seat line. */}
                     <div className="h-6 flex items-center justify-center mt-1.5">
                         <BetChip chips={view.yourBet} />
+                    </div>
+                    <div className="h-6 flex items-center justify-center mt-1.5">
+                        <LastActionPill entry={lastBySeat.you} />
                     </div>
                     <div className="flex justify-center gap-2 mt-1.5">
                         {(view.yourCards || []).map((c, i) => <PlayingCard key={i} card={c} />)}
                     </div>
-                    <div className="h-6 flex items-center justify-center my-1.5">
-                        <LastActionPill entry={lastBySeat.you} />
+                    {/* mt-1.5 mirrors the bot's seat↔cards gap (the bot gets it from its
+                        cards' mt-1.5; here the seat is last, so it needs its own). */}
+                    <div className="mt-1.5">
+                        <Seat name="You" stackChips={view.yourStack} active={yourTurn}
+                            holding={runoutShown
+                                ? `would have ${view.yourFullHand}`
+                                : view.yourHand} />
                     </div>
-                    <Seat name="You" stackChips={view.yourStack} active={yourTurn}
-                        holding={runoutShown
-                            ? `would have ${view.yourFullHand}`
-                            : view.yourHand} />
                 </div>
 
                 {error && (
