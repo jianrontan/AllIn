@@ -139,8 +139,16 @@ jobs:
       # ALLIN_GIT_SHA env var, resubmit. This preserves the other env vars
       # (Cognito IDs, AWS runtime keys, CORS origins) -- they stay in Lightsail
       # console and never touch GitHub.
+      #
+      # SECURITY: The Lightsail API returns container env vars in its JSON
+      # responses, which includes the long-lived AWS_ACCESS_KEY_ID and
+      # AWS_SECRET_ACCESS_KEY this container uses for DynamoDB. Public repo
+      # = public CI logs, so we must (a) extract those into ::add-mask::
+      # before any later step can print them and (b) swallow the
+      # create-container-service-deployment response (which would echo them).
       - name: Update Lightsail deployment
         run: |
+          set -e
           NEW_IMAGE="${ECR_REGISTRY}/${ECR_REPO}:${{ steps.meta.outputs.sha }}"
           NEW_SHA="${{ steps.meta.outputs.sha }}"
 
@@ -148,6 +156,17 @@ jobs:
             --service-name "$LIGHTSAIL_SERVICE" \
             --query "containerServices[0].currentDeployment" \
             --output json > current.json
+
+          # Pull each env var value out and register it with the GHA log
+          # masker BEFORE any subsequent step. Once masked, GitHub redacts
+          # the value as `***` in all log output for the rest of the job.
+          for key in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY; do
+            val=$(jq -r --arg k "$key" \
+              '.containers[].environment[$k] // empty' current.json)
+            if [ -n "$val" ]; then
+              echo "::add-mask::$val"
+            fi
+          done
 
           jq --arg img "$NEW_IMAGE" --arg sha "$NEW_SHA" \
             '.containers | map_values(
@@ -158,10 +177,19 @@ jobs:
 
           jq '.publicEndpoint' current.json > endpoint.json
 
+          # Swallow the response (it echoes the full container config incl.
+          # env vars). We poll for ACTIVE in the next step so the response
+          # body isn't needed here.
           aws lightsail create-container-service-deployment \
             --service-name "$LIGHTSAIL_SERVICE" \
             --containers file://containers.json \
-            --public-endpoint file://endpoint.json
+            --public-endpoint file://endpoint.json \
+            > /dev/null
+
+          # Defensive cleanup -- the runner is ephemeral but no reason to
+          # leave the files around for the next step's logs to accidentally
+          # cat.
+          rm -f current.json containers.json endpoint.json
 
       # Poll until Lightsail reports the new deployment ACTIVE. The previous
       # version keeps serving traffic until the new one is healthy; if the new
