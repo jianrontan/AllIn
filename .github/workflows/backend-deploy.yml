@@ -44,7 +44,11 @@ env:
 jobs:
   build-test-deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 60 min headroom: tests alone take ~19 min, image build ~5 min, ECR push
+    # ~2 min, Lightsail rollout up to ~10 min. The slow tests are the bottleneck;
+    # marking the property-based suite slow-and-skipping it in CI would let us
+    # drop this back to 25 min. Until then, 60 is the safe margin.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 

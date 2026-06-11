@@ -42,6 +42,20 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 # No bake step: the tables are already on disk and shipped as-is.
 COPY backend/ /app/backend/
 
+# Make every file under backend/ world-readable, directories world-traversable.
+# Why this is a RUN step (and not just a chmod in CI before COPY): Docker's
+# buildx layer cache is content-hashed, and when the source files are byte-
+# identical to a previous build, the cached COPY layer is reused with whatever
+# permissions THAT build had. CI's `gh release download` creates files with
+# mode 0600, so without this RUN the cached layer still carries 0600 root:root
+# files -- and `USER allin` (UID 10001) can't open them, the blueprint load
+# fails, and the container 503s health checks. The RUN command is itself a
+# new deterministic layer so the chmod always takes effect.
+# `a+rX` (capital X) means: add read for all, and add execute for all only on
+# things that ALREADY have execute somewhere (i.e. directories), so the .db
+# and .npz data files don't accidentally become executable.
+RUN chmod -R a+rX /app/backend/
+
 
 # === TEST STAGE — base + dev deps; used by CI only ===
 # Extends base so the test environment is bit-identical to prod for all prod
