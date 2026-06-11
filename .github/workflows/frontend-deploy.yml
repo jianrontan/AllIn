@@ -1,0 +1,56 @@
+# Frontend CI/CD: on push to main with changes under frontend/, build the Vite
+# bundle and deploy to Cloudflare Pages via wrangler. The existing Pages project
+# (`allin`, with the custom domain `allin.jianrontan.com` already wired up) was
+# created via `wrangler pages deploy` -- so it lives as a Direct Upload project
+# in CF's UI and can't be retroactively converted to Git-connected through the
+# dashboard. This workflow does the equivalent: deploys on push.
+#
+# Secrets used:
+#   CLOUDFLARE_API_TOKEN -- scoped: Pages:Edit on this account
+#   CLOUDFLARE_ACCOUNT_ID -- ec4775d5e2de8b4767fc7ba5bb9cee88
+
+name: Frontend deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - frontend/**
+      - .github/workflows/frontend-deploy.yml
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm install
+
+      # Vite bakes VITE_* env vars at build time, so they must be set before
+      # `npm run build`. These are the same public values from the CF Pages
+      # Production environment (not secret -- they ship in the JS bundle).
+      - name: Build
+        working-directory: frontend
+        env:
+          VITE_API_BASE: https://api-allin.jianrontan.com
+          VITE_COGNITO_DOMAIN: https://ap-southeast-1arey13gu9.auth.ap-southeast-1.amazoncognito.com
+          VITE_COGNITO_APP_CLIENT_ID: 2142vgjd5eo4v0ocfciom6n64s
+          VITE_COGNITO_REDIRECT_URI: https://allin.jianrontan.com/auth/callback
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy frontend/dist --project-name=allin --branch=main

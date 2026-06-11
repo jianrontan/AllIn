@@ -7,9 +7,21 @@
 #                             -e ALLIN_SESSION_STORE=memory allin
 #                           then GET http://localhost:5000/api/healthz
 #
+# Multi-stage layout:
+#   base -> shared layers (prod deps + code) — never tagged directly
+#   test -> base + dev deps; used by CI to run pytest against the same image
+#           the prod stage extends. Locally:
+#               docker build --target test -t allin:test .
+#               docker run --rm -w /app/backend/bot --entrypoint python \
+#                 allin:test -m pytest tests/ -q
+#   prod (default, last stage) -> base + non-root user + entrypoint. This is what
+#           a plain `docker build .` produces, and what ships to Lightsail.
+#
 # 3.12-slim matches the project's Python (README). If a wheel (e.g. phevaluator)
 # lacks a 3.12 build, either pin 3.11-slim or add build-essential before pip.
-FROM python:3.12-slim
+
+# === BASE STAGE — prod deps + code, no entrypoint ===
+FROM python:3.12-slim AS base
 
 WORKDIR /app
 
@@ -29,6 +41,22 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 # the snapshots/ tree and other regenerable artifacts (training curves etc.).
 # No bake step: the tables are already on disk and shipped as-is.
 COPY backend/ /app/backend/
+
+
+# === TEST STAGE — base + dev deps; used by CI only ===
+# Extends base so the test environment is bit-identical to prod for all prod
+# imports — tests + prod resolve the same Python wheels, same code tree, same
+# OS. Dev deps (pytest, moto, hypothesis) are added on top; they never enter
+# the prod image. The test stage runs as root and has no entrypoint so CI can
+# `docker run --entrypoint python allin:test -m pytest ...`.
+FROM base AS test
+
+COPY backend/requirements-dev.txt /tmp/requirements-dev.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-dev.txt
+
+
+# === PROD STAGE (default — the image that ships) ===
+FROM base AS prod
 
 # Defaults safe for a bare `docker run`. Prod overrides at deploy time (Lightsail
 # env): ALLIN_SESSION_STORE=dynamodb, ALLIN_STORE_BACKEND=dynamodb,

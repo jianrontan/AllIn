@@ -1,0 +1,197 @@
+# Backend CI/CD: on push to main (or manual trigger), test + build + deploy.
+#
+# Flow:
+#   1. Pull the baked postflop tables from a GitHub Release asset (they're too
+#      large to commit -- turn table is ~127MB, GitHub's per-file cap is 100MB)
+#   2. Build the Dockerfile's `test` stage and run pytest inside it
+#   3. If tests pass: build the `prod` stage, push to ECR, redeploy Lightsail
+#   4. Poll Lightsail until ACTIVE, then verify /api/healthz reports the new SHA
+#
+# AWS auth uses OIDC -- no long-lived keys in GitHub Secrets. The one-time IAM
+# role + OIDC provider setup is in author-only docs/private/CICD_SETUP.md
+# (gitignored, not visible to repo viewers).
+#
+# Skipped path: anything outside backend/, Dockerfile, docker-entrypoint.sh, or
+# this workflow file. Frontend (CF Pages) auto-deploys on its own via CF's Git
+# integration -- not handled here.
+
+name: Backend deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - backend/**
+      - Dockerfile
+      - docker-entrypoint.sh
+      - .github/workflows/backend-deploy.yml
+  workflow_dispatch:
+
+permissions:
+  id-token: write    # required for OIDC role assumption
+  contents: read
+
+env:
+  AWS_REGION: ap-southeast-1
+  ECR_REGISTRY: 361611338374.dkr.ecr.ap-southeast-1.amazonaws.com
+  ECR_REPO: allin
+  LIGHTSAIL_SERVICE: allin
+  # GitHub Release tag that holds the baked postflop tables as assets. Update
+  # when re-baking (centroid changes). Tag must already exist.
+  POSTFLOP_TABLES_RELEASE: v1.0.0
+
+jobs:
+  build-test-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # The baked postflop tables (~127MB turn, ~5MB flop) aren't in git. CI
+      # pulls them from the pinned GitHub Release. If the release doesn't have
+      # them attached, this step fails with a clear error -- upload them with:
+      #   gh release upload v1.0.0 backend/bot/analysis/abstractions/postflop_table_*.npz
+      - name: Fetch baked postflop tables from release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p backend/bot/analysis/abstractions/
+          gh release download "$POSTFLOP_TABLES_RELEASE" \
+            -p "postflop_table_flop.npz" -p "postflop_table_turn.npz" \
+            -D backend/bot/analysis/abstractions/
+          ls -lh backend/bot/analysis/abstractions/postflop_table_*.npz
+
+      - name: Derive short SHA
+        id: meta
+        run: echo "sha=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build the test stage (extends `base`, adds pytest/moto/hypothesis).
+      # The `load: true` brings the image into the local Docker daemon so the
+      # next step can `docker run` it. The `cache-*` lines reuse layers across
+      # CI runs via GitHub's free per-repo cache.
+      - name: Build test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: test
+          load: true
+          tags: allin:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Run pytest INSIDE the image. This is the closest thing to staging we
+      # have: the image-under-test extends the same base layers as the image
+      # that will deploy if these pass. Override entrypoint because the prod
+      # entrypoint is gunicorn.
+      - name: Run backend tests
+        run: |
+          docker run --rm \
+            -e ALLIN_SESSION_STORE=memory \
+            -e ALLIN_STORE_BACKEND=memory \
+            -w /app/backend/bot \
+            --entrypoint python \
+            allin:test \
+            -m pytest tests/ -q --tb=short
+
+      # Below this line we mutate prod (ECR + Lightsail). Test failure above
+      # exits the job before we ever get here.
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::361611338374:role/github-actions-allin-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" | \
+            docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+      # Build the PROD stage and push directly to ECR. Reuses the same cached
+      # base layers from the test build above -- only the prod-specific final
+      # layers (non-root user, entrypoint) are new work.
+      - name: Build and push prod image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: prod
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ steps.meta.outputs.sha }}
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Update the running Lightsail deployment IN PLACE: fetch the existing
+      # containers + publicEndpoint blocks, swap ONLY the image tag and the
+      # ALLIN_GIT_SHA env var, resubmit. This preserves the other env vars
+      # (Cognito IDs, AWS runtime keys, CORS origins) -- they stay in Lightsail
+      # console and never touch GitHub.
+      - name: Update Lightsail deployment
+        run: |
+          NEW_IMAGE="${ECR_REGISTRY}/${ECR_REPO}:${{ steps.meta.outputs.sha }}"
+          NEW_SHA="${{ steps.meta.outputs.sha }}"
+
+          aws lightsail get-container-services \
+            --service-name "$LIGHTSAIL_SERVICE" \
+            --query "containerServices[0].currentDeployment" \
+            --output json > current.json
+
+          jq --arg img "$NEW_IMAGE" --arg sha "$NEW_SHA" \
+            '.containers | map_values(
+                .image = $img |
+                .environment.ALLIN_GIT_SHA = $sha
+             )' \
+            current.json > containers.json
+
+          jq '.publicEndpoint' current.json > endpoint.json
+
+          aws lightsail create-container-service-deployment \
+            --service-name "$LIGHTSAIL_SERVICE" \
+            --containers file://containers.json \
+            --public-endpoint file://endpoint.json
+
+      # Poll until Lightsail reports the new deployment ACTIVE. The previous
+      # version keeps serving traffic until the new one is healthy; if the new
+      # one fails health checks, Lightsail rolls back automatically and
+      # currentDeployment.state moves to FAILED, which we surface as a CI fail.
+      - name: Wait for deployment ACTIVE
+        run: |
+          for i in $(seq 1 60); do
+            sleep 10
+            STATE=$(aws lightsail get-container-services \
+              --service-name "$LIGHTSAIL_SERVICE" \
+              --query "containerServices[0].currentDeployment.state" \
+              --output text)
+            echo "[$i/60] deployment.state=$STATE"
+            if [ "$STATE" = "ACTIVE" ]; then
+              exit 0
+            fi
+            if [ "$STATE" = "FAILED" ]; then
+              echo "::error::Lightsail deployment FAILED"
+              exit 1
+            fi
+          done
+          echo "::error::Deployment did not reach ACTIVE within 10 minutes"
+          exit 1
+
+      # Final cross-check: the live /api/healthz must report the same short
+      # SHA we built. Guards against the case where Lightsail says ACTIVE but
+      # somehow stuck on the previous image (cached CDN, edge propagation).
+      - name: Smoke test healthz
+        run: |
+          for i in $(seq 1 12); do
+            sleep 5
+            COMMIT=$(curl -sf https://api-allin.jianrontan.com/api/healthz \
+              | jq -r '.commit // "unknown"')
+            echo "[$i/12] healthz.commit=$COMMIT (expected ${{ steps.meta.outputs.sha }})"
+            if [ "$COMMIT" = "${{ steps.meta.outputs.sha }}" ]; then
+              echo "Deploy verified"
+              exit 0
+            fi
+          done
+          echo "::error::Healthz never returned the new SHA"
+          exit 1

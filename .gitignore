@@ -69,3 +69,7 @@ terraform.tfstate
 terraform.tfstate.*
 .terraform/
 ecr-policy.json
+
+# Author-only operational notes (real account IDs, IAM role specifics, runbook
+# logs). Public-facing docs go in docs/ directly.
+docs/private/
