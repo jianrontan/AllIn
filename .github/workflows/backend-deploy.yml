@@ -23,6 +23,7 @@ on:
     paths:
       - backend/**
       - Dockerfile
+      - .dockerignore
       - docker-entrypoint.sh
       - .github/workflows/backend-deploy.yml
   workflow_dispatch:
@@ -81,6 +82,14 @@ jobs:
           tags: allin:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Verify the test image actually has the tests directory inside it before
+      # pytest runs. If this `ls` errors, the .dockerignore is still excluding
+      # tests/ (or the COPY layer is stale-cached from a prior build).
+      - name: Verify tests/ present in image
+        run: |
+          docker run --rm --entrypoint sh allin:test -c \
+            'ls -la /app/backend/bot/tests/ | head -20'
 
       # Run pytest INSIDE the image. This is the closest thing to staging we
       # have: the image-under-test extends the same base layers as the image
