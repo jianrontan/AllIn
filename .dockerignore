@@ -43,5 +43,8 @@ backend/bot/analysis/training_curve
 backend/bot/analysis/archive
 backend/bot/perf_baseline.pkl
 
-# Tests aren't needed at runtime
-backend/bot/tests
+# NOTE: backend/bot/tests USED to be excluded (prod doesn't need it). Now that
+# the Dockerfile has a multi-stage `test` target consumed by CI (the test image
+# extends the base + runs pytest), the tests must be present in the image. Size
+# cost is ~1.7MB -- negligible. The prod image still carries them; gunicorn
+# never invokes pytest so there's no runtime impact.
