@@ -48,19 +48,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The baked postflop tables (~127MB turn, ~5MB flop) aren't in git. CI
-      # pulls them from the pinned GitHub Release. If the release doesn't have
-      # them attached, this step fails with a clear error -- upload them with:
-      #   gh release upload v1.0.0 backend/bot/analysis/abstractions/postflop_table_*.npz
-      - name: Fetch baked postflop tables from release
+      # Three large artifacts aren't in git -- the baked postflop tables (~127MB
+      # turn, ~5MB flop) and the trained blueprint DB (~37MB). CI pulls all
+      # three from the pinned GitHub Release. Upload with:
+      #   gh release upload v1.0.0 \
+      #     backend/bot/analysis/abstractions/postflop_table_flop.npz \
+      #     backend/bot/analysis/abstractions/postflop_table_turn.npz \
+      #     backend/bot/analysis/blueprints/blueprint_final.db
+      - name: Fetch baked postflop tables + blueprint from release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p backend/bot/analysis/abstractions/
+          mkdir -p backend/bot/analysis/blueprints/
           gh release download "$POSTFLOP_TABLES_RELEASE" \
-            -p "postflop_table_flop.npz" -p "postflop_table_turn.npz" \
-            -D backend/bot/analysis/abstractions/
-          ls -lh backend/bot/analysis/abstractions/postflop_table_*.npz
+            -p "postflop_table_flop.npz" \
+            -p "postflop_table_turn.npz" \
+            -p "blueprint_final.db" \
+            -D /tmp/release-assets/
+          mv /tmp/release-assets/postflop_table_*.npz \
+            backend/bot/analysis/abstractions/
+          mv /tmp/release-assets/blueprint_final.db \
+            backend/bot/analysis/blueprints/
+          ls -lh backend/bot/analysis/abstractions/postflop_table_*.npz \
+                 backend/bot/analysis/blueprints/blueprint_final.db
 
       - name: Derive short SHA
         id: meta
