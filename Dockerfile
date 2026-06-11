@@ -56,6 +56,22 @@ COPY backend/ /app/backend/
 # and .npz data files don't accidentally become executable.
 RUN chmod -R a+rX /app/backend/
 
+# Switch the embedded blueprint from WAL to DELETE journal mode. The training
+# process uses WAL so it can read-while-write during checkpoints; in prod
+# nothing ever writes, and WAL mode makes SQLite require write access to the
+# DB's directory (to create/manage the -wal/-shm sidecars) even when we open
+# with `mode=ro`. That fails under `USER allin` and bricks the deploy. Doing
+# the conversion at BUILD time (as root, before USER allin) leaves the local
+# blueprint file on the developer's disk untouched -- only the image copy is
+# converted. `wal_checkpoint(TRUNCATE)` first to flush any pending WAL data,
+# then PRAGMA journal_mode=DELETE to remove the WAL flag from the header.
+RUN python -c "import sqlite3; \
+    p = '/app/backend/bot/analysis/blueprints/blueprint_final.db'; \
+    c = sqlite3.connect(p); \
+    c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); \
+    print('journal_mode:', c.execute('PRAGMA journal_mode=DELETE').fetchone()); \
+    c.commit(); c.close()"
+
 
 # === TEST STAGE — base + dev deps; used by CI only ===
 # Extends base so the test environment is bit-identical to prod for all prod
