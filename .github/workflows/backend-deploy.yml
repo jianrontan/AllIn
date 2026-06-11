@@ -70,6 +70,13 @@ jobs:
             backend/bot/analysis/abstractions/
           mv /tmp/release-assets/blueprint_final.db \
             backend/bot/analysis/blueprints/
+          # gh release download creates files with restrictive perms (0600).
+          # The Dockerfile's `USER allin` runs gunicorn as UID 10001, which
+          # can't open a root-only file COPY'd in. Make these world-readable
+          # so the non-root container user can load them. (The local docker
+          # build doesn't hit this because the file's local perms are 0644.)
+          chmod a+r backend/bot/analysis/abstractions/postflop_table_*.npz \
+                    backend/bot/analysis/blueprints/blueprint_final.db
           ls -lh backend/bot/analysis/abstractions/postflop_table_*.npz \
                  backend/bot/analysis/blueprints/blueprint_final.db
 
@@ -158,10 +165,23 @@ jobs:
       # before any later step can print them and (b) swallow the
       # create-container-service-deployment response (which would echo them).
       - name: Update Lightsail deployment
+        id: deploy
         run: |
           set -e
           NEW_IMAGE="${ECR_REGISTRY}/${ECR_REPO}:${{ steps.meta.outputs.sha }}"
           NEW_SHA="${{ steps.meta.outputs.sha }}"
+
+          # Record the CURRENT version before the new deployment. Lightsail
+          # keeps the old `currentDeployment` serving traffic until the new one
+          # becomes healthy, then increments `currentDeployment.version`. The
+          # wait step below polls for version > old_version so we know the
+          # NEW deployment is live (not just that the old one is still ACTIVE).
+          OLD_VERSION=$(aws lightsail get-container-services \
+            --service-name "$LIGHTSAIL_SERVICE" \
+            --query "containerServices[0].currentDeployment.version" \
+            --output text)
+          echo "old_version=$OLD_VERSION" >> $GITHUB_OUTPUT
+          echo "Pre-deploy currentDeployment.version=$OLD_VERSION"
 
           aws lightsail get-container-services \
             --service-name "$LIGHTSAIL_SERVICE" \
@@ -202,38 +222,57 @@ jobs:
           # cat.
           rm -f current.json containers.json endpoint.json
 
-      # Poll until Lightsail reports the new deployment ACTIVE. The previous
-      # version keeps serving traffic until the new one is healthy; if the new
-      # one fails health checks, Lightsail rolls back automatically and
-      # currentDeployment.state moves to FAILED, which we surface as a CI fail.
-      - name: Wait for deployment ACTIVE
+      # Poll until the NEW deployment is promoted to currentDeployment. Lightsail
+      # rolls deploys atomically: the previous deployment keeps serving traffic
+      # in `currentDeployment` while the new one rolls out under `nextDeployment`,
+      # then version increments + currentDeployment swaps once the new container
+      # passes its health check. We watch for that version bump rather than
+      # currentDeployment.state -- the old deployment's state is already ACTIVE
+      # the whole time so state alone is the wrong signal (caught this the hard
+      # way on the first CI run).
+      - name: Wait for new deployment to roll
         run: |
+          OLD_VERSION="${{ steps.deploy.outputs.old_version }}"
+          echo "Waiting for currentDeployment.version > $OLD_VERSION ..."
           for i in $(seq 1 60); do
             sleep 10
+            VERSION=$(aws lightsail get-container-services \
+              --service-name "$LIGHTSAIL_SERVICE" \
+              --query "containerServices[0].currentDeployment.version" \
+              --output text)
             STATE=$(aws lightsail get-container-services \
               --service-name "$LIGHTSAIL_SERVICE" \
               --query "containerServices[0].currentDeployment.state" \
               --output text)
-            echo "[$i/60] deployment.state=$STATE"
-            if [ "$STATE" = "ACTIVE" ]; then
+            echo "[$i/60] currentDeployment.version=$VERSION state=$STATE"
+            if [ "$VERSION" -gt "$OLD_VERSION" ] && [ "$STATE" = "ACTIVE" ]; then
+              echo "New deployment promoted to current"
               exit 0
             fi
-            if [ "$STATE" = "FAILED" ]; then
-              echo "::error::Lightsail deployment FAILED"
+            # If a NEW nextDeployment is FAILED, Lightsail rolls back -- which
+            # means currentDeployment.version stays at OLD_VERSION forever. Detect
+            # this explicitly and surface the failure.
+            NEXT_STATE=$(aws lightsail get-container-services \
+              --service-name "$LIGHTSAIL_SERVICE" \
+              --query "containerServices[0].nextDeployment.state" \
+              --output text 2>/dev/null || echo "None")
+            if [ "$NEXT_STATE" = "FAILED" ]; then
+              echo "::error::Lightsail rolled back -- nextDeployment FAILED"
               exit 1
             fi
           done
-          echo "::error::Deployment did not reach ACTIVE within 10 minutes"
+          echo "::error::New deployment did not promote within 10 minutes"
           exit 1
 
-      # Final cross-check: the live /api/healthz must report the same short
-      # SHA we built. Guards against the case where Lightsail says ACTIVE but
-      # somehow stuck on the previous image (cached CDN, edge propagation).
+      # Final cross-check: the live /api/healthz reports the new SHA. By now
+      # Lightsail has flipped traffic, so this should be near-instant -- but
+      # poll for ~30s in case CF's edge briefly serves a stale cached response.
+      # Cache-buster query param sidesteps any HTTP cache.
       - name: Smoke test healthz
         run: |
           for i in $(seq 1 12); do
             sleep 5
-            COMMIT=$(curl -sf https://api-allin.jianrontan.com/api/healthz \
+            COMMIT=$(curl -sf "https://api-allin.jianrontan.com/api/healthz?_t=$(date +%s)" \
               | jq -r '.commit // "unknown"')
             echo "[$i/12] healthz.commit=$COMMIT (expected ${{ steps.meta.outputs.sha }})"
             if [ "$COMMIT" = "${{ steps.meta.outputs.sha }}" ]; then
