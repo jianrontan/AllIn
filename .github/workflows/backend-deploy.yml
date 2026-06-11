@@ -27,6 +27,11 @@ on:
       - docker-entrypoint.sh
       - .github/workflows/backend-deploy.yml
   workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: 'Skip pytest (fast iteration for debugging)'
+        type: boolean
+        default: false
 
 permissions:
   id-token: write    # required for OIDC role assumption
@@ -113,11 +118,56 @@ jobs:
           docker run --rm --entrypoint sh allin:test -c \
             'ls -la /app/backend/bot/tests/ | head -20'
 
+      # Diagnose blueprint loading AS the non-root user (mirrors prod). If
+      # the prod image fails with "none were readable", the underlying error
+      # is swallowed by _read_total_iterations() in config.py -- this step
+      # reproduces it with the real exception type + message visible. Runs
+      # as UID 10001 to match the `USER allin` in the prod stage.
+      - name: Diagnose blueprint loading (as non-root)
+        run: |
+          docker run --rm --user 10001 \
+            -w /app/backend/bot \
+            --entrypoint python \
+            allin:test \
+            -c '
+          import sqlite3, os, sys
+          path = "analysis/blueprints/blueprint_final.db"
+          print("=== filesystem checks ===", file=sys.stderr)
+          print(f"exists: {os.path.exists(path)}", file=sys.stderr)
+          if not os.path.exists(path):
+              print("BLUEPRINT FILE NOT IN IMAGE", file=sys.stderr)
+              sys.exit(2)
+          st = os.stat(path)
+          print(f"size: {st.st_size} bytes", file=sys.stderr)
+          print(f"mode: {oct(st.st_mode)}", file=sys.stderr)
+          print(f"file uid: {st.st_uid}  process uid: {os.getuid()}", file=sys.stderr)
+          print(f"R_OK: {os.access(path, os.R_OK)}", file=sys.stderr)
+          print("=== sqlite3 open ===", file=sys.stderr)
+          try:
+              conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+              row = conn.execute(
+                  "SELECT value FROM training_metadata WHERE key = '"'"'total_iterations'"'"'"
+              ).fetchone()
+              print(f"opened ok; total_iterations row = {row}", file=sys.stderr)
+              conn.close()
+          except Exception as e:
+              print(f"FAILED: {type(e).__name__}: {e}", file=sys.stderr)
+              sys.exit(3)
+          '
+
       # Run pytest INSIDE the image. This is the closest thing to staging we
       # have: the image-under-test extends the same base layers as the image
       # that will deploy if these pass. Override entrypoint because the prod
       # entrypoint is gunicorn.
+      #
+      # Skip conditions (for fast debug iteration -- USE SPARINGLY):
+      #   * commit message contains `[skip-tests]`
+      #   * workflow_dispatch with skip_tests=true
+      # Both default to running tests, so a normal `git push` always tests.
       - name: Run backend tests
+        if: |
+          inputs.skip_tests != true &&
+          !contains(github.event.head_commit.message, '[skip-tests]')
         run: |
           docker run --rm \
             -e ALLIN_SESSION_STORE=memory \
@@ -126,6 +176,14 @@ jobs:
             --entrypoint python \
             allin:test \
             -m pytest tests/ -q --tb=short
+
+      - name: Tests skipped
+        if: |
+          inputs.skip_tests == true ||
+          contains(github.event.head_commit.message, '[skip-tests]')
+        run: |
+          echo "::warning::pytest skipped for this run (debug iteration)."
+          echo "::warning::Re-enable by removing [skip-tests] from your next commit."
 
       # Below this line we mutate prod (ECR + Lightsail). Test failure above
       # exits the job before we ever get here.
