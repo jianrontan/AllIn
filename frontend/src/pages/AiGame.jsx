@@ -622,6 +622,27 @@ function AiGame() {
     const lastBySeat = {};
     for (const e of view.actionLog) lastBySeat[e.seat] = e;
 
+    // Your lifetime P/L line ("You ±X BB (±Y BB/hand) · Z hands"), shown next to
+    // the bot's record. Rendered in both the desktop top bar and the mobile stat
+    // strip, so it's a function (fresh elements per call). netBB is already in BB.
+    const youStat = () => {
+        if (!lifetime) return null;
+        const bb = lifetime.netBB;
+        const hands = lifetime.hands;
+        const rate = hands ? bb / hands : 0;
+        const cls = bb > 0 ? 'text-emerald-400' : bb < 0 ? 'text-rose-400' : 'text-neutral-400';
+        const f = (v, dp) =>
+            `${v > 0 ? '+' : ''}${v.toLocaleString(undefined, { maximumFractionDigits: dp })}`;
+        return (
+            <span className="text-xs tabular-nums text-neutral-400">
+                You <span className={`font-semibold ${cls}`}>{f(bb, 0)} BB</span>
+                <span className="text-neutral-600">
+                    {' '}({f(rate, 2)} BB/hand) · {hands.toLocaleString()} hands
+                </span>
+            </span>
+        );
+    };
+
     return (
         <div className="min-h-screen bg-[radial-gradient(ellipse_at_center,#0c2a1f_0%,#0a0a0a_62%)]">
             {/* Full-bleed: the top bar and side columns reach the screen edges
@@ -639,37 +660,11 @@ function AiGame() {
                             ← Home
                         </Link>
                         <h1 className="text-xl sm:text-2xl font-bold">Play With AI</h1>
-                        {/* Bot — same compact EvCounter, now under the title. */}
+                        {/* Bot record + your lifetime P/L, stacked under the title.
+                            Hidden on phones (they don't fit beside the right-side
+                            cluster); shown there in a full-width strip below the bar. */}
                         <span className="hidden sm:inline mt-1"><EvCounter compact /></span>
-                        {/* You — lifetime P/L across every session this playerId
-                            has ever played. Same compact format as EvCounter
-                            ("Bot ±X BB (±Y BB/hand) · Z hands") for symmetry.
-                            Refreshes after each completed hand. */}
-                        {lifetime && (() => {
-                            // lifetime.netBB is ALREADY in BB (backend stores BB
-                            // directly). Do NOT use fmtBBSigned — that's for chips.
-                            const bb = lifetime.netBB;
-                            const hands = lifetime.hands;
-                            const rate = hands ? bb / hands : 0;
-                            const cls = bb > 0 ? 'text-emerald-400'
-                                : bb < 0 ? 'text-rose-400' : 'text-neutral-400';
-                            const fmtSigned = (v, dp) =>
-                                `${v > 0 ? '+' : ''}${v.toLocaleString(undefined, { maximumFractionDigits: dp })}`;
-                            return (
-                                // hidden below sm, matching the EvCounter line above:
-                                // on a 375px phone the stat lines + the right-side
-                                // cluster (?, Debug, sign-in) don't fit one row.
-                                <span className="hidden sm:inline text-xs tabular-nums text-neutral-400">
-                                    You <span className={`font-semibold ${cls}`}>
-                                        {fmtSigned(bb, 0)} BB
-                                    </span>
-                                    <span className="text-neutral-600">
-                                        {' '}({fmtSigned(rate, 2)} BB/hand) ·{' '}
-                                        {hands.toLocaleString()} hands
-                                    </span>
-                                </span>
-                            );
-                        })()}
+                        {lifetime && <span className="hidden sm:inline">{youStat()}</span>}
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                         <button onClick={() => setShowIntro(true)} title="What is this?"
@@ -687,6 +682,14 @@ function AiGame() {
                         <GoogleSignInButton registered={account?.isRegistered}
                             handle={account?.handle} />
                     </div>
+                </div>
+
+                {/* Mobile-only: the bot's record + your lifetime P/L as a full-width
+                    strip below the top bar (the top bar itself is too cramped on a
+                    phone to fit them beside the sign-in cluster). */}
+                <div className="sm:hidden flex flex-col gap-0.5 mb-4">
+                    <EvCounter compact />
+                    {youStat()}
                 </div>
 
                 <IntroModal open={showIntro} onClose={closeIntro} />
