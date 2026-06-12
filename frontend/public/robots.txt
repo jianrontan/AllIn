@@ -1,0 +1,10 @@
+# https://allin.jianrontan.com/robots.txt
+# Allow all crawlers everywhere except the OAuth callback (auth state in the URL
+# fragment is uninteresting to indexers and accidentally indexing a tokenised
+# URL would be embarrassing).
+
+User-agent: *
+Allow: /
+Disallow: /auth/callback
+
+Sitemap: https://allin.jianrontan.com/sitemap.xml

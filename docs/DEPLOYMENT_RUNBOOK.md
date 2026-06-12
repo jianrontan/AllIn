@@ -345,7 +345,9 @@ the first 1–2 weeks after v1.0:
   (above), publish the keys via Secrets Manager and have the entrypoint fetch on boot.
   Severity: LOW.
 
-- **Uptime monitoring + auto-renew the domain.** UptimeRobot (free) pointed at
-  `/api/healthz`; Cloudflare Registrar auto-renew ON. Both are 5-minute setups that
-  catch the "lapsed silently" failure mode. Severity: LOW (but high-leverage for the
-  cost).
+- ~~**Uptime monitoring + auto-renew the domain.**~~ ✅ **DONE
+  post-launch (2026-06-12).** UptimeRobot free tier (permanent; 50-monitor
+  cap, using 1) pings `https://api-allin.jianrontan.com/api/healthz` every
+  5 min; email alerts on 503/timeout. Public status page at
+  `stats.uptimerobot.com/tzx21x76mt`. Cloudflare Registrar auto-renew is
+  ON.
