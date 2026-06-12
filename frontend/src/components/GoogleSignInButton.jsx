@@ -25,7 +25,11 @@ function GoogleSignInButton({ registered, handle }) {
         return (
             <span className="text-sm text-neutral-400 flex items-center gap-2">
                 <span>
-                    Signed in{handle ? <> as <b className="text-neutral-200">{handle}</b></> : ''}
+                    {/* "Signed in as" prefix is desktop-only; on a phone the top
+                        bar shares a row with the title + ?/Debug, so just the
+                        handle + check keeps it from overflowing. */}
+                    <span className="hidden sm:inline">Signed in{handle ? ' as ' : ''}</span>
+                    {handle && <b className="text-neutral-200">{handle}</b>}
                     <span className="ml-1 text-emerald-500/80" title="ranked-eligible">✓</span>
                 </span>
                 <button onClick={handleSignOut}
@@ -35,21 +39,28 @@ function GoogleSignInButton({ registered, handle }) {
             </span>
         );
     }
+    // The label shortens below sm for the same top-bar-overflow reason.
+    const label = (
+        <>
+            <span className="sm:hidden">Sign in</span>
+            <span className="hidden sm:inline">Sign in with Google</span>
+        </>
+    );
     if (!cognitoConfigured()) {
         return (
             <button disabled
                 title="Google sign-in isn't configured yet (set VITE_COGNITO_DOMAIN and VITE_COGNITO_APP_CLIENT_ID at build time)"
-                className="px-4 py-2 rounded-lg text-sm font-medium border border-neutral-800
+                className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-sm font-medium border border-neutral-800
                            text-neutral-500 opacity-60 cursor-not-allowed">
-                Sign in with Google
+                {label}
             </button>
         );
     }
     return (
         <button onClick={() => { window.location.href = hostedUiUrl(); }}
-            className="px-4 py-2 rounded-lg text-sm font-medium border border-neutral-700
+            className="px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-sm font-medium border border-neutral-700
                        text-neutral-200 hover:bg-neutral-800 transition-colors">
-            Sign in with Google
+            {label}
         </button>
     );
 }

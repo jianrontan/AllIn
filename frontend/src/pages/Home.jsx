@@ -8,7 +8,10 @@ import GoogleSignInButton from "../components/GoogleSignInButton";
 import { getPlayerId, getAccount } from "../api";
 
 function Home() {
-	const [account, setAccount] = useState(null);
+	// Lazy initializer: read the cached account synchronously on FIRST render so
+	// a signed-in user never sees the "Sign in with Google" button flash for a
+	// frame before the effect fires (localStorage reads are cheap + sync).
+	const [account, setAccount] = useState(() => getAccount());
 
 	useEffect(() => {
 		getPlayerId();                       // ensure the anonymous id exists

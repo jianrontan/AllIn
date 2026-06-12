@@ -58,6 +58,11 @@ diagnosing CI failures, dev workflow) — that's in
   can be wiped on restart by some orchestrators.
 - `ALLIN_RIVER_CACHE_BOARDS` — `PostflopV2._RIVER_BOARD_CACHE` cap (default 100k).
   Larger → more memory, faster eval; smaller → less RAM but more recomputation.
+- `ALLIN_SOLVE_PERMITS` / `ALLIN_EXPLORER_PERMITS` — per-process concurrency caps for
+  the live river solver / the explorer's on-demand solve (defaults: `cpu_count - 1`
+  and half that, floored at 1). The solver is anytime CFR, so on a small instance
+  raising the live cap to 2 lets two concurrent solves both finish (slower) instead
+  of one queueing 30s into a 503 — usually the better trade for live play.
 - `ALLIN_DEBUG` — dev server only: `1` (default) enables the Werkzeug debugger, `0` disables.
   Irrelevant under gunicorn/waitress (that code path never runs).
 - `ALLIN_DEV_HOST` / `ALLIN_DEV_PORT` — dev server bind (default `127.0.0.1:5000`).
@@ -321,11 +326,13 @@ the first 1–2 weeks after v1.0:
   into LBR's river decision and run a paired BR/LBR pass. The number we publish in
   `docs/ROADMAP.md` is **stale until this is done.** Severity: HIGH (truth-in-numbers).
 
-- **In-code per-IP rate limits as belt-and-suspenders to the CF edge rules.** v1.0 ships
-  with a CF Rate Limiting rule on `/api/strategy/river-solve`. If we ever discover the raw
-  Lightsail URL leaking into the frontend bundle or external scrapers, the CF rule is
-  bypassable. Add `_rate_limited()` wrapping `/api/strategy/river-solve` and `/api/game/new`
-  (the helper already exists; `/api/player` and `/api/auth/google` use it). Severity: MED.
+- ~~**In-code per-IP rate limits as belt-and-suspenders to the CF edge rules.**~~
+  ✅ **DONE post-launch (2026-06-12).** `/api/game/new` (20/min/IP) and
+  `/api/strategy/river-solve` (10/min/IP) now carry in-code `_rate_limited()`
+  floors, so the raw Lightsail URL is no longer an unprotected path. The same
+  pass added a healthz store-reachability probe (3-strike 503 so a revoked IAM
+  key alerts UptimeRobot) and `ALLIN_SOLVE_PERMITS` / `ALLIN_EXPLORER_PERMITS`
+  env overrides for solver concurrency tuning.
 
 - **Drop the `AmazonDynamoDBFullAccess` policy on `allin-runtime`.** The launch IAM user
   has full DynamoDB rights for speed; tighten to a custom inline policy granting only

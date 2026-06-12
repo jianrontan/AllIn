@@ -2,7 +2,12 @@
 // Single point of contact with the backend. Swapping transport (e.g. to
 // WebSockets later) or the base URL touches only this file.
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000';
+// The localhost fallback is DEV-ONLY: a production bundle built without
+// VITE_API_BASE must not silently point every visitor at localhost (each
+// would "work" on a developer machine and break for everyone else). The
+// production build fails loudly instead -- see the guard in vite.config.js.
+const API_BASE = import.meta.env.VITE_API_BASE
+    || (import.meta.env.DEV ? 'http://localhost:5000' : '');
 
 // The player id this browser owns. Sent with every game request so the backend
 // can verify session ownership (a leaked/guessed session id alone is not enough
@@ -86,11 +91,17 @@ async function request(path, options) {
     try {
         res = await fetch(API_BASE + path, options);
     } catch {
-        throw new Error(`Cannot reach the API server at ${API_BASE}. Is it running?`);
+        // Tag network-level failures so UI copy can stay friendly (the raw
+        // message embeds API_BASE, which reads as broken/leaky on prod).
+        const e = new Error('Could not reach the server. Check your connection and try again.');
+        e.isNetworkError = true;
+        throw e;
     }
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
-        throw new Error(body.error || `Request failed (HTTP ${res.status})`);
+        const e = new Error(body.error || `Request failed (HTTP ${res.status})`);
+        e.status = res.status;
+        throw e;
     }
     return body;
 }

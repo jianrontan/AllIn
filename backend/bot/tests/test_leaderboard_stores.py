@@ -108,7 +108,7 @@ def test_link_account_does_not_set_handle():
     assert r['isRegistered'] and r['handle'] is None and r['providerSub'] == 's'
 
 
-def test_link_account_adopts_canonical_no_sum():
+def test_link_account_merges_anon_stats_on_second_device():
     # First device signs in -> binds + absorbs its own anon history.
     s = InMemoryPlayerStore()
     for _ in range(80):
@@ -116,14 +116,80 @@ def test_link_account_adopts_canonical_no_sum():
     a = s.link_account('dev1', email='a@b.c', auth_provider='google', provider_sub='sub-X')
     assert a['playerId'] == 'dev1' and a['hands'] == 80
     # A SECOND device (own anon history) signs in with the SAME Google sub:
-    # it ADOPTS the canonical account (dev1), its own anon hands are NOT summed.
+    # it ADOPTS the canonical account (dev1) AND merges its own anon stats in
+    # (the non-destructive-upgrade rule: never lose a user's hands).
     for _ in range(5):
         s.record_hand_result('dev2', -1.0)
     adopted = s.link_account('dev2', email='a@b.c', auth_provider='google', provider_sub='sub-X')
-    assert adopted['playerId'] == 'dev1'          # canonical id returned
-    assert adopted['hands'] == 80 and adopted['netBB'] == 120.0   # NOT 85, no sum
-    # dev2's anon row is untouched (still anonymous, not merged/registered)
-    assert s.get('dev2')['hands'] == 5 and not s.get('dev2').get('isRegistered')
+    assert adopted['playerId'] == 'dev1'              # canonical id returned
+    assert adopted['hands'] == 85                     # 80 + 5 merged
+    assert adopted['netBB'] == 115.0                  # 120 + (-5) merged
+    # dev2's anon row is marked merged so it's excluded from leaderboard scans.
+    dev2 = s.get('dev2')
+    assert dev2['merged_into'] == 'dev1' and 'mergedAt' in dev2
+    # Top() already filters merged_into; confirm dev2 is gone from the board.
+    # public_row() redacts the playerId, so assert by row count: pre-merge there
+    # were two qualifying rows (dev1 + dev2), post-merge only one.
+    top = s.top(n=10, min_hands=0)
+    assert len(top) == 1 and top[0]['hands'] == 85
+
+
+def test_link_account_merge_is_idempotent():
+    # A retry of the same sign-in (or a second sign-in on the already-merged
+    # device) must NOT double-add the anon stats to canonical.
+    s = InMemoryPlayerStore()
+    for _ in range(80):
+        s.record_hand_result('dev1', 1.0)
+    s.link_account('dev1', email='a@b.c', auth_provider='google', provider_sub='sub-X')
+    for _ in range(10):
+        s.record_hand_result('dev2', 1.0)
+    a1 = s.link_account('dev2', email='a@b.c', auth_provider='google', provider_sub='sub-X')
+    assert a1['hands'] == 90                          # 80 + 10
+    a2 = s.link_account('dev2', email='a@b.c', auth_provider='google', provider_sub='sub-X')
+    assert a2['hands'] == 90                          # NOT 100; merged_into already set
+
+
+def test_link_account_merge_skips_zero_hands():
+    # A device that signs in WITHOUT having played any anon hands first should
+    # not get a stray merged_into stamp -- nothing to merge, nothing to mark.
+    s = InMemoryPlayerStore()
+    for _ in range(40):
+        s.record_hand_result('dev1', 2.0)
+    s.link_account('dev1', email='a@b.c', auth_provider='google', provider_sub='sub-X')
+    a = s.link_account('dev2', email='a@b.c', auth_provider='google', provider_sub='sub-X')
+    assert a['playerId'] == 'dev1' and a['hands'] == 40 and a['netBB'] == 80.0
+    # dev2 had no row to begin with (no hands played); it stays absent rather
+    # than getting created just to be marked merged.
+    assert s.get('dev2') is None
+
+
+def test_link_account_merge_skips_row_bound_to_different_account():
+    # dev2 is already signed in to a DIFFERENT Google account (own canonical).
+    # Signing in with sub-X on the SAME browser would have hit AccountConflict
+    # in the bind branch, but here we're testing the adopt path: another
+    # provider entirely, and dev2 just HAPPENS to also be a canonical for
+    # provider sub-Y. The "skip merge if dev2.providerSub set" guard prevents
+    # double-counting stats across two separate accounts.
+    s = InMemoryPlayerStore()
+    for _ in range(10):
+        s.record_hand_result('canon-X', 1.0)
+    s.link_account('canon-X', email='x@x.x', auth_provider='google', provider_sub='sub-X')
+    for _ in range(20):
+        s.record_hand_result('dev2', 1.0)
+    s.link_account('dev2', email='y@y.y', auth_provider='google', provider_sub='sub-Y')
+    # Now dev2 has providerSub='sub-Y'. Signing in from dev2 with sub-X must
+    # NOT merge dev2's 20 hands into canon-X (those hands belong to another
+    # account). Implementation actually hits AccountConflict on the bind
+    # branch because canon-X already exists -- but the adopt branch returns
+    # canon-X without merging dev2's stats.
+    adopted = s.link_account('dev2', email='x@x.x', auth_provider='google',
+                             provider_sub='sub-X')
+    assert adopted['playerId'] == 'canon-X'
+    assert adopted['hands'] == 10           # canon-X's 10, NOT 10 + 20
+    # dev2's own account is untouched.
+    dev2 = s.get('dev2')
+    assert dev2['providerSub'] == 'sub-Y' and not dev2.get('merged_into')
+    assert dev2['hands'] == 20
 
 
 def test_link_account_conflict_on_second_account():
@@ -225,6 +291,66 @@ def test_dynamodb_global(dynamo):
     g.record_hand_result(3.0)
     d = g.get()
     assert d['totalHands'] == 1 and d['totalNetBB'] == 3.0 and d['totalPlayers'] == 1
+
+
+def test_dynamodb_link_account_merges_anon_stats(dynamo):
+    # The DDB merge path is the one that runs in prod (TransactWriteItems:
+    # mark anon merged + ADD stats to canonical, atomically). Mirror of the
+    # InMemory test_link_account_merges_anon_stats_on_second_device.
+    players, _ = dynamo
+    for _ in range(80):
+        players.record_hand_result('dev1', 1.5)
+    a = players.link_account('dev1', email='a@b.c', auth_provider='google',
+                             provider_sub='sub-X')
+    assert a['playerId'] == 'dev1' and a['hands'] == 80
+    for _ in range(5):
+        players.record_hand_result('dev2', -1.0)
+    adopted = players.link_account('dev2', email='a@b.c', auth_provider='google',
+                                   provider_sub='sub-X')
+    assert adopted['playerId'] == 'dev1'
+    assert adopted['hands'] == 85 and adopted['netBB'] == 115.0
+    dev2 = players.get('dev2')
+    assert dev2['merged_into'] == 'dev1' and 'mergedAt' in dev2
+
+
+def test_dynamodb_link_account_merge_idempotent(dynamo):
+    # A duplicate sign-in from the already-merged device must not double-add
+    # (the transaction's conditional cancels; the except path swallows it).
+    players, _ = dynamo
+    for _ in range(80):
+        players.record_hand_result('dev1', 1.0)
+    players.link_account('dev1', email='a@b.c', auth_provider='google',
+                         provider_sub='sub-X')
+    for _ in range(10):
+        players.record_hand_result('dev2', 1.0)
+    a1 = players.link_account('dev2', email='a@b.c', auth_provider='google',
+                              provider_sub='sub-X')
+    assert a1['hands'] == 90
+    a2 = players.link_account('dev2', email='a@b.c', auth_provider='google',
+                              provider_sub='sub-X')
+    assert a2['hands'] == 90                       # NOT 100
+
+
+def test_dynamodb_handle_reservation_blocks_second_claim(dynamo):
+    # The reservation item (PK handle#<lower>) is the race-proof uniqueness
+    # layer: a second player claiming the same handle (any case) must get
+    # HandleTaken even though the legacy Scan check also covers this -- the
+    # reservation is what closes the concurrent-claim window.
+    from src.game.player_store import HandleTaken
+    players, _ = dynamo
+    players.create_if_absent('p1')
+    players.upsert_handle('p1', 'Ron')
+    players.create_if_absent('p2')
+    with pytest.raises(HandleTaken):
+        players.upsert_handle('p2', 'ron')         # case-insensitive collision
+    # Re-claiming your OWN handle is idempotent (ownerId condition passes).
+    assert players.upsert_handle('p1', 'Ron')['handle'] == 'Ron'
+    # A rename releases the old reservation, freeing the name for others.
+    players.upsert_handle('p1', 'Ron2')
+    assert players.upsert_handle('p2', 'Ron')['handle'] == 'Ron'
+    # Reservation items never surface on the leaderboard (no hands attribute).
+    board = players.top(n=10, min_hands=0)
+    assert all('handle#' not in (r.get('handle') or '') for r in board)
 
 
 if __name__ == '__main__':

@@ -606,8 +606,11 @@ password. The whole flow rests on three open standards (**OAuth 2.0**,
 7. PlayerStore.link_account(playerId, email=..., authProvider='google',
                               providerSub=token.sub):
      - if a DIFFERENT playerId already has this providerSub (the user signed in
-       on a different browser before), MERGE non-destructively: prefer the
-       higher-hands row's stats onto the surviving row, mark the other merged.
+       on a different browser before), the canonical row (the one already bound
+       to providerSub) is the survivor. This device's anonymous hands+netBB are
+       ADDED into canonical, and the anon row is marked `merged_into=<canonical
+       playerId>` so it's excluded from leaderboards and can't be merged twice.
+       Non-destructive: anon hands carry over instead of being orphaned.
      - else: just add {email, authProvider, providerSub, isRegistered=True}
        to the existing anonymous row. Their handle and lifetime stats survive.
 

@@ -20,6 +20,7 @@ game, identified by a session id. Games are stored as plain dicts
 `make_session_store()` picks the implementation from ALLIN_SESSION_STORE. A
 future RedisSessionStore would implement the same methods and be a drop-in.
 """
+import copy
 import json
 import os
 import threading
@@ -86,9 +87,15 @@ class InMemorySessionStore(SessionStore):
             return data
 
     def put(self, session_id, data):
+        # Deep-copy on write so the store holds a SNAPSHOT, matching the
+        # DynamoDB store's behavior (json.dumps serializes a snapshot there).
+        # Without the copy this stores a live reference to GameSession.data --
+        # any later mutation of the session object would silently leak into
+        # the "persisted" state, a divergence between dev (InMemory) and prod
+        # (DynamoDB) in exactly the kind of aliasing bug that's hard to chase.
         with self._data_guard:
             self._sweep_locked()
-            self._data[session_id] = (time.time() + self._ttl, data)
+            self._data[session_id] = (time.time() + self._ttl, copy.deepcopy(data))
 
     def delete(self, session_id):
         with self._data_guard:

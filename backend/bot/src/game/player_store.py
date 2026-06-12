@@ -145,12 +145,15 @@ class PlayerStore(ABC):
     @abstractmethod
     def link_account(self, player_id, *, email, auth_provider, provider_sub):
         """Resolve the canonical account for `provider_sub` and return its row.
-        If a canonical account already exists, ADOPT it (returning user / new
-        device) WITHOUT merging this device's anonymous row. Otherwise bind THIS
-        device's row to the account (first sign-in absorbs its anon history); raise
-        AccountConflict if this row is already bound to a different account. Does NOT
-        set a username -- the player picks a unique one next. The returned row's
-        playerId is the canonical id the client should adopt."""
+        If a canonical account already exists (returning user on a new device),
+        ADOPT it AND MERGE this device's anonymous hands+netBB into the canonical
+        row, marking the anon row `merged_into=<canonical playerId>` so it's
+        excluded from leaderboards and can't be merged twice (non-destructive
+        upgrade). Otherwise bind THIS device's row to the account (first sign-in
+        absorbs its anon history); raise AccountConflict if this row is already
+        bound to a different account. Does NOT set a username -- the player picks
+        a unique one next. The returned row's playerId is the canonical id the
+        client should adopt."""
 
     # -- concrete helpers (store-agnostic, built on get()) --------------------
     def hand_cap_status(self, player_id):
@@ -240,9 +243,9 @@ class InMemoryPlayerStore(PlayerStore):
     def link_account(self, player_id, *, email, auth_provider, provider_sub):
         with self._lock:
             # ONE canonical account per provider_sub. If it already exists, this is
-            # a returning user (possibly on a new device): ADOPT it as-is -- do NOT
-            # merge/sum this device's anonymous row. The returned row's playerId is
-            # the canonical id the client adopts.
+            # a returning user on a new device: adopt the canonical row AND roll up
+            # this device's anonymous stats into it (non-destructive upgrade). The
+            # returned row's playerId is the canonical id the client adopts.
             canonical_id = next(
                 (pid for pid, row in self._rows.items()
                  if row.get('providerSub') == provider_sub
@@ -252,6 +255,24 @@ class InMemoryPlayerStore(PlayerStore):
                 c = self._rows[canonical_id]
                 c['email'] = email
                 c['lastSeen'] = _now()
+                # Merge this device's anonymous stats into the canonical row, then
+                # mark the anon row merged so it's excluded from leaderboards and
+                # can't be merged twice. Skip if dev2 IS the canonical, already
+                # merged, already bound to an account, or has no hands to add.
+                # Only `hands` and `netBB` move; window_start / hands_in_window
+                # (the rolling 500/hr cap) stay with the canonical row's current
+                # state -- they're rate-limit accounting, not lifetime stats.
+                if player_id != canonical_id:
+                    anon = self._rows.get(player_id)
+                    if (anon
+                            and not anon.get('merged_into')
+                            and not anon.get('providerSub')
+                            and (anon.get('hands') or 0) > 0):
+                        c['hands'] = (c.get('hands') or 0) + (anon.get('hands') or 0)
+                        c['netBB']  = round(
+                            (c.get('netBB') or 0) + (anon.get('netBB') or 0), 2)
+                        anon['merged_into'] = canonical_id
+                        anon['mergedAt']    = _now()
                 return dict(c)
             # First sign-in for this account: bind THIS device's row, so it absorbs
             # the device's anonymous history. Refuse if the row is already bound to a
@@ -332,17 +353,48 @@ class DynamoDBPlayerStore(PlayerStore):
     def upsert_handle(self, player_id, handle):
         handle = validate_handle(handle)
         low = handle.lower()
-        # Uniqueness via scan (launch volume; a handle-reservation item or a GSI on
-        # a lowercased handle is the race-proof upgrade). Reject if another live row
-        # already holds the name.
+        # Uniqueness is enforced in TWO layers:
+        #   1. A legacy Scan over live rows -- covers handles claimed before the
+        #      reservation scheme existed (those have no reservation item).
+        #   2. A RESERVATION item keyed `handle#<lower>` written with a
+        #      conditional Put -- the race-proof layer. Two concurrent claims of
+        #      the same handle race on the conditional; exactly one wins. The
+        #      `#` separator can't appear in either a real playerId
+        #      (_PLAYER_ID_RE at the API layer) or a handle (HANDLE_RE), so
+        #      reservation keys can never collide with player rows, and
+        #      reservation items carry no `hands`/`handle`/`providerSub`
+        #      attributes so every existing Scan filter passes over them.
         for it in self._scan_all(self._Attr('merged_into').not_exists()):
             if it.get('playerId') != player_id and (it.get('handle') or '').lower() == low:
                 raise HandleTaken(handle)
+        prev = self.get(player_id)
+        prev_low = ((prev or {}).get('handle') or '').lower()
+        try:
+            self._table.put_item(
+                Item={'playerId': f'handle#{low}', 'ownerId': player_id},
+                ConditionExpression=(
+                    'attribute_not_exists(playerId) OR ownerId = :me'),
+                ExpressionAttributeValues={':me': player_id})
+        except self._ClientError as e:
+            if e.response.get('Error', {}).get('Code') == 'ConditionalCheckFailedException':
+                raise HandleTaken(handle)
+            raise
         self.create_if_absent(player_id)
         self._table.update_item(
             Key={'playerId': player_id},
             UpdateExpression='SET handle = :h, lastSeen = :now',
             ExpressionAttributeValues={':h': handle, ':now': _now()})
+        # Release the OLD name's reservation on a rename (best-effort: a failure
+        # here leaks one stale reservation -- the old name stays unavailable --
+        # which is annoying but safe; never block the rename on it).
+        if prev_low and prev_low != low:
+            try:
+                self._table.delete_item(
+                    Key={'playerId': f'handle#{prev_low}'},
+                    ConditionExpression='ownerId = :me',
+                    ExpressionAttributeValues={':me': player_id})
+            except self._ClientError:
+                pass
         return self.get(player_id)
 
     def record_hand_result(self, player_id, bb_delta):
@@ -390,8 +442,11 @@ class DynamoDBPlayerStore(PlayerStore):
         return [self.public_row(r) for r in rows[:n]]
 
     def link_account(self, player_id, *, email, auth_provider, provider_sub):
-        # ONE canonical account per provider_sub. If it exists (returning user, maybe
-        # a new device), ADOPT it as-is -- no merge/sum of this device's anon row.
+        from decimal import Decimal
+        # ONE canonical account per provider_sub. If it exists (returning user on
+        # a new device), adopt it AND roll up this device's anonymous stats into
+        # it (non-destructive upgrade -- a user who anon-plays on a phone then
+        # signs in shouldn't lose those hands).
         canon = [self._clean(it) for it in self._scan_all(
             self._Attr('providerSub').eq(provider_sub)
             & self._Attr('merged_into').not_exists())]
@@ -401,6 +456,74 @@ class DynamoDBPlayerStore(PlayerStore):
                 Key={'playerId': c['playerId']},
                 UpdateExpression='SET email = :e, lastSeen = :now',
                 ExpressionAttributeValues={':e': email, ':now': _now()})
+            # Merge this device's anon row into canonical if it qualifies.
+            # Use TransactWriteItems so the two updates (mark merged + bump
+            # canonical) are atomic: either both apply or neither does. This
+            # closes the "mark succeeded but bump failed" partial-failure
+            # window of the prior two-phase implementation, which would have
+            # permanently orphaned the anon row's stats (marked merged with
+            # nothing added to canonical, irrecoverable without manual repair).
+            #
+            # The conditional on the dev2 update (attribute_not_exists(merged_into)
+            # AND attribute_not_exists(providerSub)) protects against double-
+            # merge under concurrent sign-in requests. A second concurrent call
+            # gets TransactionCanceledException and skips silently.
+            #
+            # NOTE: window_start / hands_in_window (the rolling 500/hr cap) are
+            # intentionally NOT transferred. They're rate-limit accounting, not
+            # lifetime stats; merging them would let a user who hit the cap on
+            # one device dodge it by signing in from another. Accepting that the
+            # canonical row's existing window state wins is the correct trade.
+            if player_id != c['playerId']:
+                anon = self.get(player_id)
+                if (anon
+                        and not anon.get('merged_into')
+                        and not anon.get('providerSub')
+                        and (anon.get('hands') or 0) > 0):
+                    # NOTE: self._table.meta.client is the RESOURCE's client,
+                    # which carries boto3's document-level transformer -- it
+                    # takes plain Python values (str/int/Decimal) and
+                    # serializes them itself. Do NOT pass pre-serialized
+                    # {'S': ...} attribute maps here; the transformer would
+                    # re-serialize them as nested maps and the transaction
+                    # fails opaquely with [TypeError, TypeError].
+                    client = self._table.meta.client
+                    table_name = self._table.name
+                    try:
+                        client.transact_write_items(TransactItems=[
+                            {
+                                'Update': {
+                                    'TableName': table_name,
+                                    'Key': {'playerId': player_id},
+                                    'UpdateExpression':
+                                        'SET merged_into = :c, mergedAt = :now',
+                                    'ConditionExpression': (
+                                        'attribute_not_exists(merged_into) AND '
+                                        'attribute_not_exists(providerSub)'),
+                                    'ExpressionAttributeValues': {
+                                        ':c':   c['playerId'],
+                                        ':now': _now(),
+                                    },
+                                }
+                            },
+                            {
+                                'Update': {
+                                    'TableName': table_name,
+                                    'Key': {'playerId': c['playerId']},
+                                    'UpdateExpression': 'ADD hands :h, netBB :n',
+                                    'ExpressionAttributeValues': {
+                                        ':h': int(anon.get('hands') or 0),
+                                        ':n': Decimal(str(anon.get('netBB') or 0)),
+                                    },
+                                }
+                            },
+                        ])
+                    except self._ClientError as e:
+                        code = e.response.get('Error', {}).get('Code', '')
+                        if code != 'TransactionCanceledException':
+                            raise
+                        # Conditional failed in the first update -- already
+                        # merged or already bound. A duplicate call; skip.
             return self.get(c['playerId'])
         # First sign-in: bind THIS device's row (absorbs its anon stats). Refuse if
         # it's already bound to a different account.

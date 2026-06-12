@@ -332,8 +332,9 @@ function AiGame() {
     // double-click can fire two requests before the buttons disable; this blocks
     // the second immediately (and avoids the server's spurious 409 banner).
     const inFlight = useRef(false);
-    // Identity + first-visit popup + optional login nudge.
-    const [account, setAccountState] = useState(null);
+    // Identity + first-visit popup + optional login nudge. Lazy initializer so
+    // the signed-in chip renders on the first frame (no "Sign in" flash).
+    const [account, setAccountState] = useState(() => getAccount());
     const [showIntro, setShowIntro] = useState(false);
     const [showLogin, setShowLogin] = useState(false);
     // Leave-this-hand confirm overlay (driven by the navigation blocker below).
@@ -559,7 +560,20 @@ function AiGame() {
                             bg-[radial-gradient(ellipse_at_center,#0c2a1f_0%,#0a0a0a_72%)]">
                 <h1 className="text-2xl font-bold mb-2">Play With AI</h1>
                 {error
-                    ? <p className="text-rose-400">{error}</p>
+                    ? (
+                        <>
+                            <p className="text-rose-400">{error}</p>
+                            {/* Without a retry the only escape from a failed first
+                                deal (backend cold/degraded/transient) is leaving --
+                                the kind of dead-end a first-time visitor bounces off. */}
+                            <button onClick={startSession} disabled={busy}
+                                className="mt-4 px-5 py-2 rounded-lg bg-neutral-800
+                                           text-neutral-200 hover:bg-neutral-700
+                                           disabled:opacity-50 text-sm font-medium">
+                                Try again
+                            </button>
+                        </>
+                    )
                     : <p className="text-neutral-400">Dealing…</p>}
                 <Link to="/" className="mt-4 text-sm text-amber-400 hover:text-amber-300">
                     ← Home
@@ -642,7 +656,10 @@ function AiGame() {
                             const fmtSigned = (v, dp) =>
                                 `${v > 0 ? '+' : ''}${v.toLocaleString(undefined, { maximumFractionDigits: dp })}`;
                             return (
-                                <span className="text-xs tabular-nums text-neutral-400">
+                                // hidden below sm, matching the EvCounter line above:
+                                // on a 375px phone the stat lines + the right-side
+                                // cluster (?, Debug, sign-in) don't fit one row.
+                                <span className="hidden sm:inline text-xs tabular-nums text-neutral-400">
                                     You <span className={`font-semibold ${cls}`}>
                                         {fmtSigned(bb, 0)} BB
                                     </span>
@@ -876,7 +893,24 @@ function AiGame() {
                     )}
 
                     {!handOver && !yourTurn && (
-                        <div className="text-neutral-500 text-sm py-2">Bot is acting…</div>
+                        <div className="text-neutral-500 text-sm py-2">
+                            Bot is acting…
+                            {/* With no request in flight, "bot to act" is a STUCK
+                                state -- the drive loop normally only stops on your
+                                turn or hand over. It happens if the loop's guard
+                                cap trips or a response was lost. Continue DRIVES
+                                the pending bot turn(s) (a plain state re-fetch
+                                would return the same stuck state). */}
+                            {!busy && !thinking && (
+                                <button
+                                    onClick={() => run(() => sendBotAction(view.sessionId))}
+                                    className="ml-2 px-2 py-0.5 rounded bg-neutral-800
+                                               text-neutral-300 hover:bg-neutral-700
+                                               text-xs align-middle">
+                                    Continue
+                                </button>
+                            )}
+                        </div>
                     )}
 
                     {/* Action grid: 3 columns on mobile/tablet (the aside is full

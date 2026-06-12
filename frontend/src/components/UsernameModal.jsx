@@ -12,6 +12,14 @@ function UsernameModal({ open, suggested, onSaved, onSkip }) {
     const [err, setErr] = useState(null);
     // Re-seed the field when a new suggestion arrives (e.g. after sign-in resolves).
     React.useEffect(() => { if (open) setValue(suggested || ''); }, [open, suggested]);
+    // Escape = the explicit "Skip for now" button (the modal already has a skip
+    // path; keyboard users shouldn't be trapped without one).
+    React.useEffect(() => {
+        if (!open) return;
+        const onKey = (e) => { if (e.key === 'Escape') onSkip?.(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [open, onSkip]);
     if (!open) return null;
 
     const save = async () => {
@@ -29,8 +37,11 @@ function UsernameModal({ open, suggested, onSaved, onSkip }) {
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4">
-            <div className="w-full max-w-sm rounded-2xl border border-amber-600/40
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
+            onClick={() => onSkip?.()}>
+            <div role="dialog" aria-modal="true" aria-label="Choose a username"
+                onClick={(e) => e.stopPropagation()}
+                className="w-full max-w-sm rounded-2xl border border-amber-600/40
                             bg-neutral-900 p-6 shadow-2xl">
                 <h2 className="text-lg font-bold text-amber-300 mb-1">Choose a username</h2>
                 <p className="text-xs text-neutral-500 mb-4">

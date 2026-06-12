@@ -58,7 +58,8 @@ from bot.src.subgame.river_tree import is_sized, sized_chips
 # deployment fails opaquely with no signal. Now the import survives, every
 # strategy/game endpoint 503s with a clear "blueprint not loaded" reason, and
 # /api/healthz exposes the load error for ops.
-_BLUEPRINT_LOAD_ERROR = None
+_BLUEPRINT_LOAD_ERROR = None         # full detail -- logs only, never a response
+_BLUEPRINT_LOAD_ERROR_PUBLIC = None  # exception TYPE only -- safe for healthz
 _BLUEPRINT_PATH = None
 BLUEPRINT_DB = None
 BLUEPRINT_MENU_MODE = 'control'
@@ -69,6 +70,11 @@ try:
     BLUEPRINT_MENU_MODE = db_menu_mode(BLUEPRINT_DB)
 except Exception as _bp_err:
     _BLUEPRINT_LOAD_ERROR = f"{type(_bp_err).__name__}: {_bp_err}"
+    # The full message can embed container filesystem paths (e.g. a
+    # FileNotFoundError's path) -- keep those in the server logs, expose only
+    # the exception type on the public healthz endpoint.
+    _BLUEPRINT_LOAD_ERROR_PUBLIC = (
+        f"blueprint failed to load ({type(_bp_err).__name__}); see server logs")
     _LOG.error("blueprint load failed; serving in degraded mode (healthz=503): %s",
                _BLUEPRINT_LOAD_ERROR)
 # Postflop action-translation grid for the SERVED blueprint's menu (capped adds the
@@ -139,12 +145,29 @@ HANDS = make_hand_store()
 # core and stall the whole server. This BoundedSemaphore caps how many bot turns
 # run a solve at once PER PROCESS (under gunicorn, total = workers x this). Sized
 # to leave one core free. Acquired around advance_bot_turns (see _run_bot).
-_SOLVE_PERMITS = max(1, (os.cpu_count() or 2) - 1)
+#
+# ALLIN_SOLVE_PERMITS overrides the cpu-derived default. On a small container
+# (Lightsail Micro: fractional vCPU but cpu_count() reports the host's cores)
+# the auto-derived number can be wrong in either direction; the override lets
+# ops tune concurrency-vs-latency without a code change. The solver is anytime
+# CFR (returns its best answer at the time budget), so 2 concurrent solves on
+# one core both finish slower rather than one of them 503ing -- usually the
+# better trade for live play.
+def _permits_from_env(var, default):
+    try:
+        v = int(os.environ.get(var, ''))
+        return max(1, v)
+    except ValueError:
+        return default
+_SOLVE_PERMITS = _permits_from_env(
+    'ALLIN_SOLVE_PERMITS', max(1, (os.cpu_count() or 2) - 1))
 _SOLVE_SEMAPHORE = threading.BoundedSemaphore(_SOLVE_PERMITS)
-# The explorer's on-demand river solve (ungated, unauthenticated, up to 8s each)
-# gets a SEPARATE, smaller pool so a burst of /api/strategy/river-solve can't hold
-# every permit and starve live gameplay (which uses _SOLVE_SEMAPHORE).
-_EXPLORER_PERMITS = max(1, _SOLVE_PERMITS // 2)
+# The explorer's on-demand river solve (rate-limited per IP but unauthenticated,
+# up to 8s each) gets a SEPARATE, smaller pool so a burst of
+# /api/strategy/river-solve can't hold every permit and starve live gameplay
+# (which uses _SOLVE_SEMAPHORE).
+_EXPLORER_PERMITS = _permits_from_env(
+    'ALLIN_EXPLORER_PERMITS', max(1, _SOLVE_PERMITS // 2))
 _EXPLORER_SEMAPHORE = threading.BoundedSemaphore(_EXPLORER_PERMITS)
 # How long a request will wait for a solve permit before giving up with 503.
 _SOLVE_WAIT_SECONDS = 30.0
@@ -757,6 +780,12 @@ def strategy_river_solve():
     realized river path all come from that replay. Bets are full-custom-sized and
     snapped onto the trained grid exactly as the live bot does.
     """
+    # Per-IP floor: each solve burns up to ~8s of CPU on a small box, making
+    # this the cheapest CPU-DoS pivot on the API. The Cloudflare edge rule
+    # (5/10s) is the primary fence; this floor holds if CF is bypassed via the
+    # raw Lightsail URL. A human exploring spots clicks a few times a minute.
+    if _rate_limited('river_solve', _client_ip(), limit=10, window_seconds=60):
+        return jsonify({"error": "too many solver requests — slow down"}), 429
     data = request.get_json(silent=True) or {}
     hole = [c for c in data.get('holeCards', []) if c]
     community_in = [c for c in data.get('communityCards', []) if c]
@@ -989,12 +1018,23 @@ def _resolve_abandoned(session):
     _record_hand_end(session, pre_status, pre_net)
 
 
-def _sweep_once():
-    """One inactivity-sweep pass: resolve every in-hand session whose deadline has
-    passed. Idempotent and lock-guarded so concurrent sweepers (one per gunicorn
-    worker) and a racing request can't double-resolve a hand."""
+def _sweep_once(max_resolved=20):
+    """One inactivity-sweep pass: resolve in-hand sessions whose deadline has
+    passed, up to `max_resolved` per pass. Idempotent and lock-guarded so
+    concurrent sweepers (one per gunicorn worker) and a racing request can't
+    double-resolve a hand.
+
+    The per-pass cap bounds worst-case sweep duration: resolving an abandoned
+    session can run a bot turn (a river solve, seconds of CPU, competing for
+    the same solve permit as live traffic) UNDER that session's lock. Without
+    a cap, a pile of abandoned sessions (e.g. after a burst of visitors) makes
+    one pass run for minutes; the leftovers just resolve on later passes
+    (interval is _SWEEP_INTERVAL_SECONDS)."""
     now = time.time()
+    resolved = 0
     for sid, data in SESSIONS.iter_active():
+        if resolved >= max_resolved:
+            break
         # Cheap pre-filter on the snapshot before taking the lock.
         dl = data.get('inactivity_deadline')
         if dl is None or now <= dl or data.get('status') != 'in_hand':
@@ -1012,6 +1052,7 @@ def _sweep_once():
                     fresh, strategy_fn=BOT_RANGE_FN, menu_mode=BLUEPRINT_MENU_MODE)
                 _resolve_abandoned(session)
                 _persist(session)
+                resolved += 1
                 _LOG.info("auto-resolved abandoned hand (session %s)", sid)
         except (GameError, SessionLockTimeout, TimeoutError):
             _LOG.warning("inactivity sweep could not resolve session %s", sid,
@@ -1072,6 +1113,12 @@ def _valid_player_id(pid):
 # floor for the "no Cloudflare in front yet" early-launch window.
 _RATE_LIMITS = {}                         # (route, key) -> [count, window_start_epoch]
 _RATE_LIMITS_LOCK = threading.Lock()
+# Prune lapsed windows once the dict grows past this, so a stream of fresh
+# keys (one per rotating UUID / spoofed IP) can't grow the dict unboundedly
+# (~120 bytes per entry, forever, per worker). The prune is O(n) but amortized:
+# it only runs when the size threshold is crossed, and removes every entry
+# whose window has lapsed (those can never influence a future decision).
+_RATE_LIMITS_MAX = 10_000
 
 
 def _rate_limited(route, key, *, limit, window_seconds):
@@ -1080,6 +1127,13 @@ def _rate_limited(route, key, *, limit, window_seconds):
     with _RATE_LIMITS_LOCK:
         entry = _RATE_LIMITS.get((route, key))
         if entry is None or now - entry[1] >= window_seconds:
+            if len(_RATE_LIMITS) >= _RATE_LIMITS_MAX:
+                # Window starts are at most `window_seconds` old for any entry
+                # still in force; anything older is dead weight. 2x slack so a
+                # caller-specific longer window (none today) stays safe.
+                cutoff = now - 2 * max(window_seconds, 60)
+                for k in [k for k, v in _RATE_LIMITS.items() if v[1] < cutoff]:
+                    del _RATE_LIMITS[k]
             _RATE_LIMITS[(route, key)] = [1, now]
             return False
         entry[0] += 1
@@ -1116,6 +1170,13 @@ def _hand_cap_response(player_id):
 @app.route('/api/game/new', methods=['POST'])
 def game_new():
     """Start a new game session and deal the first hand."""
+    # Per-IP floor (belt-and-suspenders to the Cloudflare edge rule, and the
+    # only fence if the raw Lightsail URL is hit directly): a rotating-UUID
+    # loop would otherwise mint a fresh player row + bump totalPlayers on the
+    # public /api/stats ticker every call. A real player starts a handful of
+    # sessions per hour at most.
+    if _rate_limited('game_new', _client_ip(), limit=20, window_seconds=60):
+        return jsonify({"error": "too many new games — slow down"}), 429
     data = request.get_json(silent=True) or {}
     raw_pid = data.get('playerId')
     # Mint a fresh UUID if the client didn't send one OR sent garbage. Don't
@@ -1269,8 +1330,12 @@ _STATS_CACHE = {'data': None, 'ts': 0.0}
 _STATS_TTL_SECONDS = 5.0          # /api/stats is polled ~every 30s by every client
 # /api/leaderboard does a full table Scan; cache per (n,min_hands,accounts_only)
 # so an unauthenticated burst can't amplify into O(table) Scans every request.
+# min_hands is snapped to this menu (largest entry <= requested) BOTH so the
+# cache keyspace is bounded and so off-menu values can't bypass the cache and
+# turn into per-request table Scans.
 _LEADERBOARD_CACHE = {}           # params-tuple -> (ts, payload)
 _LEADERBOARD_TTL_SECONDS = 10.0
+_MIN_HANDS_MENU = (0, 10, 50, 100, 500, 1000)
 
 
 def _player_public_self(row):
@@ -1319,7 +1384,14 @@ def leaderboard():
         except (TypeError, ValueError):
             return default
     n = _int('n', 10, 1, 100)
-    min_hands = _int('min_hands', 50, 0, 10 ** 9)
+    # Snap min_hands to a small menu. Functionally the board only ever renders a
+    # handful of cuts; mechanically this bounds the cache keyspace -- an
+    # unconstrained integer (0..1e9) would let a curl loop mint a fresh cache
+    # entry per request and grow _LEADERBOARD_CACHE without limit (each entry
+    # holds a full top-N payload). 200 keys max with the menu (100 n x 6 x 2...
+    # n is also part of the key, so 100*6*2 = 1200 entries worst case, ~1 MB).
+    raw_min_hands = _int('min_hands', 50, 0, 10 ** 9)
+    min_hands = max((m for m in _MIN_HANDS_MENU if m <= raw_min_hands), default=0)
     accounts_only = request.args.get('accounts_only', '').lower() in ('1', 'true', 'yes')
     ck = (n, min_hands, accounts_only)
     now = time.time()
@@ -1390,8 +1462,9 @@ def auth_google():
 
     One account per Google `sub`: a returning user (even on a new device) ADOPTS
     the existing account (the response's `playerId` is the canonical id the client
-    must adopt); a first sign-in binds this browser's row, absorbing its anonymous
-    history. The client then sets a unique username if `usernameSet` is false
+    must adopt) AND has this device's anonymous hands+netBB merged into the
+    canonical row (non-destructive); a first sign-in binds this browser's row,
+    absorbing its anonymous history. The client then sets a unique username if `usernameSet` is false
     (`suggestedHandle` pre-fills the prompt). 503 unconfigured, 401 bad/unverified
     token, 403 if this browser is already bound to a different account.
     """
@@ -1456,24 +1529,68 @@ def _postflop_table_status():
             for street in ('flop', 'turn')}
 
 
+# Store-reachability probe for healthz. Without this, a revoked/expired IAM key
+# leaves healthz green while every game write 500s -- UptimeRobot stays quiet
+# and the outage goes unnoticed (boto3 constructs its client lazily, so the
+# import-time path can't catch it). The probe is a single cheap GetItem on a
+# key that never exists.
+#
+# Failure policy: THREE consecutive failed probes flip healthz to 503. One
+# blip (a throttle, a transient network error) must NOT flip it -- Lightsail's
+# health check consumes healthz, and a flapping 503 would restart the
+# container, which doesn't fix a broken store and adds churn. With the 30s
+# probe cache, 3 strikes ≈ a sustained ~90s outage before we go red.
+_STORE_PROBE = {'ts': 0.0, 'ok': True, 'strikes': 0}
+_STORE_PROBE_TTL_SECONDS = 30.0
+_STORE_PROBE_STRIKES_TO_FAIL = 3
+_STORE_PROBE_LOCK = threading.Lock()
+
+
+def _stores_ok():
+    """True while the player store answers reads (cached ~30s, 3-strike)."""
+    now = time.time()
+    with _STORE_PROBE_LOCK:
+        if now - _STORE_PROBE['ts'] < _STORE_PROBE_TTL_SECONDS:
+            return _STORE_PROBE['ok'] or \
+                _STORE_PROBE['strikes'] < _STORE_PROBE_STRIKES_TO_FAIL
+        _STORE_PROBE['ts'] = now
+    try:
+        # GetItem on a key that never exists: exercises credentials + table
+        # reachability for ~free. ('#' can't appear in a real playerId.)
+        PLAYERS.get('healthz#probe')
+        probe_ok = True
+    except Exception:
+        _LOG.warning("healthz store probe failed", exc_info=True)
+        probe_ok = False
+    with _STORE_PROBE_LOCK:
+        _STORE_PROBE['ok'] = probe_ok
+        _STORE_PROBE['strikes'] = 0 if probe_ok else _STORE_PROBE['strikes'] + 1
+        return probe_ok or _STORE_PROBE['strikes'] < _STORE_PROBE_STRIKES_TO_FAIL
+
+
 def _health_payload():
     if _BLUEPRINT_LOAD_ERROR is not None:
         # Degraded: blueprint failed to load at import. /api/healthz returns 503
-        # with the reason so a rolling-deploy probe correctly fails AND ops sees
-        # the cause (instead of an opaque CrashLoopBackOff with no signal).
+        # with the exception TYPE so a rolling-deploy probe correctly fails AND
+        # ops gets a pointer (the full message -- which can embed container
+        # filesystem paths -- stays in the server logs only).
         return {
             "status": "degraded",
-            "error": _BLUEPRINT_LOAD_ERROR,
+            "error": _BLUEPRINT_LOAD_ERROR_PUBLIC,
             "blueprint": None,
             "sessionStore": type(SESSIONS).__name__,
             "commit": os.environ.get('ALLIN_GIT_SHA'),
         }
+    stores_ok = _stores_ok()
     return {
-        "status": "ok",
+        "status": "ok" if stores_ok else "degraded",
+        **({} if stores_ok else
+           {"error": "player store unreachable (see server logs)"}),
         "blueprint": _BLUEPRINT_PATH.name,
         "iterations": BLUEPRINT_DB.get_metadata('total_iterations', 0),
         "postflopTables": _postflop_table_status(),
         "sessionStore": type(SESSIONS).__name__,
+        "storesOk": stores_ok,
         "debugOverlay": _DEBUG_OVERLAY,
         # River safe-gadget policy + purification threshold actually in force on the served
         # bot -- so a deploy can confirm them without reading the code. None in degraded
@@ -1490,9 +1607,11 @@ def _health_payload():
 def test():
     """Health/diagnostics for the load balancer + a quick manual check. The
     /api/healthz alias is the rolling-deploy probe. Returns 503 (not 200) when
-    the blueprint failed to load, so Lightsail rolling-deploy correctly aborts."""
+    the blueprint failed to load OR the player store has failed 3 consecutive
+    probes (sustained ~90s outage; see _stores_ok), so Lightsail rolling-deploy
+    aborts and UptimeRobot alerts."""
     payload = _health_payload()
-    status = 503 if _BLUEPRINT_LOAD_ERROR is not None else 200
+    status = 200 if payload.get("status") == "ok" else 503
     return jsonify(payload), status
 
 

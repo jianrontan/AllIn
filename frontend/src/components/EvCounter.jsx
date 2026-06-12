@@ -12,12 +12,13 @@ const fmtRate = (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)}`;   // BB/hand, 2 dp
 
 function EvCounter({ compact = false }) {
     const [stats, setStats] = useState(null);
-    const [err, setErr] = useState(false);
 
     useEffect(() => {
         let alive = true;
+        // Errors are swallowed: the card renders dashes until a poll succeeds
+        // (see the comment below) and the 60s interval keeps retrying.
         const tick = () => getStats().then((s) => alive && setStats(s))
-            .catch(() => alive && setErr(true));
+            .catch(() => {});
         tick();
         // 60s poll. The counter is a slow-moving lifetime stat (the bot's record
         // vs the field is not seconds-sensitive), and the backend's per-worker
@@ -29,11 +30,11 @@ function EvCounter({ compact = false }) {
         return () => { alive = false; clearInterval(id); };
     }, []);
 
-    if (err && !stats) return null;            // stay invisible if the API is down
-
-    // Render the card template immediately; until stats arrive, show a dash in
-    // each numeric slot instead of a "Loading…" line, so the layout doesn't shift
-    // when returning to the page (the values just fill in a moment later).
+    // Render the card template even while the API is down: the numeric slots
+    // show dashes (the same as the loading state) rather than the whole card
+    // vanishing -- a disappeared element reads as "broken page" where a dashed
+    // one reads as "loading". The 60s poll keeps retrying, so a transient
+    // outage self-heals in place.
     const loading = !stats;
     const hands = Number(stats?.totalHands) || 0;
     const players = Number(stats?.totalPlayers) || 0;

@@ -54,11 +54,12 @@ jobs:
 
       # Three large artifacts aren't in git -- the baked postflop tables (~127MB
       # turn, ~5MB flop) and the trained blueprint DB (~37MB). CI pulls all
-      # three from the pinned GitHub Release. Upload with:
-      #   gh release upload v1.0.0 \
+      # three from the release named by POSTFLOP_TABLES_RELEASE above (the
+      # assets release, NOT the project version tag). Upload replacements with:
+      #   gh release upload assets-v1 \
       #     backend/bot/analysis/abstractions/postflop_table_flop.npz \
       #     backend/bot/analysis/abstractions/postflop_table_turn.npz \
-      #     backend/bot/analysis/blueprints/blueprint_final.db
+      #     backend/bot/analysis/blueprints/blueprint_final.db --clobber
       - name: Fetch baked postflop tables + blueprint from release
         env:
           GH_TOKEN: ${{ github.token }}
