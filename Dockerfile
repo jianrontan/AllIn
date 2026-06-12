@@ -101,10 +101,23 @@ FROM base AS prod
 # public artifact must not ship it even if the Lightsail env var is forgotten. The
 # strategy_api.py CODE default stays ON for local dev (`python strategy_api.py`); a
 # local container that wants the overlay can `docker run -e ALLIN_DEBUG_OVERLAY=1`.
+# ALLIN_MAX_REQUESTS: gunicorn's per-worker recycle threshold. The entrypoint
+# default used to be 500, which sounds generous until you count health checks:
+# Lightsail's LB probes /api/healthz every 5s from 3 addresses (~36 req/min),
+# burning 500 in ~15-30 min per worker. Each recycle re-imports the whole app
+# (blueprint + 127MB postflop table) on a fractional vCPU, pinning the CPU for
+# tens of seconds and stalling the OTHER worker's in-flight game requests --
+# observed as intermittent ~10s non-river actions with a single player. 50000
+# recycles roughly daily, which is still plenty for leak hygiene.
+# ALLIN_RIVER_CACHE_BOARDS: with workers now long-lived, bound the one cache
+# that grows (river-board equity LRU): 20k boards ~= 52MB/worker vs the 100k
+# default's ~260MB -- the right trade on a 1GB instance with 2 workers.
 ENV PYTHONUNBUFFERED=1 \
     ALLIN_LOG_LEVEL=INFO \
     ALLIN_SESSION_STORE=memory \
-    ALLIN_DEBUG_OVERLAY=0
+    ALLIN_DEBUG_OVERLAY=0 \
+    ALLIN_MAX_REQUESTS=50000 \
+    ALLIN_RIVER_CACHE_BOARDS=20000
 
 EXPOSE 5000
 

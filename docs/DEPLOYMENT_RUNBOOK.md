@@ -72,7 +72,10 @@ diagnosing CI failures, dev workflow) — that's in
   - `ALLIN_TIMEOUT` — request timeout in seconds (default `120`; matches the river-solve ceiling).
   - `ALLIN_GRACEFUL_TIMEOUT` — graceful shutdown timeout (default `120`).
   - `ALLIN_MAX_REQUESTS` / `ALLIN_MAX_REQUESTS_JITTER` — worker cycling for memory hygiene
-    (defaults `500` / `50`).
+    (Docker image bakes `50000` / `50`; the entrypoint fallback is `500`). Sized so the
+    LB health checker (~36 req/min of baseline traffic) doesn't churn workers every
+    ~15 min — each recycle re-imports the app on a fractional vCPU and stalls in-flight
+    requests for ~10s (see MAINTENANCE.md "Common pitfalls").
   - `ALLIN_BIND` — gunicorn listen address (default `0.0.0.0:5000`).
 - `VITE_API_BASE` — frontend API base URL (set at build time).
 - `VITE_COGNITO_DOMAIN` / `VITE_COGNITO_APP_CLIENT_ID` / `VITE_COGNITO_REDIRECT_URI` —
