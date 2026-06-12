@@ -29,7 +29,12 @@ function Home() {
 			    CTAs stay above the fold on a short/normal viewport. */}
 			<img src={Logo} alt="AllIn"
 				className="w-[22rem] max-w-[80vw] max-h-[26vh] object-contain drop-shadow-lg" />
-			<p className="mt-2 mb-6 text-sm tracking-[0.25em] uppercase text-amber-500/70">
+			{/* Always one line: `whitespace-nowrap` + a fluid font that shrinks on
+			    narrow screens (and tighter letter-spacing on mobile) so the tagline
+			    scales down instead of wrapping. */}
+			<p className="mt-2 mb-6 uppercase text-amber-500/70 whitespace-nowrap
+			              tracking-[0.14em] sm:tracking-[0.25em]"
+				style={{ fontSize: 'clamp(0.6rem, 3vw, 0.875rem)' }}>
 				Heads-up Texas Hold&rsquo;em &middot; CFR+ AI
 			</p>
 

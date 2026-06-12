@@ -861,7 +861,7 @@ function AiGame() {
                 </main>
 
                 {/* RIGHT: actions, ordered by bet size, custom bet at the end */}
-                <aside className="order-2 lg:order-3 flex flex-col gap-2.5">
+                <aside className="order-2 lg:order-3 flex flex-col gap-2 sm:gap-2.5">
                     <h4 className="text-xs uppercase tracking-wider text-neutral-500">
                         {yourTurn ? 'Your action' : handOver ? 'Hand over' : 'Bot to act'}
                     </h4>
@@ -879,24 +879,27 @@ function AiGame() {
                         <div className="text-neutral-500 text-sm py-2">Bot is acting…</div>
                     )}
 
-                    {/* Compact action grid, ascending by bet size (two per row). */}
+                    {/* Action grid: 3 columns on mobile/tablet (the aside is full
+                        width there, so 2 wasted horizontal space), back to 2 at lg
+                        where the aside narrows to 18rem. Shorter/tighter buttons on
+                        mobile so the full set fits with less scrolling. */}
                     {!handOver && yourTurn && (
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-3 lg:grid-cols-2 gap-1.5 sm:gap-2">
                             {sortedActions(view.legalActions).map((la) => (
                                 <button key={la.action} onClick={() => doAction(la.action)}
                                     disabled={busy}
-                                    className={'rounded-lg px-3 min-h-[3.25rem] flex flex-col ' +
-                                        'items-center justify-center text-center leading-tight ' +
+                                    className={'rounded-lg px-1.5 sm:px-2 min-h-[2.5rem] sm:min-h-[3.25rem] ' +
+                                        'flex flex-col items-center justify-center text-center leading-tight ' +
                                         'text-white disabled:opacity-50 transition-colors ' +
                                         actionClasses(la.action)}>
                                     {/* Fixed min-height + vertical centering keeps every button
                                         the same size and centres its label whether or not it has
                                         a bet-amount line (Bet/Raise vs Fold/Check). */}
-                                    <span className="text-sm font-semibold">
+                                    <span className="text-xs sm:text-sm font-semibold">
                                         {actionVerb(la.action, view.street)}
                                     </span>
                                     {la.chips > 0 && (
-                                        <span className="text-[11px] opacity-80 tabular-nums">
+                                        <span className="text-[10px] sm:text-[11px] opacity-80 tabular-nums">
                                             {fmtBB(la.chips)} BB
                                         </span>
                                     )}
@@ -905,9 +908,10 @@ function AiGame() {
                         </div>
                     )}
 
-                    {/* Custom (unrestricted) bet/raise - at the end of the action list */}
+                    {/* Custom (unrestricted) bet/raise - at the end of the action list.
+                        Tighter padding/heights on mobile to match the compact buttons. */}
                     {!handOver && yourTurn && view.customBounds && (
-                        <div className="mt-1 rounded-xl border border-neutral-800 p-3">
+                        <div className="mt-1 rounded-xl border border-neutral-800 p-2.5 sm:p-3">
                             <div className="text-xs text-neutral-400 mb-1.5">
                                 {(facingBet || view.street === 'preflop')
                                     ? 'Raise to a custom size' : 'Bet a custom size'}
@@ -923,13 +927,13 @@ function AiGame() {
                                     onBlur={clampCustom}
                                     onKeyDown={(e) => { if (e.key === 'Enter') doCustom(); }}
                                     placeholder={`${view.customBounds.minBb}-${view.customBounds.maxBb}`}
-                                    className="w-full px-3 py-2 rounded-lg bg-neutral-800 text-white text-sm
+                                    className="w-full px-3 py-1.5 sm:py-2 rounded-lg bg-neutral-800 text-white text-sm
                                                border border-neutral-700 focus:border-amber-500
                                                outline-none tabular-nums" />
                                 <span className="text-sm text-neutral-400">BB</span>
                             </div>
                             <button onClick={doCustom} disabled={busy || !customValid}
-                                className="mt-2 w-full px-4 py-2 rounded-lg text-white text-sm font-semibold
+                                className="mt-1.5 sm:mt-2 w-full px-4 py-1.5 sm:py-2 rounded-lg text-white text-sm font-semibold
                                            bg-sky-700 hover:bg-sky-600 disabled:opacity-40
                                            transition-colors">
                                 Confirm bet
