@@ -56,8 +56,15 @@ diagnosing CI failures, dev workflow) — that's in
   blueprint is downloaded into and re-opened from. Default is `tempfile.gettempdir()`; in a
   container, set this to a stable mount (e.g. `/var/lib/allin/blueprints`) since `/tmp`
   can be wiped on restart by some orchestrators.
-- `ALLIN_RIVER_CACHE_BOARDS` — `PostflopV2._RIVER_BOARD_CACHE` cap (default 100k).
-  Larger → more memory, faster eval; smaller → less RAM but more recomputation.
+- `ALLIN_RIVER_CACHE_BOARDS` — `PostflopV2._RIVER_BOARD_CACHE` cap (default 100k;
+  the Docker image bakes `20000`). Larger → more memory, faster eval; smaller → less
+  RAM but more recomputation.
+- `ALLIN_TRACKER_BUCKET_BOARDS` — process-global range-tracker bucket cache cap, in
+  distinct boards (default `128`, ~32 MB/worker). The tracker re-buckets ~1,300 hands
+  per action; this cache shares that work across both trackers / all actions on a
+  board / concurrent sessions, so only the first action on a given board pays the cost.
+  The dominant per-action cost on a fractional vCPU before this existed (~1–1.5s →
+  near-zero after the first action). See `range_tracker.py`.
 - `ALLIN_SOLVE_PERMITS` / `ALLIN_EXPLORER_PERMITS` — per-process concurrency caps for
   the live river solver / the explorer's on-demand solve (defaults: `cpu_count - 1`
   and half that, floored at 1). The solver is anytime CFR, so on a small instance

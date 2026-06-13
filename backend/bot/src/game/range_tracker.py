@@ -44,7 +44,10 @@ The model strategy is supplied as a callback `strategy_fn(key, legal_tuple) ->
 np.ndarray over legal` so this module depends on neither the DB nor Flask, and
 is fully unit-testable. State is JSON-serialisable via to_dict / from_dict.
 """
+import os
 import random
+import threading
+from collections import OrderedDict
 from itertools import combinations
 
 import numpy as np
@@ -55,6 +58,82 @@ from ..abstractions.postflop_features import rank7
 _RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A']
 _SUITS = ['H', 'D', 'C', 'S']
 _FULL_DECK = [s + r for r in _RANKS for s in _SUITS]
+_ALL_COMBOS = list(combinations(_FULL_DECK, 2))   # 1326 two-card combos
+
+
+# --------------------------------------------------------------------------
+# Process-global bucket caches.
+#
+# `cards.get_bucket(hand, board)` is a PURE, deterministic function of the
+# (hand, board) pair -- it does not depend on which player is tracking. But a
+# RangeTracker is rebuilt from JSON on every request (the session stores only
+# {cards, weights, confidence}; see to_dict), so a per-instance cache starts
+# empty each request and re-buckets all ~1081 live hands on EVERY action, for
+# BOTH the opp-range and bot-range trackers. On a fractional-vCPU box that is
+# the dominant cost of a non-river action (~1-1.5s observed).
+#
+# These module-level caches share that work across both trackers, every action
+# on a street, and every concurrent session on the same board. The first
+# action on a given board pays ~1326 get_bucket calls; every subsequent one is
+# a dict hit.
+#
+# ASSUMPTION: one bucketing scheme per process. The buckets are keyed on the
+# board alone (not the CardAbstraction instance), which is correct because the
+# baked tables / centroids are process-global and deterministic -- two
+# CardAbstraction objects in the same process bucket identically. This mirrors
+# the existing process-global `_RIVER_BOARD_CACHE` in postflop_v2. The
+# `test_range_tracker_bucket_cache` test guards the cached path against the
+# direct get_bucket path for the real abstraction.
+_PF_BUCKET_CACHE = {}                 # hand_tuple -> preflop bucket (fill-once)
+_POSTFLOP_BUCKET_CACHE = OrderedDict()  # board_slice_tuple -> {hand_tuple: bucket}
+_BUCKET_CACHE_LOCK = threading.Lock()
+# LRU bound on distinct boards held. A board only needs to stay hot for the
+# few actions of one street (seconds), plus the boards of other concurrent
+# sessions, so a small cap captures ~all the benefit. ~each board entry is a
+# ~1300-int dict (~0.25 MB), so 128 boards ~= 32 MB/worker.
+_POSTFLOP_BUCKET_MAX_BOARDS = int(os.environ.get('ALLIN_TRACKER_BUCKET_BOARDS', '128'))
+
+
+def _preflop_bucket_map(cards):
+    """{hand_tuple -> preflop bucket} for all 1326 combos. Board-independent and
+    deterministic, so filled exactly once per process."""
+    if _PF_BUCKET_CACHE:
+        return _PF_BUCKET_CACHE
+    m = {h: cards.get_bucket(list(h), None) for h in _ALL_COMBOS}
+    with _BUCKET_CACHE_LOCK:
+        if not _PF_BUCKET_CACHE:          # first writer wins; identical data otherwise
+            _PF_BUCKET_CACHE.update(m)
+    return _PF_BUCKET_CACHE
+
+
+def _postflop_bucket_map(cards, board_slice):
+    """{hand_tuple -> strength bucket} for every combo not colliding with
+    `board_slice`, memoized per board (LRU-bounded). board_slice is a tuple."""
+    with _BUCKET_CACHE_LOCK:
+        m = _POSTFLOP_BUCKET_CACHE.get(board_slice)
+        if m is not None:
+            _POSTFLOP_BUCKET_CACHE.move_to_end(board_slice)
+            return m
+    # Compute outside the lock (get_bucket can be non-trivial). A concurrent
+    # double-miss just computes twice and the last writer wins -- harmless,
+    # the results are identical.
+    bset = set(board_slice)
+    board_list = list(board_slice)
+    m = {h: cards.get_bucket([h[0], h[1]], board_list)
+         for h in _ALL_COMBOS if h[0] not in bset and h[1] not in bset}
+    with _BUCKET_CACHE_LOCK:
+        _POSTFLOP_BUCKET_CACHE[board_slice] = m
+        _POSTFLOP_BUCKET_CACHE.move_to_end(board_slice)
+        while len(_POSTFLOP_BUCKET_CACHE) > _POSTFLOP_BUCKET_MAX_BOARDS:
+            _POSTFLOP_BUCKET_CACHE.popitem(last=False)
+    return m
+
+
+def _clear_bucket_caches():
+    """Reset the process-global bucket caches (tests; never needed in prod)."""
+    with _BUCKET_CACHE_LOCK:
+        _PF_BUCKET_CACHE.clear()
+        _POSTFLOP_BUCKET_CACHE.clear()
 
 # Confidence multiplier for an OFF-MENU opponent action (one the abstract model has
 # no column for -- a custom all-in, a far-off-grid bet). Such an action is maximally
@@ -90,19 +169,27 @@ class RangeTracker:
     # -- bucketing (one blueprint key per distinct bucket, like BotRange) ---
     def _buckets(self, street, board):
         ck = (street, tuple(board))
-        cached = self._bucket_cache.get(ck)
+        cached = self._bucket_cache.get(ck)   # within-request memo (cheap, avoids re-build)
         if cached is not None:
             return cached
+        # The expensive get_bucket calls are served from the process-global
+        # caches (shared across trackers / requests / sessions); only the
+        # per-hand list assembly below is per-call, and that's just indexing.
+        pf_map = _preflop_bucket_map(self.cards)
+        slice_board = None if street == 0 else board[:2 + street]  # flop=3,turn=4,river=5
+        sb_map = (None if street == 0
+                  else _postflop_bucket_map(self.cards, tuple(slice_board)))
         pf = [None] * len(self.hands)
         strength = [None] * len(self.hands)
-        slice_board = None if street == 0 else board[:2 + street]  # flop=3,turn=4,river=5
         for i, h in enumerate(self.hands):
             if self.w[i] <= 0.0:
                 continue
-            hl = list(h)
-            pf[i] = self.cards.get_bucket(hl, None)
+            pf[i] = pf_map[h]
             if street > 0:
-                strength[i] = self.cards.get_bucket(hl, slice_board)
+                # h may collide with the board (a hand reveal() hasn't zeroed
+                # yet in some call orders); .get returns None, matching the
+                # old skip-dead behavior. Live hands are always present.
+                strength[i] = sb_map.get(h)
         self._bucket_cache[ck] = (pf, strength)
         return pf, strength
 

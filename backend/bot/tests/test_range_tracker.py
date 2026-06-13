@@ -382,6 +382,100 @@ def test_consumer_routes_by_confidence():
     print("PASS test_consumer_routes_by_confidence")
 
 
+# =====================================================================
+# Process-global bucket cache (perf optimization, must be correctness-neutral)
+# =====================================================================
+from src.game import range_tracker as _rt
+from src.game.range_tracker import (
+    _clear_bucket_caches, _PF_BUCKET_CACHE, _POSTFLOP_BUCKET_CACHE)
+
+
+def test_bucket_cache_matches_direct_get_bucket():
+    """The cached _buckets() output must equal a direct per-hand get_bucket()
+    computation, on every street. This is THE correctness guard for the cache."""
+    _clear_bucket_caches()
+    board = ['SQ', 'SJ', 'ST', 'C2', 'D4']
+    t = RangeTracker(('HA', 'DK'), CARDS)
+    for street in (0, 1, 2, 3):
+        slice_board = None if street == 0 else board[:2 + street]
+        if slice_board is not None:
+            t.reveal(slice_board)                    # match real usage (reveal before bucket)
+        pf, strength = t._buckets(street, board)
+        bset = set(slice_board) if slice_board else set()
+        for i, h in enumerate(t.hands):
+            if t.w[i] <= 0.0:
+                continue                             # dead hands are left None by design
+            assert pf[i] == CARDS.get_bucket(list(h), None), (street, h, 'preflop')
+            if street > 0:
+                assert h[0] not in bset and h[1] not in bset  # live => non-colliding
+                assert strength[i] == CARDS.get_bucket(list(h), slice_board), (street, h)
+    print("PASS test_bucket_cache_matches_direct_get_bucket")
+
+
+def test_bucket_cache_shared_across_trackers():
+    """Two trackers with DIFFERENT heroes on the SAME board reuse the one cached
+    per-board map (no second board entry), and both get correct buckets — this is
+    the cross-tracker / cross-session sharing that makes the cache worthwhile."""
+    _clear_bucket_caches()
+    board = ['SQ', 'SJ', 'ST']
+    t1 = RangeTracker(('HA', 'DK'), CARDS)
+    t1.reveal(board)
+    t1._buckets(1, board)
+    assert len(_PF_BUCKET_CACHE) == 1326, "preflop map fills all combos once"
+    assert tuple(board) in _POSTFLOP_BUCKET_CACHE
+    n_boards = len(_POSTFLOP_BUCKET_CACHE)
+
+    t2 = RangeTracker(('C7', 'C8'), CARDS)           # different hero, same board
+    t2.reveal(board)
+    pf2, str2 = t2._buckets(1, board)
+    assert len(_POSTFLOP_BUCKET_CACHE) == n_boards, "same board must not add a 2nd entry"
+    for i, h in enumerate(t2.hands):
+        if t2.w[i] <= 0.0:
+            continue
+        assert str2[i] == CARDS.get_bucket(list(h), board)
+    print("PASS test_bucket_cache_shared_across_trackers")
+
+
+def test_bucket_cache_warm_equals_cold_for_observe():
+    """observe() must produce identical weights + confidence whether the global
+    cache was cold or pre-warmed — proves the optimization is behavior-neutral."""
+    legal = ['fold', 'call', 'raise']
+    _clear_bucket_caches()
+    cold = RangeTracker(('HA', 'DK'), CARDS)
+    cold.observe(weakfolds_fn, 'fold', 0, 'oop', '', legal, [])
+
+    # Pre-warm by bucketing with an unrelated tracker, then observe afresh.
+    RangeTracker(('C2', 'C3'), CARDS)._buckets(0, [])
+    warm = RangeTracker(('HA', 'DK'), CARDS)
+    warm.observe(weakfolds_fn, 'fold', 0, 'oop', '', legal, [])
+
+    assert np.allclose(cold.w, warm.w)
+    assert abs(cold.confidence - warm.confidence) < 1e-12
+    print("PASS test_bucket_cache_warm_equals_cold_for_observe")
+
+
+def test_bucket_cache_lru_bound():
+    """The per-board cache is LRU-bounded: past the cap, the oldest board is
+    evicted and the most-recent retained (so it can't grow without limit)."""
+    _clear_bucket_caches()
+    old_cap = _rt._POSTFLOP_BUCKET_MAX_BOARDS
+    _rt._POSTFLOP_BUCKET_MAX_BOARDS = 3
+    try:
+        boards = [['SQ', 'SJ', 'ST'], ['HQ', 'HJ', 'HT'], ['DQ', 'DJ', 'DT'],
+                  ['CQ', 'CJ', 'CT'], ['S2', 'S3', 'S4']]
+        for b in boards:
+            t = RangeTracker(('HA', 'DK'), CARDS)
+            t.reveal(b)
+            t._buckets(1, b)
+        assert len(_POSTFLOP_BUCKET_CACHE) == 3, len(_POSTFLOP_BUCKET_CACHE)
+        assert tuple(boards[-1]) in _POSTFLOP_BUCKET_CACHE      # newest kept
+        assert tuple(boards[0]) not in _POSTFLOP_BUCKET_CACHE   # oldest evicted
+    finally:
+        _rt._POSTFLOP_BUCKET_MAX_BOARDS = old_cap
+        _clear_bucket_caches()
+    print("PASS test_bucket_cache_lru_bound")
+
+
 TESTS = [
     test_initial_hand_count,
     test_reveal_card_removal,
@@ -401,6 +495,10 @@ TESTS = [
     test_hero_equity_dominated_is_zero,
     test_equity_action_mapping,
     test_consumer_routes_by_confidence,
+    test_bucket_cache_matches_direct_get_bucket,
+    test_bucket_cache_shared_across_trackers,
+    test_bucket_cache_warm_equals_cold_for_observe,
+    test_bucket_cache_lru_bound,
 ]
 
 if __name__ == '__main__':
