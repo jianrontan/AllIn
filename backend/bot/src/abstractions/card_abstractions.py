@@ -195,7 +195,11 @@ _PREFLOP_EQUITY = {
 # scripts/compute_preflop_equity.py:assign_buckets -- the script remains the equity
 # GENERATOR, but the bucket maps are derived from the committed equity table so the
 # two can never drift (and there is no 169-line literal to maintain per scheme).
-NUM_PREFLOP_BUCKETS = 30   # fine  (preflop keys: pf_0 weakest .. pf_29 strongest)
+NUM_PREFLOP_BUCKETS = 169  # fine, LOSSLESS: one bucket per canonical preflop hand
+                           # (pf_0 weakest .. pf_168 strongest). _quantile_buckets with
+                           # n == len(table) assigns each hand its own rank -> perfect
+                           # preflop resolution. Only PREFLOP keys grow (169 hands);
+                           # the coarse-10 carry below keeps POSTFLOP key count unchanged.
 NUM_PREFLOP_COARSE = 10    # coarse (postflop startBucket: 0 weakest .. 9 strongest)
 
 
@@ -216,12 +220,11 @@ _PREFLOP_BUCKET_MAP = {h: f"pf_{b}" for h, b in _FINE_IDX.items()}      # hand -
 
 
 def _build_fine_to_coarse():
-    """Fine bucket int -> coarse class int, via each fine bucket's representative
-    (median-equity) hand. Because FINE (30) and COARSE (10) are equal-frequency
-    quantiles of the SAME table and 30 = 3*10, no fine bucket straddles a coarse
-    boundary, so the collapse is exact (a fine bucket -> exactly one coarse class);
-    the assertion below enforces that invariant (it would fire if the bucket counts
-    ever change to a non-dividing pair, flagging that the collapse became lossy)."""
+    """Fine bucket int -> coarse class int. With LOSSLESS fine buckets (169 = one per
+    canonical hand) each fine bucket holds exactly ONE hand, so it maps to exactly one
+    coarse class trivially -- the collapse is exact and the assertion below can never
+    fire here. (It still guards the general case: were fine ever a coarser quantiling
+    that didn't nest inside coarse, a straddling bucket would trip it.)"""
     from collections import defaultdict
     by_fine = defaultdict(list)
     for hand, fb in _FINE_IDX.items():
@@ -246,9 +249,9 @@ assert len(set(_COARSE_IDX.values())) == NUM_PREFLOP_COARSE
 
 class CardAbstraction:
     """
-    Preflop: DECOUPLED buckets -- 30 FINE equity buckets (pf_0 weakest → pf_29
-    strongest) for preflop keys, collapsed to 10 COARSE classes (0..9) for the
-    postflop `startBucket` (imperfect recall; see _build_fine_to_coarse). The
+    Preflop: DECOUPLED buckets -- 169 FINE buckets (LOSSLESS: one per canonical hand,
+    pf_0 weakest → pf_168 strongest) for preflop keys, collapsed to 10 COARSE classes
+    (0..9) for the postflop `startBucket` (imperfect recall; see _build_fine_to_coarse). The
     collapse lives in cfr/keys.make_info_set_key, so preflop_bucket() always returns
     the fine id and callers never choose.
     Postflop: distribution-aware (potential-aware) buckets via PostflopV2 --
@@ -282,7 +285,7 @@ class CardAbstraction:
         return result
 
     def preflop_bucket(self, hole_cards):
-        """FINE preflop bucket 'pf_0'..'pf_29' (for PREFLOP keys). Postflop keys
+        """FINE preflop bucket 'pf_0'..'pf_168' (for PREFLOP keys). Postflop keys
         collapse this to the coarse class inside make_info_set_key -- callers always
         pass this fine id."""
         hand_str = self.cards_to_string(hole_cards)

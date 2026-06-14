@@ -453,13 +453,15 @@ def test_preflop_bucket_AA():
 
 
 def test_preflop_bucket_KK():
-    """KK shares the strongest fine bucket with AA (top bucket = JJ/QQ/KK/AA)."""
+    """KK is top-tier but ranks BELOW AA at lossless (169) resolution -- they no
+    longer share a bucket (AA = pf_168, KK = pf_167)."""
     from src.abstractions.card_abstractions import NUM_PREFLOP_BUCKETS
     ca = CardAbstraction()
-    bucket = ca.preflop_bucket(['HK', 'DK'])
-    top = f"pf_{NUM_PREFLOP_BUCKETS - 1}"
-    assert bucket == top, f"KK should be {top}, got {bucket}"
-    print(f"PASS test_preflop_bucket_KK: {bucket}")
+    kk = int(ca.preflop_bucket(['HK', 'DK']).split('_')[1])
+    aa = int(ca.preflop_bucket(['HA', 'DA']).split('_')[1])
+    assert kk < aa, f"KK (pf_{kk}) must rank below AA (pf_{aa})"
+    assert kk >= NUM_PREFLOP_BUCKETS - 4, f"KK should be top-tier, got pf_{kk}"
+    print(f"PASS test_preflop_bucket_KK: pf_{kk}")
 
 
 def test_preflop_bucket_32o():
@@ -471,11 +473,11 @@ def test_preflop_bucket_32o():
 
 
 def test_preflop_bucket_72o():
-    """72o is in the weakest tier (pf_0 at 30-bucket resolution)."""
+    """72o is in the weakest tier (a low bucket at lossless 169 resolution)."""
     ca = CardAbstraction()
-    bucket = ca.preflop_bucket(['H7', 'D2'])
-    assert bucket == 'pf_0', f"72o should be pf_0, got {bucket}"
-    print(f"PASS test_preflop_bucket_72o: {bucket}")
+    b = int(ca.preflop_bucket(['H7', 'D2']).split('_')[1])
+    assert b <= 8, f"72o should be in the weakest tier, got pf_{b}"
+    print(f"PASS test_preflop_bucket_72o: pf_{b}")
 
 
 def test_cards_to_string_aa():

@@ -163,15 +163,34 @@ class BestResponseEvaluator:
         """Vectorized showdown measure (delegates to the shared kernel)."""
         return showdown_measure(ba, rv, final_pot, hero_total)
 
-    def _board_value(self, hero_seat, board, ba):
+    @staticmethod
+    def _accumulate_gain(gain_acc, street, ba, gain):
+        """Add per-hero-hand BR gain into gain_acc[(street, bucket)] -- bucket = the
+        hero hand's fine preflop bucket (street 0) else its strength bucket. The leak
+        attribution: which (street, bucket) the exploiter extracts the most from."""
+        buckets = np.asarray(ba['pf'] if street == 0 else ba['strg'][street])
+        for bk in np.unique(buckets):
+            key = (street, bk.item() if hasattr(bk, 'item') else bk)
+            gain_acc[key] = gain_acc.get(key, 0.0) + float(gain[buckets == bk].sum())
+
+    def _board_value(self, hero_seat, board, ba, br_streets=None, gain_acc=None):
         """
         Return a length-H vector: best-response value (chips, hero perspective)
         for each hero hand on this board, integrating over villain's blueprint
         range. Values are MEASURES (villain reach starts at 1 per hand); divide
         by _COMPATIBLE to get per-hand expectations.
+
+        `br_streets` (set of street ints 0-3; None = all) restricts WHERE the hero
+        may best-respond: on a street NOT in the set it plays the BLUEPRINT instead
+        (a RESTRICTED best response), so the value isolates the leak reachable by
+        deviating only on `br_streets`. `gain_acc` (dict; None = off) accumulates the
+        per-hero-node BR gain (best minus blueprint-weighted value) by (street,
+        bucket) for the per-bucket attribution. Both default off -> the fast,
+        unchanged full-BR path used by the scoreboard.
         """
         villain_seat = 1 - hero_seat
         villain_pos = 'ip' if villain_seat == 0 else 'oop'
+        hero_pos = 'ip' if hero_seat == 0 else 'oop'
 
         # The showdown/fold card-removal math now lives in the kernel; this
         # method only needs H (reach length) and the bucket arrays for keys.
@@ -187,18 +206,20 @@ class BestResponseEvaluator:
         # ~thousands. _restricted_probs is still separately cached by (key, legal).
         key_cache = {}
 
-        def villain_probs_matrix(street, pattern, legal):
-            """[H, n_legal] blueprint probs per villain hand, grouped by key."""
+        def probs_matrix(street, pattern, legal, pos):
+            """[H, n_legal] blueprint probs per hand at `pos`, grouped by key. (Used
+            for the villain split, and for the hero when it plays the blueprint -- a
+            restricted-BR off-street node or the gain-logging baseline.)"""
             mat = np.empty((H, len(legal)))
             for gi, (mask, rep) in enumerate(ba['groups'][street]):
-                kc = (street, gi, pattern)
+                kc = (street, gi, pattern, pos)
                 key = key_cache.get(kc)
                 if key is None:
                     if street == 0:
-                        key = make_info_set_key(0, villain_pos, pf[rep], None, pattern)
+                        key = make_info_set_key(0, pos, pf[rep], None, pattern)
                     else:
                         key = make_info_set_key(
-                            street, villain_pos, pf[rep], strg[street][rep], pattern)
+                            street, pos, pf[rep], strg[street][rep], pattern)
                     key_cache[kc] = key
                 mat[mask] = self._restricted_probs(key, legal)
             return mat
@@ -262,13 +283,29 @@ class BestResponseEvaluator:
                             p0_stack, p1_stack - cost, npat, child_rv, depth + 1)
 
             if current_player == hero_seat:
-                # Hero best-responds with its exact hand: same villain reach down
-                # every branch, take the elementwise max over actions.
+                # Same villain reach down every hero branch (the hero's action does
+                # not change villain reach), so compute each branch once.
                 vals = [child(a, rv) for a in legal]
-                return np.maximum.reduce(vals)
+                if br_streets is None or street in br_streets:
+                    # Hero best-responds (elementwise max over actions).
+                    if gain_acc is None:
+                        return np.maximum.reduce(vals)
+                    valmat = np.stack(vals, axis=1)            # [H, A]
+                    out = valmat.max(axis=1)
+                    hp = probs_matrix(street, pattern, legal_t, hero_pos)
+                    gain = out - (valmat * hp).sum(axis=1)     # best - blueprint-weighted
+                    self._accumulate_gain(gain_acc, street, ba, gain)
+                    return out
+                # Restricted: hero plays the BLUEPRINT on this off-target street, so
+                # the value isolates the leak reachable only on its BR streets.
+                hp = probs_matrix(street, pattern, legal_t, hero_pos)
+                total = np.zeros(H)
+                for ai in range(len(legal)):
+                    total = total + vals[ai] * hp[:, ai]
+                return total
 
             # Villain node: split reach by blueprint strategy, sum children.
-            probs = villain_probs_matrix(street, pattern, legal_t)
+            probs = probs_matrix(street, pattern, legal_t, villain_pos)
             total = np.zeros(H)
             for ai, a in enumerate(legal):
                 total = total + child(a, rv * probs[:, ai])
@@ -282,18 +319,49 @@ class BestResponseEvaluator:
     # Top-level estimate
     # ------------------------------------------------------------------
 
-    def board_contribution(self, board):
+    def board_contribution(self, board, br_streets=None, gain_acc=None):
         """Per-board BR contribution (board_seat0_chips, board_seat1_chips): the
         seat's measure-mean / compatible-villain-count for THIS board. Summing these
         over boards and dividing by num_samples gives the per-seat BR. Factored out
         so a single board is the parallelizable unit of work (see evaluate_parallel)
-        and so `evaluate` and the parallel path share one definition."""
+        and so `evaluate` and the parallel path share one definition. `br_streets` /
+        `gain_acc` thread through to _board_value for leak attribution (default off =
+        the standard full-BR scoreboard)."""
         ba = self._board_arrays(board)
         out = []
         for hero_seat in (0, 1):
-            vec = self._board_value(hero_seat, board, ba)
+            vec = self._board_value(hero_seat, board, ba, br_streets, gain_acc)
             out.append(float(vec.mean()) / _COMPATIBLE)
         return out[0], out[1]
+
+    def evaluate_attribution(self, num_samples=40, workers=None, br_streets=None,
+                             log_gain=True, seed=None):
+        """Leak attribution run (parallel). Returns the standard exploitability dict
+        PLUS `gain` -- a {(street, bucket): summed_gain} dict when log_gain (per-bucket
+        attribution). `br_streets` restricts the hero's BR streets (a set; None=all;
+        empty set = pure blueprint -> ~0, a sanity baseline). Same board sampling as
+        evaluate_parallel, so a fixed seed gives comparable runs across br_streets."""
+        import os
+        from multiprocessing import Pool
+        if workers is None:
+            workers = os.cpu_count() or 1
+        the_seed = seed if seed is not None else self.seed
+        boards = self._boards_for(the_seed, num_samples)
+        brs = None if br_streets is None else tuple(sorted(br_streets))
+        chunks = [boards[i::workers] for i in range(workers)]
+        payloads = [(self.db.db_path, self.menu_mode, self.purify_threshold, ch, brs,
+                     log_gain) for ch in chunks if ch]
+        b0 = b1 = 0.0
+        gain = {}
+        with Pool(processes=workers) as pool:
+            for (p0, p1, g) in pool.imap_unordered(_attr_board_chunk, payloads):
+                b0 += p0
+                b1 += p1
+                for k, v in g.items():
+                    gain[k] = gain.get(k, 0.0) + v
+        res = self._finalize(b0, b1, num_samples)
+        res['gain'] = gain
+        return res
 
     @staticmethod
     def _boards_for(seed, num_samples):
@@ -394,5 +462,25 @@ def _br_board_chunk(payload):
             b0 += c0
             b1 += c1
         return (b0, b1)
+    finally:
+        db.close()
+
+
+def _attr_board_chunk(payload):
+    """(db_path, menu_mode, purify, boards, br_streets_tuple, log_gain) ->
+    (seat0_sum, seat1_sum, gain_dict) for the leak-attribution run."""
+    db_path, menu_mode, purify, boards, brs, log_gain = payload
+    from ..storage.blueprint_db import BlueprintDB
+    db = BlueprintDB(db_path, read_only=True)
+    try:
+        ev = BestResponseEvaluator(db, menu_mode=menu_mode, purify_threshold=purify)
+        br_streets = None if brs is None else set(brs)
+        gain = {} if log_gain else None
+        b0 = b1 = 0.0
+        for board in boards:
+            c0, c1 = ev.board_contribution(board, br_streets, gain)
+            b0 += c0
+            b1 += c1
+        return (b0, b1, gain or {})
     finally:
         db.close()

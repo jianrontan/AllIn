@@ -94,11 +94,12 @@ class BlueprintTrainer:
         # GTO mixing -> MORE exploitable -> the U-shaped BR/LBR curve (rises late). It is
         # NOT a code bug (the parallel gamma-clock was audited clean; H1 averaging is
         # correct -- Kuhn-verified in tests/h1_kuhn_check.py). A less aggressive discount
-        # retains the earlier, more-mixed play. ===> NEXT RETRAIN: use gamma = 1.0 (true
-        # Linear-CFR) and BR-sweep to confirm the tail flattens. Keep serving the BEST
-        # snapshot (not the last) regardless. See analysis/training_curve + the U-curve
-        # probe (2026-06-10).
-        self.gamma = 2.0
+        # retains the earlier, more-mixed play. ===> CHANGED 2026-06-14 to gamma = 1.0
+        # (true Linear-CFR) for the next retrain, so the average is a stable uniform
+        # time-average rather than recent-weighted -- the tail should flatten (BR-sweep to
+        # confirm; still serve the BEST snapshot). Override per-run with --gamma. See
+        # analysis/training_curve + the U-curve probe (2026-06-10).
+        self.gamma = 1.0
 
         # Cumulative EV gauge, persisted across resumes. `ev_sum` / `ev_count`
         # accumulate the per-iteration sampled root value over the blueprint's
@@ -530,9 +531,15 @@ class BlueprintTrainer:
                     print(f"  EV(served, avg strategy): {served_ev:+.4f}  <- served "
                           f"self-play value (seat-balance check, NOT strength -> use LBR)")
                     from .strategy_shape import strategy_shape_report, format_shape_line
+                    from ..abstractions.card_abstractions import NUM_PREFLOP_BUCKETS
+                    # Pass the live bucket count so the collapse probe scans pf_0..pf_(N-1)
+                    # and anchors 'strong' on the actual top bucket (AA). Defaulting to 30
+                    # under the lossless-169 scheme would scan only pf_0..29 and call a
+                    # weak-ish hand 'strong' -- the guard would miss a collapsed run.
                     print(format_shape_line(strategy_shape_report(
                         lambda k: (self.info_sets[k].cumulative_strategy
-                                   if k in self.info_sets else None))))
+                                   if k in self.info_sets else None),
+                        num_preflop_buckets=NUM_PREFLOP_BUCKETS)))
                 except Exception as e:           # noqa: BLE001 -- gauges must never crash training
                     print(f"  [gauge/probe skipped: {type(e).__name__}: {e}]")
 
