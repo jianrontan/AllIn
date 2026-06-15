@@ -116,24 +116,38 @@ class AIVATEstimator:
         hand_a = rec['hand_a']
         board = rec['board']
 
-        brange = BotRange(hand_a, self.cards)   # B's hands exclude A's cards
+        # c2 (river-runout luck) needs B's range on the TURN board. Two sources:
+        #   * 'river_range' (LIVE GameSession path): a snapshot of the bot's OWN on-model
+        #     RangeTracker belief about B at river entry -- duck-types as brange (.hands/.w).
+        #     More accurate than replaying LBR's BotRange (which can drift from the deployed
+        #     tracker; BUG-008), so prefer it when present.
+        #   * 'events' (capped match.py path): reconstruct B's range by replaying the
+        #     recorded street-starts + B's actions through LBR's BotRange.
+        # Either way the control variate's conditional mean is exactly 0 (realized minus
+        # the same-range mean over rivers), so c2 stays UNBIASED for any fixed range.
         c2 = 0.0
-        for ev in rec['events']:
-            if ev['type'] == 'street_start':
-                st = ev['street']
-                if st == 3:
-                    # River chance node: B's range is current (revealed through the
-                    # turn, updated through turn actions) and the river is not yet
-                    # dealt. Compute the correction, then stop.
-                    c2 = self._river_correction(
-                        hand_a, rec['hand_b'], board[:4], board[4], brange, ev['pot'])
-                    break
-                if st > 0:
-                    brange.reveal(ev['vis'])
-            elif ev['type'] == 'action' and ev['seat'] == b_seat:
-                action = ev['legal'][ev['choice']]
-                brange.observe(self.lbr.restricted_probs, action, ev['street'],
-                               pos_b, ev['pattern'], ev['legal'], ev['vis'])
+        rr = rec.get('river_range')
+        if rr is not None:
+            c2 = self._river_correction(hand_a, rec['hand_b'], rr['turn_board'],
+                                        rr['river_card'], rr['range'], rr['pot'])
+        elif rec.get('events'):
+            brange = BotRange(hand_a, self.cards)   # B's hands exclude A's cards
+            for ev in rec['events']:
+                if ev['type'] == 'street_start':
+                    st = ev['street']
+                    if st == 3:
+                        # River chance node: B's range is current (revealed through the
+                        # turn, updated through turn actions) and the river is not yet
+                        # dealt. Compute the correction, then stop.
+                        c2 = self._river_correction(
+                            hand_a, rec['hand_b'], board[:4], board[4], brange, ev['pot'])
+                        break
+                    if st > 0:
+                        brange.reveal(ev['vis'])
+                elif ev['type'] == 'action' and ev['seat'] == b_seat:
+                    action = ev['legal'][ev['choice']]
+                    brange.observe(self.lbr.restricted_probs, action, ev['street'],
+                                   pos_b, ev['pattern'], ev['legal'], ev['vis'])
 
         c1 = self._preflop_eq(hand_a)
 

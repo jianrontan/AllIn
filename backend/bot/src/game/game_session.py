@@ -224,6 +224,11 @@ class GameSession:
         d['river_entry_bot'] = None
         d['turn_entry_opp'] = None
         d['turn_entry_bot'] = None
+        # 1b (continual re-solving): set once the TURN solver deviates from the blueprint,
+        # so the downstream RIVER solve HONORS the turn's promise (gadget-clamps to the
+        # turn-solved reaches) instead of auto-exploiting -- otherwise the turn planned for
+        # a river that won't happen (NN_LEAF_PLAN 6d thread 2).
+        d['turn_deviated'] = False
         self._settle()
 
     # ------------------------------------------------------------------
@@ -389,14 +394,21 @@ class GameSession:
     # Applying actions
     # ------------------------------------------------------------------
 
-    def apply_action(self, action):
+    def apply_action(self, action, solved_hero_probs=None):
         """Apply one action by whoever is currently to act.
 
         `action` is a grid action (check/call/fold/bet_*/raise_*/allin) or a
         custom action 'bet_custom_<total>' / 'raise_custom_<total>' carrying an
         unrestricted raise-to chip total. A custom bet is mapped onto the trained
         grid (pseudo-harmonic translation): its pattern char is the nearest grid
-        size, and a blended response for the bot is stashed in pending_translation."""
+        size, and a blended response for the bot is stashed in pending_translation.
+
+        `solved_hero_probs` ({frozenset(hand): prob} or None): set by advance_bot_turns
+        when a SUBGAME SOLVER deviated -- the per-hand probability of the played action
+        under the SOLVED strategy. The bot's OWN range is then updated per-hand off the
+        solved play instead of the blueprint model (continual re-solving 1a), so a
+        downstream solve gets a consistent hero range. None -> the usual blueprint
+        update (the bot played the blueprint, or this isn't a bot action)."""
         if self.data['status'] != 'in_hand':
             raise GameError("Hand is over.")
         d = self.data
@@ -469,8 +481,17 @@ class GameSession:
             bt = self._load_bot_range()
             street = d['street']
             board = d['community'][:_BOARD_COUNT[min(street, 3)]]
-            bt.observe(self.strategy_fn, snapped_action, street, self._bot_position(),
-                       d['bet_pattern'], legal, board)
+            if solved_hero_probs is not None:
+                # 1a: the bot played a SOLVED (deviating) strategy this street -> chain
+                # its OWN range off the solved play, per hand (continual re-solving), so
+                # the downstream river solve gets a consistent hero range.
+                bt.observe_solved(solved_hero_probs)
+                # 1b: a turn deviation means the river must honor the turn's promise.
+                if d['street'] == 2:
+                    d['turn_deviated'] = True
+            else:
+                bt.observe(self.strategy_fn, snapped_action, street, self._bot_position(),
+                           d['bet_pattern'], legal, board)
             new_bot_range = bt.to_dict()
 
         # From here on every mutation is on session.data and is infallible
@@ -684,6 +705,9 @@ class GameSession:
             if d.get('river_entry_opp') is not None:
                 state['opp_range'] = RangeTracker.from_dict(d['river_entry_opp'], self.cards)
             state['riverPath'] = self._river_path_specs()
+            # 1b: did the turn solver deviate this hand? If so the river must clamp to
+            # the turn's promise (gadget at the turn-solved reaches), not auto-exploit.
+            state['turnDeviated'] = bool(d.get('turn_deviated'))
         # On the TURN, the same inputs for the depth-limited turn solver: turn-entry
         # pot + (equal) behind stacks, both frozen turn-entry ranges, and the realized
         # turn path. d['starting_pot'] / d['p0_invested'] are turn-entry values (this
@@ -903,8 +927,12 @@ def advance_bot_turns(session, bot_strategy, stop_on_new_card=False):
         public = session.bot_public_state()
         action = bot_strategy.decide(key, legal, public)
         _record_bot_debug(session, bot_strategy, public, key, legal, action)
+        # 1a: if a subgame solver DEVIATED, it exposes the solved per-hand probability of
+        # the played action; thread it so the bot's own range chains off the SOLVED play
+        # (continual re-solving). Absent -> blueprint range update inside apply_action.
+        hero_update = (getattr(bot_strategy, 'last_debug', None) or {}).get('heroRangeUpdate')
         try:
-            session.apply_action(action)
+            session.apply_action(action, solved_hero_probs=hero_update)
         except GameError as bot_err:
             # A borderline solver custom size the engine rejected at the margin
             # must never crash a hand -- fall back to a safe legal action. Logged

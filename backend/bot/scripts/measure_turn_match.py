@@ -1,40 +1,60 @@
 # backend/bot/scripts/measure_turn_match.py
 """
-B2 -- head-to-head: does the served stack win chips vs the blueprint?
+Stage-2 N0' real-game gate -- does the CONSISTENCY-FIXED turn stack win chips vs the
+blueprint, and does it beat the RIVER-ONLY stack (the +1801 mbb baseline)?
 
 Plays one BOT strategy (turn solver / river solver / blueprint) against a BLUEPRINT
-opponent through the real GameSession (so the bot gets its live trackers + turn/river-
-entry fields, exactly like serving), alternating seats each hand. Reports the bot's
-chip win rate (mbb/hand).
+opponent through the real GameSession, alternating seats each hand, and reports the
+bot's chip win rate (mbb/hand), raw and AIVAT-corrected.
+
+CRITICAL (the whole point of the revival): the hand is driven through `advance_bot_turns`,
+exactly like serving -- so the bot gets its live trackers, turn/river-entry fields, AND the
+continual-re-solving chaining (1a own-range / 1b CFV / 1c exact-leaf gate). The OLD version
+of this script drove the loop with a bare `apply_action(a)`, which bypassed advance_bot_turns
+and therefore measured the turn solver WITHOUT the consistency fixes -- a silent false signal.
+If you change the play loop, keep it on advance_bot_turns.
 
 Compare runs:
   * blueprint vs blueprint   -> sanity, should be ~0
-  * river  vs blueprint      -> the CURRENTLY-deployed stack's edge
-  * turn   vs blueprint      -> turn-solver stack's edge
-The (turn - river) gap is the turn solver's marginal value over today's deployment.
+  * river  vs blueprint      -> the CURRENTLY-deployed stack's edge (the +1801 baseline)
+  * turn   vs blueprint      -> the consistency-fixed turn-solver stack's edge
+The (turn - river) gap is the turn solver's marginal value over today's deployment. The
+Stage-2 GATE: turn must beat river (not merely beat the blueprint) -- if it does not WITH the
+consistency fixes live, the M-pre thin-band explanation wins and the turn revival stops.
 
-NOTE: NOT common-random-numbers (the solver's RNG + diverging trajectories desync the
-deck across runs), so this is RAW and high-variance -- a DIRECTIONAL check, not the
-exploitability gate (that's the LBR run). Slow (live solves); run in the background.
+--aivat reports the c1 (preflop-equity) + c2 (river-runout) + c3 (all-in-EV) corrected mbb/hand
+alongside raw. c2 uses the bot's OWN on-model river-entry belief about the opponent (river_entry_opp)
+as B's range -- valid here because the opponent IS the blueprint that belief models (the maniac path
+in compare_gadget_policies skips c2 because a maniac is off-model). Power budget: ~5-10k hands (the 250-hand
++/-1363 mbb run was hopeless). Slow (live solves); run in the background, ONE FREE CORE while
+training -- do not parallelize into the training cores.
 
 Run from backend/bot/:
-    python scripts/measure_turn_match.py --bot turn --hands 150 --n-buckets 20 --leaf-rivers 4 --turn-iters 80
-    python scripts/measure_turn_match.py --bot river --hands 150
-    python scripts/measure_turn_match.py --bot blueprint --hands 400
+    python scripts/measure_turn_match.py --bot turn  --hands 6000 --aivat --n-buckets 20 --leaf-rivers 4 --turn-iters 80
+    python scripts/measure_turn_match.py --bot river --hands 6000 --aivat
+    python scripts/measure_turn_match.py --bot blueprint --hands 6000 --aivat
 """
 import argparse
 import math
 import os
+import random
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import numpy as np
 
+_BOT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, _BOT_ROOT)
+sys.path.insert(0, os.path.join(_BOT_ROOT, 'tests'))   # for run_maniac_live.human_action
+
+from run_maniac_live import human_action               # aggressive (maxbet/jam) opponent styles
 from src.config import resolve_blueprint_path
 from src.storage.blueprint_db import BlueprintDB, FrozenBlueprint
 from src.abstractions.sizing import db_menu_mode, BIG_BLIND
-from src.game.game_session import GameSession
+from src.cfr.poker_game import STARTING_STACK
+from src.game.game_session import GameSession, advance_bot_turns
 from src.game.bot_strategy import BlueprintStrategy
+from src.game.range_tracker import RangeTracker
 from src.subgame.river_subgame_solver import RiverSubgameSolver
 from src.subgame.turn_subgame_solver import TurnSubgameSolver
 
@@ -42,62 +62,324 @@ from src.subgame.turn_subgame_solver import TurnSubgameSolver
 def _build_bot(kind, rawdb, fb, args):
     if kind == 'blueprint':
         return BlueprintStrategy(fb)
+    # PIN the policy to the DEPLOYED serving config (backend/api/strategy_api.py:114) so the
+    # gate verdict transfers to production: the RiverSubgameSolver class default is the
+    # UNSAFE-v1 direct solve (safe_gadget=False, gadget_anchor='belief', purify=0) -- safety
+    # is opt-IN and serving turns it on. Measuring the default would grade a stack we don't
+    # ship. iters/budget are CLI-tunable but DEFAULT to the served 200/5.0. Seed the solver's
+    # own RNG (else the bot's sampled actions are non-reproducible across runs).
+    served = dict(check_every=40, safe_gadget=True, gadget_anchor='auto',
+                  purify_threshold=0.01, max_iters=args.river_iters,
+                  time_budget=args.river_budget, rng=np.random.default_rng(args.seed))
     if kind == 'river':
-        s = RiverSubgameSolver(rawdb, max_iters=args.river_iters, time_budget=args.river_budget)
+        s = RiverSubgameSolver(rawdb, **served)
     elif kind == 'turn':
         s = TurnSubgameSolver(rawdb, n_buckets=args.n_buckets, leaf_rivers=args.leaf_rivers,
-                              turn_max_iters=args.turn_iters, max_iters=args.river_iters,
-                              time_budget=args.river_budget)
+                              turn_max_iters=args.turn_iters, turn_time_budget=args.turn_budget,
+                              max_spr_turn=args.turn_max_spr, **served)
     else:
         raise ValueError(kind)
     s.db = fb                       # cache blueprint reads across hands (huge speedup)
     return s
 
 
+def _play_and_record(session, bot, opponent, bot_seat, max_steps, want_aivat):
+    """Drive one hand through advance_bot_turns (so the continual-re-solving chaining is
+    live) with the OPPONENT seat playing the blueprint. If want_aivat, also build an AIVAT
+    record (aivat.AIVATEstimator format) by wrapping apply_action to log each action's
+    PRE-street + the folder seat -- the same proven shape as compare_gadget_policies.
+    `result` (the cross-hand chip delta) is filled by the caller. Returns the record or None."""
+    d = session.data
+    log = {'streets': [], 'folder': None}
+    orig = session.apply_action
+
+    def wrapped(action, solved_hero_probs=None):
+        if action == 'fold':
+            log['folder'] = session.current_player()
+        log['streets'].append(d['street'])
+        return orig(action, solved_hero_probs=solved_hero_probs)
+
+    if want_aivat:
+        session.apply_action = wrapped
+    try:
+        steps = 0
+        while d['status'] == 'in_hand' and steps < max_steps:
+            advance_bot_turns(session, bot)
+            if d['status'] != 'in_hand':
+                break
+            if session.is_human_turn():
+                key = session.info_set_key(d['human_seat'])
+                legal = session.legal_actions()
+                session.apply_action(opponent.decide(key, legal, {}))
+            steps += 1
+    finally:
+        if want_aivat:
+            session.apply_action = orig
+
+    if not want_aivat:
+        return None
+
+    res = d.get('result') or {}
+    # TOTAL committed per seat = pre-final-street invested + this street's contribution
+    # (the final street's bets live in `history`, not yet folded into p*_invested), via the
+    # engine's own accounting (includes blinds, matches the final pot). raw p*_invested
+    # understates it and misses every all-in -- this is what AIVAT's c3 needs.
+    g = session.game
+    st = min(d['street'], 3)
+    p0_tot = d['p0_invested'] + g.get_player_contribution_this_round(
+        d['history'], st, d['starting_pot'], 0, d['p0_invested'], d['p1_invested'])
+    p1_tot = d['p1_invested'] + g.get_player_contribution_this_round(
+        d['history'], st, d['starting_pot'], 1, d['p0_invested'], d['p1_invested'])
+    showdown = res.get('reason') == 'showdown'
+    both_allin = (abs(p0_tot - STARTING_STACK) < 1e-6 and abs(p1_tot - STARTING_STACK) < 1e-6)
+    allin_street = log['streets'][-1] if (showdown and both_allin and log['streets']) else None
+    a_cards = d['p0_cards'] if bot_seat == 0 else d['p1_cards']
+    b_cards = d['p1_cards'] if bot_seat == 0 else d['p0_cards']
+    # c2 (river-runout CV): if the hand reached river betting, the bot snapshotted its OWN
+    # on-model belief about the opponent at river entry (river_entry_opp). Hand it to AIVAT
+    # as B's turn-board range -- more accurate than replaying LBR's BotRange, and valid here
+    # because the opponent IS the blueprint the tracker models. (No 'events' -> c2 from this.)
+    river_range = None
+    board = list(d['community'])
+    if d.get('river_entry_opp') is not None and len(board) >= 5:
+        opp = RangeTracker.from_dict(d['river_entry_opp'], session.cards)
+        river_range = {'range': opp, 'turn_board': board[:4], 'river_card': board[4],
+                       'pot': float(d['starting_pot'])}      # pot carried into the river
+    return {
+        'seat_of_A': bot_seat,
+        'hand_a': list(a_cards),
+        'hand_b': list(b_cards),
+        'board': board,
+        'events': [],                                  # c2 comes from river_range, not events
+        'river_range': river_range,
+        'allin_street': allin_street,
+        'folded': log['folder'],
+        'invested': [p0_tot, p1_tot],
+        # 'result' filled in by the caller (the cross-hand human_net delta).
+    }
+
+
+def _turn_stats_report(bot, indent="  "):
+    """#3 fire-rate / latency / per-deviation-EV for a TurnSubgameSolver (no-op otherwise).
+    The vacuous-gate finding was invisible because the harness never tallied these."""
+    s = getattr(bot, 'stats', None)
+    if not s or not s.get('turn_calls'):
+        return
+    print(f"{indent}turn fire: solves(past SPR gate)={s['turn_calls']} "
+          f"deviated={s.get('turn_deviated', 0)} kept-blueprint={s.get('turn_kept', 0)} "
+          f"nonconverged/timeout={s.get('turn_timeout', 0)}")
+    secs = getattr(bot, 'turn_solve_seconds', [])
+    if secs:
+        a = np.array(secs)
+        print(f"{indent}turn solve wall-s: p50={np.percentile(a, 50):.1f} "
+              f"p90={np.percentile(a, 90):.1f} max={a.max():.1f} "
+              f"(budget={getattr(bot, 'turn_time_budget', 0):.0f}s)")
+    evd = getattr(bot, 'turn_deviation_evs', [])
+    if evd:
+        print(f"{indent}turn deviation gate evDelta (chips): mean={np.mean(evd):+.1f} "
+              f"min={np.min(evd):+.1f} max={np.max(evd):+.1f} n={len(evd)}")
+
+
+def _opponent_action(style, opponent, sess):
+    """The opponent's action. 'maxbet'/'jam'/etc -> aggressive pot-builder (run_maniac_live)
+    so turns arrive at LOW SPR (small, fast-solving trees -> the turn solver actually fires);
+    'blueprint' -> a passive blueprint villain (rarely builds the pot, so the turn ~never
+    fires -- that was the vacuous-gate trap)."""
+    if style != 'blueprint':
+        return human_action(sess, style)
+    return opponent.decide(sess.info_set_key(sess.data['human_seat']), sess.legal_actions(), {})
+
+
+def _hand_chips(seed_h, human_seat, bot, opponent, opp_style, strat_fn, menu, max_steps):
+    """#4 CRN: play ONE hand on a FRESH session seeded for pairing; return the bot's chips.
+    PAIRING-LEAK FIX: deck/opponent/blueprint-sampling share the global `random` while the
+    solver samples from `_rng`; once the turn bot fires and consumes `_rng` (not `random`),
+    the opponent's later `random` draws DESYNC between arms -> spurious divergence (the 15-vs-3
+    bug). Fix: reseed BOTH `random` and the bot's `_rng` to a DETERMINISTIC per-decision seed
+    before every bot/opponent decision, so the two arms are BIT-IDENTICAL until a REAL turn
+    deviation -- regardless of how much `_rng` a solve consumed internally. Non-deviation hands
+    then diff exactly 0; only genuine turn deviations contribute. human_seat alternates."""
+    random.seed(seed_h)
+    sess = GameSession.new('crn', 'opp', strategy_fn=strat_fn, menu_mode=menu,
+                           max_raises_per_street=float('inf'))
+    if human_seat != 0:                       # re-deal the SAME deck with the seat swapped
+        random.seed(seed_h)
+        sess._deal_hand(hand_number=1, human_seat=human_seat)
+
+    dcount = [0]
+    orig_decide = bot.decide
+
+    def seeded_decide(key, legal, public):    # per-decision deterministic RNG (arm-independent)
+        s = seed_h * 1_000_003 + dcount[0]
+        dcount[0] += 1
+        random.seed(s)
+        if getattr(bot, '_rng', None) is not None:
+            bot._rng = np.random.default_rng(s)
+        return orig_decide(key, legal, public)
+
+    bot.decide = seeded_decide
+    ocount = [0]
+    try:
+        steps = 0
+        while sess.data['status'] == 'in_hand' and steps < max_steps:
+            advance_bot_turns(sess, bot)
+            if sess.data['status'] != 'in_hand':
+                break
+            if sess.is_human_turn():
+                random.seed(seed_h * 7_000_003 + ocount[0])   # opponent RNG: own namespace
+                ocount[0] += 1
+                sess.apply_action(_opponent_action(opp_style, opponent, sess))
+            steps += 1
+    finally:
+        bot.decide = orig_decide
+    return -float(sess.data['human_net'])     # fresh session: bot's chips this hand
+
+
+def run_paired(path, hands, seed, args):
+    """#4 CRN-paired river-vs-turn: play each hand on the SAME deck with BOTH stacks and diff
+    the per-hand chips. ~all non-fire hands cancel exactly -> the (turn-river) stderr is
+    driven only by the handful of hands the turn solver acts on, a several-fold variance cut
+    vs two independent arms. This is the decisive instrument once the solver actually fires."""
+    rawdb = BlueprintDB(path, read_only=True)
+    fb = FrozenBlueprint(rawdb)
+    menu = db_menu_mode(rawdb)
+    # ONE bot object for BOTH arms, toggling max_spr_turn to disable/enable the turn solver.
+    # Two SEPARATE objects can't be paired cleanly: they consume `_rng` differently before
+    # the (Monte-Carlo, sampled) deep-raise guard -> the guard fires for one arm but not the
+    # other -> spurious divergence (chased to ground 2026-06-15). With one object the guard,
+    # blueprint, and river paths run IDENTICALLY; only the turn-solver branch differs, so a
+    # diff means a genuine turn deviation. Determinism so non-deviation hands are bit-equal:
+    #  * purify=1.0 -> blueprint path is ARGMAX (immune to the global-`random` state);
+    #  * time budgets +inf -> every solve runs FIXED iters (a time-budgeted solve stops at a
+    #    contention-dependent iter count -> non-deterministic). SPR cap still bounds tree size.
+    # NB this measures the ARGMAX (modal) policy, not the served 0.01-mix -- the right call for
+    # isolating whether the turn SOLVE finds better strategy.
+    bot = _build_bot('turn', rawdb, fb, args)
+    bot.purify_threshold = 1.0
+    bot.time_budget = float('inf')
+    bot.turn_time_budget = float('inf')
+    turn_cap = args.turn_max_spr
+    opponent = BlueprintStrategy(fb)
+    strat_fn = BlueprintStrategy(fb).range_model_fn()
+    opp_style = args.opponent
+    print(f"PAIRED (CRN) river-vs-turn | {os.path.basename(path)} | menu={menu} | hands={hands} "
+          f"seed={seed} opp={opp_style} | turn(n={args.n_buckets},rivers={args.leaf_rivers},"
+          f"it={args.turn_iters},spr<={turn_cap:g})")
+    print("  ONE-bot ARGMAX, fixed-iters (deterministic); per-decision RNG reseed -> "
+          "non-deviation hands cancel EXACTLY\n", flush=True)
+    diffs = []
+    r_tot = t_tot = 0.0
+    ndiv = 0
+    t0 = time.time()
+    for h in range(hands):
+        seed_h = seed * 1_000_003 + h
+        human_seat = h % 2
+        bot.max_spr_turn = -1.0          # river arm: turn solver DISABLED (acts as river bot)
+        rc = _hand_chips(seed_h, human_seat, bot, opponent, opp_style, strat_fn, menu,
+                         args.max_steps)
+        bot.max_spr_turn = turn_cap      # turn arm: turn solver ENABLED
+        tc = _hand_chips(seed_h, human_seat, bot, opponent, opp_style, strat_fn, menu,
+                         args.max_steps)
+        d = tc - rc
+        diffs.append(d)
+        r_tot += rc
+        t_tot += tc
+        if abs(d) > 1e-9:
+            ndiv += 1
+        if (h + 1) % max(1, hands // 10) == 0:
+            nn = len(diffs)
+            md = sum(diffs) / nn / BIG_BLIND * 1000.0
+            print(f"  hand {h + 1:5d}: (turn-river) {md:+8.1f} mbb/hand  diverged={ndiv}/{nn}  "
+                  f"({time.time() - t0:.0f}s)", flush=True)
+    rawdb.close()
+    n = len(diffs)
+    mean_d = sum(diffs) / n if n else 0.0
+    var = sum((x - mean_d) ** 2 for x in diffs) / n if n else 0.0
+    md_mbb = mean_d / BIG_BLIND * 1000.0
+    se_mbb = (math.sqrt(var / n) / BIG_BLIND * 1000.0) if n else 0.0
+    print(f"\n  river arm {r_tot / n / BIG_BLIND * 1000.0:+.1f}  turn arm "
+          f"{t_tot / n / BIG_BLIND * 1000.0:+.1f} mbb/hand (raw, paired draws)")
+    print(f"  PAIRED (turn - river) = {md_mbb:+.1f} +/- {se_mbb:.1f} mbb/hand over {n} hands "
+          f"(diverged on {ndiv} = {100.0 * ndiv / max(1, n):.1f}%; {time.time() - t0:.0f}s)")
+    _turn_stats_report(bot)
+    print("\n  GATE: paired diff > 0 beyond ~2se => turn solving ADDS EV over river-only.")
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--bot', choices=['turn', 'river', 'blueprint'], default='turn')
     p.add_argument('--db', default=None)
-    p.add_argument('--hands', type=int, default=150)
+    p.add_argument('--hands', type=int, default=6000)
+    p.add_argument('--seed', type=int, default=42)
+    p.add_argument('--aivat', action='store_true',
+                   help="Report AIVAT-corrected mbb/hand (c1 preflop-equity + c2 river-runout + "
+                        "c3 all-in-EV control variates) alongside raw -- cuts the card-luck variance.")
     p.add_argument('--n-buckets', type=int, default=20)
     p.add_argument('--leaf-rivers', type=int, default=4)
     p.add_argument('--turn-iters', type=int, default=80)
-    p.add_argument('--river-iters', type=int, default=150)
-    p.add_argument('--river-budget', type=float, default=12.0)
+    p.add_argument('--turn-budget', type=float, default=10.0,
+                   help="wall-clock cap per turn solve incl. leaf-build (s); raise for an "
+                        "OFFLINE gate so high-SPR turns actually solve instead of timing out.")
+    p.add_argument('--turn-max-spr', type=float, default=10.0,
+                   help="skip turns above this SPR (bigger tree -> leaf-build timeout). Keep "
+                        "it in the band that solves within --turn-budget.")
+    p.add_argument('--opponent', choices=['blueprint', 'maxbet', 'jam', 'widejam'],
+                   default='blueprint',
+                   help="paired-gate villain. 'maxbet' builds pots -> LOW-SPR turns -> the turn "
+                        "solver actually fires (a passive 'blueprint' rarely triggers it).")
+    p.add_argument('--river-iters', type=int, default=200)    # served strategy_api.py value
+    p.add_argument('--river-budget', type=float, default=5.0)  # served strategy_api.py value
     p.add_argument('--max-steps', type=int, default=400)
+    p.add_argument('--paired', action='store_true',
+                   help="#4 CRN-paired river-vs-turn diff (low variance); ignores --bot/--aivat.")
     args = p.parse_args()
+
     path = args.db or resolve_blueprint_path()
+    if args.paired:
+        run_paired(path, args.hands, args.seed, args)
+        return
     rawdb = BlueprintDB(path, read_only=True)
     fb = FrozenBlueprint(rawdb)
     menu = db_menu_mode(rawdb)
     bot = _build_bot(args.bot, rawdb, fb, args)
-    human = BlueprintStrategy(fb)
+    opponent = BlueprintStrategy(fb)
     strat_fn = BlueprintStrategy(fb).range_model_fn()
 
-    print(f"bot={args.bot} vs blueprint | {os.path.basename(path)} | menu={menu} | "
-          f"hands={args.hands} | turn(n={args.n_buckets},rivers={args.leaf_rivers},"
-          f"it={args.turn_iters})", flush=True)
+    estimator = aivat_db = None
+    if args.aivat:
+        from src.evaluation.aivat import AIVATEstimator
+        aivat_db = BlueprintDB(path, read_only=True)
+        estimator = AIVATEstimator(aivat_db, seed=args.seed)
 
-    sess = GameSession.new('m2', 'p', strategy_fn=strat_fn, menu_mode=menu)
+    print(f"bot={args.bot} vs blueprint | {os.path.basename(path)} | menu={menu} | "
+          f"hands={args.hands} seed={args.seed} aivat={args.aivat} | turn(n={args.n_buckets},"
+          f"rivers={args.leaf_rivers},it={args.turn_iters})", flush=True)
+    print("  (driven through advance_bot_turns -> continual-re-solving 1a/1b/1c are LIVE)")
+    if args.bot != 'blueprint':
+        print(f"  served policy: safe_gadget=True anchor=auto purify=0.01 "
+              f"river_iters={args.river_iters} river_budget={args.river_budget} (rng seeded)")
+    print(flush=True)
+
+    random.seed(args.seed)               # deck + opponent + solver RNG seeded for reproducibility
+    sess = GameSession.new('n0', 'bp', strategy_fn=strat_fn, menu_mode=menu,
+                           max_raises_per_street=float('inf'))
     deltas = []
+    records = []
+    prev_net = 0.0
+    bot_seat = 1 - sess.data['human_seat']
     t0 = time.time()
     for h in range(args.hands):
-        steps = 0
-        while sess.data['status'] == 'in_hand' and steps < args.max_steps:
-            seat = sess.current_player()
-            legal = sess.legal_actions()
-            key = sess.info_set_key(seat)
-            bot_seat = 1 - sess.data['human_seat']
-            if seat == bot_seat:
-                a = bot.decide(key, legal, sess.bot_public_state())
-            else:
-                a = human.decide(key, legal, {})
-            sess.apply_action(a)
-            steps += 1
-        if sess.data['status'] == 'hand_over':
-            deltas.append(-float(sess.data['result']['humanDelta']))   # bot's chips
-        if h < args.hands - 1:
+        if h > 0:
             sess.start_next_hand()
+            bot_seat = 1 - sess.data['human_seat']
+        rec = _play_and_record(sess, bot, opponent, bot_seat, args.max_steps, args.aivat)
+        net = sess.data['human_net']
+        bot_chips = -(net - prev_net)               # bot's chips this hand
+        prev_net = net
+        deltas.append(bot_chips)
+        if args.aivat and rec is not None:
+            rec['result'] = bot_chips               # AIVAT result is in chips
+            records.append(rec)
         if (h + 1) % max(1, args.hands // 10) == 0:
             n = len(deltas)
             mbb = (sum(deltas) / n / BIG_BLIND * 1000.0) if n else 0.0
@@ -107,11 +389,20 @@ def main():
 
     n = len(deltas)
     mean_chips = sum(deltas) / n if n else 0.0
-    var = sum((d - mean_chips) ** 2 for d in deltas) / n if n else 0.0
+    var = sum((dlt - mean_chips) ** 2 for dlt in deltas) / n if n else 0.0
     mbb = mean_chips / BIG_BLIND * 1000.0
     stderr = (math.sqrt(var / n) / BIG_BLIND * 1000.0) if n else 0.0
-    print(f"\n  RESULT bot={args.bot}: {mbb:+.1f} +/- {stderr:.1f} mbb/hand "
+    print(f"\n  RESULT bot={args.bot}: raw {mbb:+.1f} +/- {stderr:.1f} mbb/hand "
           f"over {n} hands ({time.time() - t0:.0f}s)")
+    if estimator is not None:
+        est = estimator.estimate(records)
+        print(f"  RESULT bot={args.bot}: AIVAT {est['aivat_mbb']:+.1f} +/- "
+              f"{est['aivat_stderr_mbb']:.1f} mbb/hand  (var -{est['var_reduction'] * 100:.0f}%; "
+              f"raw se {est['raw_stderr_mbb']:.1f})")
+        aivat_db.close()
+    _turn_stats_report(bot)
+    print("\n  GATE: prefer --paired for the decision (low-variance turn-river diff). "
+          "Unpaired arms need ~5-10k hands EACH to resolve a ~200 mbb effect.")
 
 
 if __name__ == '__main__':

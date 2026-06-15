@@ -65,6 +65,27 @@ from .information_set import InformationSet
 from .blueprint_trainer import BlueprintTrainer, _format_duration
 from .strategy_shape import strategy_shape_report, format_shape_line
 
+# Memory observability (OOM diagnosis 2026-06-15): the master OOM'd ~2h in. Log the
+# master RSS + system RAM% every round so a climbing trend is VISIBLE before the crash,
+# and we can tell a true leak (RSS climbs) from a too-high steady footprint (RSS flat,
+# system RAM already near 100%). Guarded so a missing psutil never breaks training.
+try:
+    import psutil as _psutil
+    _PROC = _psutil.Process()
+except Exception:
+    _psutil = _PROC = None
+
+
+def _mem_str():
+    if _PROC is None:
+        return ""
+    try:
+        rss = _PROC.memory_info().rss / 1e9
+        sysm = _psutil.virtual_memory().percent
+        return f" | RSS {rss:.2f}GB sysRAM {sysm:.0f}%"
+    except Exception:
+        return ""
+
 
 def _shape_line(trainer):
     """Strategy-shape sanity line from the master's in-memory average strategy
@@ -413,7 +434,7 @@ def train_blueprint_parallel(trainer, iterations, db=None, start_iteration=0,
                   f"info sets: {len(trainer.info_sets):>8,} | "
                   f"{round_ips:>7.1f} it/s round ({ips:>6.1f} avg) | "
                   f"round: {_format_duration(round_secs)} | "
-                  f"elapsed: {_format_duration(elapsed)} | ETA: {eta}")
+                  f"elapsed: {_format_duration(elapsed)} | ETA: {eta}{_mem_str()}")
 
             if db is not None and since_checkpoint >= checkpoint_every:
                 trainer.checkpoint_to_db(db, cursor - 1)

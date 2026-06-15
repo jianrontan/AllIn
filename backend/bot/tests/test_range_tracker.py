@@ -476,7 +476,29 @@ def test_bucket_cache_lru_bound():
     print("PASS test_bucket_cache_lru_bound")
 
 
+def test_observe_solved_per_hand_update():
+    """observe_solved (continual re-solving 1a): per-hand multiply by the SOLVED
+    probability of the played action + renormalise; absent hands unchanged; an
+    all-zero update keeps the prior (never blinds the range); no confidence change."""
+    import numpy as np
+    from src.abstractions.card_abstractions import CardAbstraction
+    t = RangeTracker(('HA', 'DK'), CardAbstraction())
+    conf0 = t.confidence
+    hi, lo = t.hands[0], t.hands[1]
+    t.observe_solved({frozenset(hi): 0.9, frozenset(lo): 0.1})
+    assert abs(t.w[0] / t.w[1] - 9.0) < 1e-9, "hi/lo ratio must equal 0.9/0.1"
+    assert abs(float(t.w.sum()) - 1.0) < 1e-9, "must renormalise"
+    assert np.isclose(t.w[2], t.w[3]), "hands absent from the update stay equal"
+    assert t.confidence == conf0, "bot's own range update must NOT touch confidence"
+    t2 = RangeTracker(('HA', 'DK'), CardAbstraction())
+    w0 = t2.w.copy()
+    t2.observe_solved({frozenset(h): 0.0 for h in t2.hands})
+    assert np.allclose(t2.w, w0), "all-zero update must keep the prior (no blinding)"
+    print("PASS test_observe_solved_per_hand_update")
+
+
 TESTS = [
+    test_observe_solved_per_hand_update,
     test_initial_hand_count,
     test_reveal_card_removal,
     test_uniform_model_no_confidence_loss,

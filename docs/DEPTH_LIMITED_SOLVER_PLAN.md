@@ -240,3 +240,112 @@ Nested Subgame Solving*. Code: `river_subgame_solver.py`, `river_tree.py`, `rive
    the budget-granularity bug bites harder. (M2)
 7. **LBR victim lockstep** (BUG-008) — update `lbr.py` for the turn solver or M4's LBR is invalid.
 8. `showdown_kernel.py` is in `src/evaluation/`, not `src/subgame/` (doc fix).
+
+## 12. REVIVAL — Stage 1: the consistency rebuild (continual re-solving). Started 2026-06-15.
+
+The N0 failure (NN_LEAF_PLAN §6d) is NOT a broken layer — it is three CROSS-layer
+inconsistencies that only appear once the turn solver sits above the river solver. Each is
+fixed at an identified site. The 5a gadget machinery (`blueprint_cfv`, `river_cfr.run_gadget`)
+is the foundation. Heavy validation (N0′) is deferred to post-retrain (free CPU + the right
+blueprint; leaf values re-extract on the final blueprint per D6). Order: 1a → 1b → 1c → Stage 2.
+
+**STATUS (2026-06-15): all of Stage 1 (1a + 1b + 1c) is IMPLEMENTED and smoke-validated; turn
+5/5 + river 14/14 tests green. The only thing left for the revival decision is the heavy Stage-2
+N0′ gate (`ExactLeafTurnCFR(adversary='river_br')` exploitability + a power-budgeted AIVAT match),
+which is deliberately deferred until the 100M retrain finishes and the CPU frees up.**
+
+**1a — Own-range chaining ✅ IMPLEMENTED (2026-06-15, validation deferred to post-retrain).**
+5-part chain: `RangeTracker.observe_solved(prob_by_hand)` (per-hand multiply, no confidence
+update) + `_pick_engine_action` records `chosenTreeAction` + `TurnSubgameSolver._attach_hero_range_update`
+(builds `last_debug['heroRangeUpdate']` = solved per-hand P(played action) ONLY when the EV gate
+DEVIATED) + `advance_bot_turns` threads it + `apply_action(solved_hero_probs=)` routes the bot-range
+update through `observe_solved`. Turn-only (the river is last-street, no downstream). Unit-tested
+(test_range_tracker `test_observe_solved_per_hand_update`); range-tracker 23/23, game-session 15/15,
+no regression. HEAVY validation (turn deviation → river-entry hero range differs from blueprint →
+N0′) deferred to free CPU + the retrained blueprint.
+- Break: `game_session._advance_street` snapshots `river_entry_bot = d['bot_range']`, the hero
+  tracker updated by observing the bot's actions under the BLUEPRINT model. After a turn-solver
+  deviation the bot reaches the river with a DIFFERENT range, but the river solver still assumes
+  the blueprint range → it mis-balances value/bluffs and plays worse (this is what degrades the
+  previously-great river solver, per §6d thread 1).
+- Fix: when the bot's turn action came from the turn SOLVE, update `bot_range` with the solver's
+  per-hand strategy at the turn node (`solver.average_strategy(node)` -> [H,A]) instead of the
+  blueprint model. `solve_turn_for_action` already holds the solved CFR in `info['cfr']`; expose
+  the [H,A] solved strategy (+ the node) so `game_session.apply_action`'s bot path observes the
+  bot's action under THAT strategy for the hero range. (Villain/opp_range update is unchanged —
+  it already observes the bot's realized action.)
+
+**1b — CFV chaining ✅ IMPLEMENTED (2026-06-15, validation deferred).** As predicted it mostly
+fell out of 1a + the 5a gadget: `game_session` sets `turn_deviated` when the turn solve deviates
+(set in apply_action, exposed as `turnDeviated` in bot_public_state's river block, reset per hand);
+the river `_solver_inputs` threads it; `solve_for_action(turn_deviated=)` forces the gadget to the
+**'belief' anchor** (clamp the villain to its blueprint-river-CFV opt-out at the turn-solved hero
+reach [1a] + tracked villain = the turn's promise) instead of auto-exploiting; `_safe_solve` gained
+an `anchor=` override. So after a turn deviation the river honors the turn's promise -> the turn plan
+is a valid lower bound (Burch/Brown nested-safe argument). No regression (river 14/14, game 15/15).
+NB: the standalone-safety vs consistency tension (belief-clamp isn't wrong-belief-robust) is a
+Stage-4 (turn-root gadget) concern, not 1b.
+- Break: the inherited river path solves the gadget anchored to `blueprint_cfv` at the TRACKER
+  reaches; but the turn solve promised the villain specific CFVs (§6d thread 2: "the turn plans
+  for a river that won't happen"). The river must honor the turn's promise.
+- Fix: this LARGELY FALLS OUT of 1a. The turn leaf is, by construction, blueprint river-play
+  under the turn-SOLVED entry ranges -> the per-realized-river opt-out IS
+  `blueprint_cfv(river_tree, ba, raw, turn_solved_reach0, turn_solved_reach1, villain_seat)` =
+  the EXACT 5a function called with the turn-solved river-entry reaches (which 1a now produces)
+  instead of the tracker reaches. So: ensure `_safe_solve`'s gadget anchor uses the turn-solved
+  river-entry reach when the river follows a turn deviation. New code is small once 1a lands.
+
+**1c — Exact-leaf EV gate ✅ IMPLEMENTED (2026-06-15, validation deferred to post-retrain).**
+- Break: `_gate_and_pick` -> `hand_action_evs` reads the solver's BUCKETED leaf (TurnCFR._terminal
+  matrix) -> the gate SELF-GRADES (a deviation that looks good under the coarse leaf passes even if
+  it loses under the true continuation; §6d / N0 "EV-gate self-grades").
+- Fix (landed): `_gate_and_pick` now calls `self._hand_action_evs(info, node, row)` (was the bare
+  `hand_action_evs`). The base `RiverSubgameSolver._hand_action_evs` keeps the bucketed behaviour
+  (river leaves are exact already); `TurnSubgameSolver._hand_action_evs` OVERRIDES it to build an
+  `ExactLeafTurnCFR`, copy the solved `strat_sum`, and read the bot row out of
+  `node_action_values` valued by the EXACT blueprint river rollout. `ExactLeafTurnCFR._terminal`
+  was added (two-sided exact leaf via `_terminal_one` per seat) so `node_action_values` grades on
+  the true continuation, not the bucket matrix. `solve_turn_for_action` stashes
+  `board4`/`rivers`/`ba_cache` in `info` for the exact path.
+- Validated (smoke, 2026-06-15): on a turn spot the exact EVs differ from the bucketed EVs
+  (gate is genuinely active, not a no-op), e.g. `allin` exact −32.85 vs bucketed −36.29; cost
+  ~17s/solve at solve fidelity (offline gate, not live). `test_turn_subgame_solver.py` 5/5 and
+  `test_river_subgame_solver.py` 14/14 green (no regression on either path under the new EV call).
+
+**Stage 2 — the redesigned N0′ gate (what decides if this ships). INSTRUMENTS CODED 2026-06-15;
+the heavy RUN is deferred to post-retrain.**
+- (i) Exploitability gate — `ExactLeafTurnCFR(adversary='river_br')` is the out-of-MODEL-river
+  adversary (BR also deviates on the river) -> exposes the frozen-range trap the fixes target.
+  ALREADY CODED: `scripts/measure_turn_solve_gate.py --adversary river_br` (blueprint-turn vs
+  solved-turn exploitability under the river-BR leaf). Run on free cores post-retrain.
+- (ii) Power-budgeted real-game match — `scripts/measure_turn_match.py` (AIVAT, ~5-10k hands; the
+  250-hand ±1363 mbb run was hopeless): the consistency-fixed turn stack must beat the RIVER-ONLY
+  stack (+1801 mbb baseline), not just the blueprint. **REWRITTEN 2026-06-15** so it is a REAL N0′
+  instrument: it now drives every hand through `advance_bot_turns` (so the 1a/1b/1c continual-
+  re-solving chaining is LIVE, exactly like serving) and adds `--aivat` (c1+c2+c3 live-AIVAT).
+  The OLD version drove a bare `apply_action(a)` loop that bypassed `advance_bot_turns` ->
+  it measured the turn solver WITHOUT the consistency fixes (a silent false signal); fixed.
+  - **AIVAT c2 (river-runout CV) added 2026-06-15** for more power per hand (the 250-hand run was
+    hopeless on variance). c2 needs B's turn-board range; the match feeds it the bot's OWN on-model
+    `river_entry_opp` RangeTracker snapshot (duck-types as LBR's BotRange via `.hands`/`.w`) --
+    more accurate than replaying LBR's BotRange (BUG-008 drift) and valid because the opponent IS
+    the blueprint that belief models. `aivat._hand_variates` prefers `rec['river_range']` over the
+    events replay; unbiased for any fixed range (conditional mean 0). Verified: c2 fires on every
+    river-reaching hand, beta(c2) non-zero, ~43% var-reduction on an 80-hand probe.
+  - **Latent 1a breakage fixed:** the shared AIVAT record wrapper `compare_gadget_policies.
+    _play_and_record.wrapped(action)` (reused by `test_aivat_live`) didn't accept the
+    `solved_hero_probs=` kwarg 1a's `advance_bot_turns` now always passes -> crash mid-hand,
+    uncaught because the test wasn't re-run after 1a. Wrapper now accepts+forwards it.
+  - **BUG found+fixed by the rewrite's in-match smoke (2026-06-15):** `_gate_and_pick` is SHARED
+    between the turn and the inherited river path, so a `TurnSubgameSolver` handling a RIVER
+    decision dispatched into the 1c turn override of `_hand_action_evs` with river `info` (a base
+    `RiverCFR`, no `tb_idx`) -> `AttributeError`. Fix: the turn override defers to `super()` unless
+    `info` carries `'board4'` (only turn info stashes it). Neither suite caught it (river tests use
+    the base solver; turn tests only make a turn decision) -> regression test
+    `test_turn_solver_handles_river_decision` added (turn 6/6). In-match smoke now clean:
+    `turn_solver` + `river_solver` both fire, 1a chains in-match (heroRangeUpdate observed).
+- If it fails WITH consistency fixed, the M-pre thin-band explanation wins -> stop for good.
+
+**Test strategy (CPU-light now; heavy N0′ post-retrain):** per-fix unit smokes on a single turn
+spot -- 1a: river-entry hero range differs from blueprint after a forced turn deviation; 1c:
+exact-leaf EV differs from the bucketed EV on a spot. NOT the heavy match (that fights training).

@@ -274,6 +274,22 @@ class RangeTracker:
         # records that the action was unexpected, and the consumer falls back to
         # blueprint/equity when confidence is low.
 
+    def observe_solved(self, prob_by_hand):
+        """Condition the bot's OWN range on it having played an action under a SOLVED
+        per-hand strategy (continual re-solving, fix 1a). Each hand's weight is
+        multiplied by its SOLVED probability of the played action -- per HAND, because
+        the subgame solver resolves exact hands, not buckets (so this can't go through
+        the bucket-keyed observe()). This is the bot's reach, not an opponent model, so
+        there is NO confidence update. `prob_by_hand`: {frozenset(hand): prob}; a hand
+        absent from the dict is left unchanged (factor 1.0)."""
+        probs = np.array([prob_by_hand.get(frozenset(h), 1.0) for h in self.hands])
+        new_w = self.w * probs
+        s = new_w.sum()
+        if s > 1e-12:
+            self.w = new_w / s
+        # else: the played action has ~zero solved mass across every live hand -> keep
+        # the prior (mirrors observe()'s off-model guard; never blind the belief).
+
     # -- accessors -----------------------------------------------------
     def weighted_hands(self):
         """[(hand, weight), ...] for hands with positive weight (unnormalised)."""

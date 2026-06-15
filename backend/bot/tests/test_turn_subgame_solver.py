@@ -42,7 +42,10 @@ def _trackers():
 
 
 def _solver(db):
-    return TurnSubgameSolver(db, n_buckets=16, leaf_rivers=3, turn_max_iters=50)
+    # turn_time_budget large so these CORRECTNESS tests never fall back on the wall-clock
+    # cap (the leaf build can take >10s on a busy/CI machine); latency is measured separately.
+    return TurnSubgameSolver(db, n_buckets=16, leaf_rivers=3, turn_max_iters=50,
+                             turn_time_budget=600.0)
 
 
 def test_solve_turn_for_action_oop():
@@ -118,6 +121,35 @@ def test_decide_falls_back_off_turn():
     print(f"PASS test_decide_falls_back_off_turn (action={a!r})")
 
 
+def test_turn_solver_handles_river_decision():
+    """REGRESSION: a TurnSubgameSolver also handles RIVER decisions via the inherited
+    path, and _gate_and_pick is SHARED. The 1c turn override of _hand_action_evs must
+    DEFER river info (a base RiverCFR, no tb_idx/board4 -- already exact at showdown) to
+    the base impl; otherwise a river decision crashes with AttributeError on `tb_idx`.
+    Caught only end-to-end (the river tests use the base solver; the turn tests only make
+    a turn decision) -> pin it here."""
+    db = _blueprint_db()
+    if db is None:
+        print("SKIP test_turn_solver_handles_river_decision (no blueprint)")
+        return
+    s = _solver(db)
+    river_board = _BOARD4 + ['C2']
+    villain = RangeTracker(_HOLE, _CARDS); villain.reveal(river_board)
+    hero = RangeTracker((), _CARDS); hero.reveal(river_board)
+    legal = ['check', 'bet_small', 'bet_medium', 'bet_large', 'allin']
+    ps = {
+        'street': 'river', 'community': river_board, 'hole_cards': _HOLE,
+        'riverEntryPot': 24.0, 'riverEntryStacks': (88.0, 88.0), 'botSeat': 1,
+        'opp_range': villain, 'hero_range': hero, 'riverPath': [],
+    }
+    a = s.decide('pf_9_5_oop_river_', legal, ps)
+    db.close()
+    ok = (a in legal) or a.startswith('bet_custom_') or a.startswith('raise_custom_')
+    assert ok, f"unexpected action: {a}"
+    assert s.last_debug is not None and s.last_debug.get('mode') != 'turn_solver'
+    print(f"PASS test_turn_solver_handles_river_decision (action={a}, mode={s.last_debug['mode']})")
+
+
 def test_turn_spr_gate():
     db = _blueprint_db()
     if db is None:
@@ -140,6 +172,7 @@ def test_turn_spr_gate():
 TESTS = [
     test_decide_falls_back_off_turn,
     test_turn_spr_gate,
+    test_turn_solver_handles_river_decision,
     test_solve_turn_for_action_oop,
     test_solve_turn_for_action_ip_after_check,
     test_decide_turn_emits_action,

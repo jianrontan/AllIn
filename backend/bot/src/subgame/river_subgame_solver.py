@@ -369,7 +369,7 @@ class RiverSubgameSolver(BlueprintStrategy):
         bp_engine = self._distribution(info_set_key, legal_actions)
         baseline = blueprint_to_tree_dist(bp_engine, node, self._postflop_menu)
         row = hand_row(info['ba'], spec['hole'], info['idx'])
-        evs = hand_action_evs(info['cfr'], node, row, info['reach0'], info['reach1'])
+        evs = self._hand_action_evs(info, node, row)
         untrained = self._is_untrained(info_set_key, legal_actions)
         # C3: at an UNTRAINED key the baseline is the passive coin-flip fallback -- gating
         # the solve against that garbage can wrongly KEEP it, so trust the solve outright.
@@ -419,6 +419,13 @@ class RiverSubgameSolver(BlueprintStrategy):
         if anchor is not None:
             self.stats['gadget_exploit' if 'exploit' in anchor else 'gadget_clamp'] += 1
         return self._pick_engine_action(chosen, legal_actions, spec, node)
+
+    def _hand_action_evs(self, info, node, row):
+        """Per-action chip EVs for the bot's hand, used by the EV gate. River: the solved
+        average-strategy values (the river leaf is an exact showdown). Overridden on the
+        TURN (1c) to value the depth-limit leaf with the EXACT rollout, not the bucketed
+        matrix the solve used (so the gate can't self-grade a losing deviation)."""
+        return hand_action_evs(info['cfr'], node, row, info['reach0'], info['reach1'])
 
     # -- facing-an-all-in terminal guard (preflop / flop / turn) ---------------
     def _facing_allin_guard(self, legal_actions, ps):
@@ -846,11 +853,15 @@ class RiverSubgameSolver(BlueprintStrategy):
             'hero_tracker': ps['hero_range'],
             'confidence': getattr(tracker, 'confidence', 1.0),
             'river_path': ps['riverPath'],
+            # 1b: if the turn solver deviated, the river must honor the turn's promise
+            # (gadget-clamp to the turn-solved reaches) rather than auto-exploit.
+            'turn_deviated': bool(ps.get('turnDeviated')),
         }
 
     # -- core: solve + read off ------------------------------------------------
     def solve_for_action(self, *, board, pot_entry, stacks, bot_seat, hole,
-                         villain_tracker, hero_tracker, confidence, river_path):
+                         villain_tracker, hero_tracker, confidence, river_path,
+                         turn_deviated=False):
         """Solve the river subgame and return (action_dist, node, info), where
         action_dist is {tree_action: prob} for the bot's actual hand at its
         decision node along `river_path`.
@@ -892,8 +903,13 @@ class RiverSubgameSolver(BlueprintStrategy):
             raise ValueError(f"path landed on seat {node.player}, not the bot ({bot_seat})")
 
         if self.safe_gadget:
+            # 1b: after a TURN deviation, force the gadget to CLAMP to the turn's promise
+            # (the 'belief' anchor opt-out = blueprint_cfv at the turn-solved hero reach
+            # [via 1a] + the tracked villain) rather than auto-exploit -- otherwise the
+            # river plays a strategy the turn leaf didn't plan for (NN_LEAF_PLAN 6d).
+            anchor = 'belief' if turn_deviated else self.gadget_anchor
             cfr, info = self._safe_solve(tree, ba, reach0, reach1, hero, villain,
-                                         bot_seat, villain_tracker, idx)
+                                         bot_seat, villain_tracker, idx, anchor=anchor)
         else:
             cfr, info = solve_river(
                 tree, ba, reach0, reach1, max_iters=self.max_iters,
@@ -921,8 +937,9 @@ class RiverSubgameSolver(BlueprintStrategy):
 
     # -- safe-gadget solve policy (belief / blueprint / auto) ------------------
     def _safe_solve(self, tree, ba, reach0, reach1, hero, villain, bot_seat,
-                    villain_tracker, idx):
-        """Run the river solve under the safe-gadget policy (self.gadget_anchor) and
+                    villain_tracker, idx, anchor=None):
+        """Run the river solve under the safe-gadget policy (`anchor`, default
+        self.gadget_anchor; 1b passes 'belief' to clamp to the turn promise) and
         return (cfr, info). 'belief'/'blueprint' anchor the re-solving gadget directly
         (tracked reach vs uniform card-removal range). 'auto' EXPLOITS (unsafe-v1) when
         that is provably within the blueprint's river best-response on THIS spot, and
@@ -936,6 +953,7 @@ class RiverSubgameSolver(BlueprintStrategy):
         the read is untrusted AND the self-check trips; the pre-filter avoids the double
         solve in the common (trusted) case, and 'belief'/'blueprint' always run one."""
         from .blueprint_projection import blueprint_cfv, blueprint_strategy_on_tree
+        anchor = anchor or self.gadget_anchor       # 1b may force 'belief' (turn-promise clamp)
         villain_seat = 1 - bot_seat
         raw = self.db.get_average_strategy if self.db else (lambda k: None)
         # Uniform card-removal villain range -- the robust ('blueprint') anchor + the
@@ -953,11 +971,11 @@ class RiverSubgameSolver(BlueprintStrategy):
                 max_iters=self.max_iters, check_every=self.check_every,
                 time_budget=self.time_budget)
 
-        if self.gadget_anchor == 'belief':
+        if anchor == 'belief':
             cfr, info = gadget(villain)
             info['anchor'] = 'belief'
             return cfr, info
-        if self.gadget_anchor == 'blueprint':
+        if anchor == 'blueprint':
             cfr, info = gadget(uniform_villain)
             info['anchor'] = 'blueprint'
             return cfr, info
@@ -968,10 +986,10 @@ class RiverSubgameSolver(BlueprintStrategy):
             check_every=self.check_every, gap_threshold=self.gap_threshold,
             time_budget=self.time_budget)
         if self._trust_read(villain_tracker):
-            info['anchor'] = ('confidence_exploit' if self.gadget_anchor == 'confidence'
+            info['anchor'] = ('confidence_exploit' if anchor == 'confidence'
                               else 'auto_exploit_trusted')   # pre-filter: skip the BR walks
             return cfr, info
-        if self.gadget_anchor == 'confidence':
+        if anchor == 'confidence':
             # A: untrusted read -> straight to the safe blueprint-anchored gadget. Cheaper
             # than 'auto' (no self-check / BR walks), but clamps even on the spots where the
             # exploit would have been safe -- it gives up that exploitation.
@@ -1071,6 +1089,10 @@ class RiverSubgameSolver(BlueprintStrategy):
         else:
             with self._lock:                        # numpy Generator isn't thread-safe
                 choice = str(self._rng.choice(labels, p=weights / weights.sum()))
+        # Record the sampled TREE action so a turn solve can chain the bot's own range
+        # off the SOLVED play (continual re-solving 1a). Harmless to the river path.
+        if self.last_debug is not None:
+            self.last_debug['chosenTreeAction'] = choice
 
         bot_seat = spec['bot_seat']
         if choice in ('check', 'fold', 'call') and choice in legal_actions:

@@ -63,11 +63,14 @@ def _play_and_record(session, bot, style, bot_seat):
     log = {'streets': [], 'folder': None}
     orig = session.apply_action
 
-    def wrapped(action):
+    def wrapped(action, solved_hero_probs=None):
+        # advance_bot_turns (1a continual re-solving) calls apply_action with the
+        # solved_hero_probs kwarg; the wrapper must accept and forward it or the
+        # bot loop crashes mid-hand.
         if action == 'fold':
             log['folder'] = session.current_player()
         log['streets'].append(d['street'])
-        return orig(action)
+        return orig(action, solved_hero_probs=solved_hero_probs)
 
     session.apply_action = wrapped
     try:

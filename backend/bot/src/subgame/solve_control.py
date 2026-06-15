@@ -22,6 +22,7 @@ The blueprint baseline (and the warm-start prior) are fed in at step-6 wiring,
 where the blueprint<->tree bridge is built; here the gate is a pure function over
 an explicit baseline distribution.
 """
+import math
 import time
 
 import numpy as np
@@ -58,7 +59,7 @@ def solve_river(tree, ba, reach0, reach1, *, max_iters=1000, check_every=50,
             remaining = time_budget - (time.time() - t0)
             if remaining <= 0:
                 break
-            if per_iter and per_iter > 0:
+            if per_iter and per_iter > 0 and math.isfinite(remaining):
                 step = max(1, min(step, int(remaining / per_iter)))
         bt = time.time()
         cfr.run(reach0, reach1, iters=step)
@@ -100,7 +101,7 @@ def solve_river_gadget(tree, ba, hero_reach, villain_reach, optout, villain_seat
             remaining = time_budget - (time.time() - t0)
             if remaining <= 0:
                 break
-            if per_iter and per_iter > 0:
+            if per_iter and per_iter > 0 and math.isfinite(remaining):
                 step = max(1, min(step, int(remaining / per_iter)))
         bt = time.time()
         cfr.run_gadget(hero_reach, villain_reach, optout, villain_seat, iters=step)

@@ -138,6 +138,16 @@ class ExactLeafTurnCFR(TurnCFR):
         self.adversary = adversary
         super().__init__(tree, ba, tb_idx, leaf_matrix_fn)
 
+    def _terminal(self, node, reach0, reach1):
+        """Two-sided EXACT-leaf terminal so node_action_values / _eval grade a strategy
+        on the TRUE continuation (1c: the turn EV gate must not self-grade on the bucketed
+        leaf). The leaf is just _terminal_one per seat (which does the exact rollout);
+        a fold is the exact pot transfer (the bucketed branch is already exact there)."""
+        if node.folder is None:
+            return (self._terminal_one(node, 0, reach1),
+                    self._terminal_one(node, 1, reach0))
+        return super()._terminal(node, reach0, reach1)
+
     def _terminal_one(self, node, hero, reach_villain):
         if node.folder is None:                       # LEAF
             vill = {self._hands[i]: float(reach_villain[i])

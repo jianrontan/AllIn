@@ -9,13 +9,25 @@
 #     do NOT touch the postflop tables.) River stays at its committed 10 buckets -- the
 #     live river solver refines the river anyway, so it isn't a leak -- and isn't baked.
 #
-# Run on a FRESH Ubuntu box (as root) AFTER cloning the repo. See the README block the
-# assistant gives you; in short:
-#     nohup bash backend/bot/scripts/train_on_cloud.sh > ~/train.log 2>&1 &
-#     tail -f ~/train.log
+# ---- HETZNER CCX43 quickstart (16 DEDICATED vCPU / 64 GB RAM, ~EUR0.13/h, hourly) -----
+# The 64 GB is deliberate: the laptop run OOM'd (master ~2h in) at 98% RAM. CCX43's RAM +
+# the ALLIN_RIVER_CACHE_BOARDS cap below give the headroom to actually finish. Dedicated
+# vCPU (not shared) -> no throttling, and Hetzner has a Singapore region.
+#   1. Create CCX43, image "Ubuntu 24.04", add your SSH key. Then:
+#        ssh root@<box-ip>
+#        apt-get update -qq && apt-get install -y -qq git
+#        git clone <your repo URL> AllIn && cd AllIn
+#        nohup bash backend/bot/scripts/train_on_cloud.sh > ~/train.log 2>&1 &
+#        tail -f ~/train.log            # watch it; look for the RSS/sysRAM on each round line
+#   2. Speed test FIRST (gauge it/s, ~minutes, near-zero cost):
+#        ITERATIONS=200000 bash backend/bot/scripts/train_on_cloud.sh
+#   3. When done: scp ~/result down (see closing message), then DESTROY the box (hourly
+#      billing -> stop paying). A ~4-day run is ~EUR13.
 #
-# Quick speed test first (recommended): set a tiny iteration count to gauge throughput:
-#     ITERATIONS=200000 bash backend/bot/scripts/train_on_cloud.sh
+# MEMORY WATCH: each round prints `RSS x.xxGB sysRAM yy%`. sysRAM should plateau, not climb
+# toward 100%. If it climbs, lower WORKERS or ALLIN_RIVER_CACHE_BOARDS (or ping the assistant
+# -- the parallel-trainer broadcast is pickled PER worker each round, so more workers = more
+# master memory).
 #
 # WHEN IT FINISHES it bundles EVERYTHING needed to serve into ~/result/ (one scp). You
 # must ship FIVE same-generation artifacts -- blueprint + 2 centroids + 2 baked tables --
@@ -28,8 +40,18 @@ set -euo pipefail
 FLOP_BUCKETS=${FLOP_BUCKETS:-30}        # up from the committed 20
 TURN_BUCKETS=${TURN_BUCKETS:-24}        # up from the committed 16
 ITERATIONS=${ITERATIONS:-60000000}      # more buckets -> needs more iters to converge
-WORKERS=${WORKERS:-$(nproc)}            # all cores on a dedicated training box
+WORKERS=${WORKERS:-$(nproc)}            # all cores on a dedicated training box (16 on CCX43)
+MERGE_EVERY=${MERGE_EVERY:-2000}        # iters/worker between merges -- 2000 matches the
+                                        # SERVED blueprint (the CLI default is 4000; lower =
+                                        # better convergence quality, more merge overhead).
 SITUATIONS=${SITUATIONS:-4000}          # centroid-fit sample size per street
+
+# Per-worker river-board LRU cache cap. On the 64 GB CCX43 keep it GENEROUS: the cache is
+# LRU-bounded (not the leak), 16 workers x 100k ~= 4 GB is trivial on 64 GB, and a bigger
+# cache = higher hit rate = faster training (fewer expensive per-board equity recomputes).
+# 20000 is the low-RAM (laptop) mitigation -- only drop to it if `sysRAM` climbs on a
+# smaller box. ~135k canonical boards exist, so 100k already covers the hot set.
+export ALLIN_RIVER_CACHE_BOARDS=${ALLIN_RIVER_CACHE_BOARDS:-100000}
 TRACK_EVERY=${TRACK_EVERY:-7500000}     # train in chunks this size, BR/LBR after each
                                         # (snapshots kept for the post-run BR sweep too).
                                         # Set TRACK_EVERY=$ITERATIONS to train in one shot.
@@ -75,11 +97,11 @@ while [ "$trained" -lt "$ITERATIONS" ]; do
     chunk=$(( (ITERATIONS - trained) < TRACK_EVERY ? (ITERATIONS - trained) : TRACK_EVERY ))
     if [ -z "$DBFILE" ]; then
         python tests/run_blueprint_trainer.py --iterations "$chunk" --workers "$WORKERS" \
-            --menu-mode capped --gamma 1.0 --checkpoint-every 50000
+            --merge-every "$MERGE_EVERY" --menu-mode capped --gamma 1.0 --checkpoint-every 50000
         DBFILE=$(ls -1t analysis/blueprints/blueprint_par_*.db | head -1)
     else
         python tests/run_blueprint_trainer.py --iterations "$chunk" --workers "$WORKERS" \
-            --menu-mode capped --gamma 1.0 --checkpoint-every 50000 \
+            --merge-every "$MERGE_EVERY" --menu-mode capped --gamma 1.0 --checkpoint-every 50000 \
             --resume "$(basename "$DBFILE")"
     fi
     trained=$((trained + chunk))
@@ -114,6 +136,7 @@ cat <<'EOF'
 ==================== DONE -- READ THIS ====================
 From your LAPTOP, pull the whole result folder down (one command):
     scp -r root@<box-ip>:~/result ./result
+THEN DESTROY THE HETZNER BOX (hourly billing -> stop paying once result/ is on your laptop).
 
 To SERVE this blueprint, all of these must be the SAME generation -- do NOT split them:
   1. COMMIT to git (binds the serving code to this abstraction):
