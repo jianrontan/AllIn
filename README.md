@@ -164,6 +164,13 @@ Training writes a timestamped `backend/bot/analysis/blueprints/blueprint_*.db`. 
 bot automatically use the blueprint with the most iterations — **no manual
 promotion step**.
 
+For a **large run on a cloud box** (16 vCPU / 64 GB — a full blueprint is ~2 days), use the
+one-shot `backend/bot/scripts/train_on_cloud.sh`: it installs deps, re-fits + bakes the postflop
+abstraction, trains in parallel chunks with BR/LBR tracking, and bundles the serving artifacts.
+Parallel training is `run_blueprint_trainer.py --workers N --merge-every 2000 --menu-mode capped`
+(resumes the same DB with `--resume`). The end-to-end cloud walkthrough (provision → connect →
+run → monitor → collect → tear down) lives in `docs/TRAININGFLOW.md`.
+
 ### 📊 Using the platform
 1. Open the frontend at `http://localhost:5173`.
 2. **Strategy Explorer**: enter a hand + betting line (or build an info-set key)

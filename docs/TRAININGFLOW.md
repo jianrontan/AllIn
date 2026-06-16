@@ -99,3 +99,43 @@ BlueprintDB.save_batch(...) every `checkpoint_every` iterations
   and calls phevaluator's internal evaluator directly (skips per-call string parsing);
   river equity is computed via the vectorized `board_winrates` shared across both
   players on a board. Together these made training ~1.87× faster.
+- **Abstraction (note for the in-flight retrain):** preflop is now **lossless — 169 fine
+  buckets** (`NUM_PREFLOP_BUCKETS`), one per canonical hand, collapsed to coarse-10 for postflop
+  keys. The postflop bucket count K is **defined by the committed centroids** (`postflop_centroids_*.npz`);
+  the served blueprint is 20 flop / 16 turn / 10 river, and the cloud retrain re-fits to **30 / 24 / 10**
+  (set by `train_on_cloud.sh:FLOP_BUCKETS/TURN_BUCKETS`). Changing K is an abstraction change → re-fit +
+  re-bake + retrain; the stamp guard (`PostflopV2._verify_stamp`) hard-errors on a centroid↔table mismatch.
+
+---
+
+## Parallel & cloud training (large runs)
+
+A full blueprint is a multi-day run, so it's trained **data-parallel** across all cores
+(`src/cfr/parallel_trainer.py`) and usually on a cloud box. The per-iteration math above is
+unchanged; parallelism only changes *how iterations are batched and merged*:
+
+```
+run_blueprint_trainer.py --workers N --merge-every 2000 --menu-mode capped [--gamma 1.0] [--resume <db>]
+    ↓  per ROUND (merge_every × N iters):
+    ├── master pickles the current blueprint → broadcasts to N workers
+    ├── each worker runs `merge_every` external-sampling MCCFR+ iters on the FROZEN round-start strategy
+    ├── master `merge_round()` folds the N regret/strategy deltas back in (block Linear-CFR discount,
+    │     per-worker CFR+ floor + one master floor) and advances the per-key discount clock once
+    └── every `checkpoint_every` it writes the DB + prints EV(served) + the `shape:` collapse line
+```
+
+- **Quality vs the single-thread oracle:** parallel is an *approximation* (block discount; workers
+  don't see each other's mid-round updates), validated by exploitability — see the `parallel_trainer.py`
+  docstring. `merge_every=2000` matches the served blueprint (lower = closer to single-thread, more
+  overhead). `EV(cum)` reads high/lagged here (labelled `EV(cum,lagged)`) — watch `EV(served)` + BR/LBR.
+- **Resume is exact and discount-safe:** the per-key Linear-CFR clocks live in the DB rows and persist;
+  alpha/gamma/menu/training-mode mismatches hard-error on resume. Long runs are trained in chunks that
+  each `--resume` the same DB.
+- **One-shot cloud driver:** `backend/bot/scripts/train_on_cloud.sh` provisions deps, re-fits + bakes the
+  postflop tables, trains in `TRACK_EVERY` chunks with **BR + LBR after each** (→ `~/progress.txt`, the
+  convergence scoreboard), and bundles the **5 same-generation serving artifacts** (blueprint renamed to
+  `blueprint_final.db` + 2 centroids + 2 baked tables) to `~/result/`. It self-detects root vs a sudo user
+  (Hetzner / AWS EC2), forces unbuffered logs, and prints `RSS/sysRAM` per round (needs `psutil`).
+- **Operational runbook** (provision a 16 vCPU / 64 GB box → ssh → run → monitor → collect → tear down,
+  with the gotchas: `nohup`/`tmux`, the speed-test DB, account limits, cost) is in the private
+  `docs/private/EC2_TRAINING_RUNBOOK.md`.

@@ -91,9 +91,15 @@ def _shape_line(trainer):
     """Strategy-shape sanity line from the master's in-memory average strategy
     (normalized cumulative_strategy per key). Catches a BUG-014-style collapse on
     the first checkpoint -- see src/cfr/strategy_shape.py."""
+    # Pass the ACTUAL preflop-bucket count (lossless 169), not the probe default of 30 --
+    # otherwise the strength-GRADIENT signal compares pf_0 vs pf_29 (two weak hands under
+    # 169) and reads ~0, blinding one of the three collapse early-warnings. The primary
+    # collapse signatures key off buckets 0-3 and work regardless, but pass it for fidelity.
+    from ..abstractions.card_abstractions import NUM_PREFLOP_BUCKETS
     rep = strategy_shape_report(
         lambda k: (trainer.info_sets[k].cumulative_strategy
-                   if k in trainer.info_sets else None))
+                   if k in trainer.info_sets else None),
+        num_preflop_buckets=NUM_PREFLOP_BUCKETS)
     return format_shape_line(rep)
 
 

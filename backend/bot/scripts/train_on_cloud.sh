@@ -9,25 +9,28 @@
 #     do NOT touch the postflop tables.) River stays at its committed 10 buckets -- the
 #     live river solver refines the river anyway, so it isn't a leak -- and isn't baked.
 #
-# ---- HETZNER CCX43 quickstart (16 DEDICATED vCPU / 64 GB RAM, ~EUR0.13/h, hourly) -----
-# The 64 GB is deliberate: the laptop run OOM'd (master ~2h in) at 98% RAM. CCX43's RAM +
-# the ALLIN_RIVER_CACHE_BOARDS cap below give the headroom to actually finish. Dedicated
-# vCPU (not shared) -> no throttling, and Hetzner has a Singapore region.
-#   1. Create CCX43, image "Ubuntu 24.04", add your SSH key. Then:
-#        ssh root@<box-ip>
-#        apt-get update -qq && apt-get install -y -qq git
-#        git clone <your repo URL> AllIn && cd AllIn
-#        nohup bash backend/bot/scripts/train_on_cloud.sh > ~/train.log 2>&1 &
-#        tail -f ~/train.log            # watch it; look for the RSS/sysRAM on each round line
-#   2. Speed test FIRST (gauge it/s, ~minutes, near-zero cost):
+# ---- CLOUD quickstart (16 vCPU / 64 GB box; Hetzner CCX43 ~EUR0.13/h, or AWS EC2 ----------
+#      m7a.4xlarge ~$0.93/h) -- the full step-by-step is in docs/private/EC2_TRAINING_RUNBOOK.md.
+# The 64 GB is deliberate: the laptop run OOM'd (master ~2h in) at 98% RAM. A 64 GB box +
+# the generous river cache below give the headroom to actually finish. This script self-detects
+# root vs a sudo user, so it runs on Hetzner (root) AND AWS EC2 (the 'ubuntu' sudo user) unchanged.
+#   1. Provision the box (Ubuntu 24.04, your SSH key), ssh in, then:
+#        sudo apt-get update -qq && sudo apt-get install -y -qq git   # (EC2 'ubuntu' user needs sudo)
+#        git clone -b <branch> <repo URL> AllIn && cd AllIn
+#        ITERATIONS=90000000 nohup bash backend/bot/scripts/train_on_cloud.sh > ~/train.log 2>&1 &
+#        tail -f ~/train.log            # PYTHONUNBUFFERED is forced below so this streams live
+#   2. Speed test FIRST (gauge it/s + validate the bake, ~minutes; the bake is then cached):
 #        ITERATIONS=200000 bash backend/bot/scripts/train_on_cloud.sh
+#      Then DELETE the speed-test DB before the full run so a crash-before-first-checkpoint
+#      can't resume it: rm -f backend/bot/analysis/blueprints/blueprint_par_*.db*
 #   3. When done: scp ~/result down (see closing message), then DESTROY the box (hourly
-#      billing -> stop paying). A ~4-day run is ~EUR13.
+#      billing -> stop paying). A ~2-day 90M run is ~$45 on EC2 / ~EUR13 on Hetzner.
 #
-# MEMORY WATCH: each round prints `RSS x.xxGB sysRAM yy%`. sysRAM should plateau, not climb
-# toward 100%. If it climbs, lower WORKERS or ALLIN_RIVER_CACHE_BOARDS (or ping the assistant
-# -- the parallel-trainer broadcast is pickled PER worker each round, so more workers = more
-# master memory).
+# MEMORY WATCH: each round prints `RSS x.xxGB sysRAM yy%` (needs psutil -- in requirements.txt).
+# sysRAM should plateau (~25-30% on 64 GB), not climb toward 100%. If it climbs, lower WORKERS or
+# ALLIN_RIVER_CACHE_BOARDS -- the parallel-trainer broadcast is pickled PER worker each round, so
+# more workers = more master memory. NEVER rely on a bare `tail` over SSH (a disconnect kills it,
+# not the nohup'd run) -- use tmux, or just reconnect and `tail -f ~/train.log` / `cat ~/progress.txt`.
 #
 # WHEN IT FINISHES it bundles EVERYTHING needed to serve into ~/result/ (one scp). You
 # must ship FIVE same-generation artifacts -- blueprint + 2 centroids + 2 baked tables --
@@ -35,6 +38,14 @@
 # message spells out exactly what to commit vs upload to the release. It also runs BR/LBR
 # every TRACK_EVERY iters and writes the curve to ~/result/progress.txt.
 set -euo pipefail
+
+# Force unbuffered Python stdout so `tail -f train.log` streams live under nohup (a file
+# redirect block-buffers by default -> the log looks frozen, and a crash loses the buffered
+# RSS/shape diagnostics). Applies to every python the script spawns.
+export PYTHONUNBUFFERED=1
+
+# Run apt with sudo only when not already root: root on Hetzner, the 'ubuntu' sudo user on EC2.
+SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
 
 # ---- knobs (override via env, e.g. ITERATIONS=200000 FLOP_BUCKETS=28 bash ...) -------
 FLOP_BUCKETS=${FLOP_BUCKETS:-30}        # up from the committed 20
@@ -60,11 +71,11 @@ LBR_HANDS=${LBR_HANDS:-3000}            # LBR hands per checkpoint (0 = skip LBR
 
 # ---- system prereqs (fresh Ubuntu) ---------------------------------------------------
 echo "==> [1/5] system packages"
-apt-get update -qq
+$SUDO apt-get update -qq
 # build-essential + python3-dev are insurance: if a pinned wheel (e.g. phevaluator)
 # lacks a cp312 build, pip falls back to compiling it -- without a C toolchain that
 # fails mid-install on a fresh box (the "fail partway, waste money" case).
-apt-get install -y -qq python3-venv python3-pip build-essential python3-dev
+$SUDO apt-get install -y -qq python3-venv python3-pip build-essential python3-dev
 
 cd "$(dirname "$0")/.."                  # -> backend/bot
 echo "==> [2/5] python venv + deps"

@@ -20,3 +20,8 @@ cryptography==43.0.1
 # Handle profanity filter (player names). Optional at runtime — player_store falls
 # back to a small built-in blocklist if it's absent — but pinned for prod.
 better-profanity==0.7.0
+
+# Per-round RSS/sysRAM logging during parallel training (parallel_trainer._mem_str).
+# Optional — the logging no-ops without it — but install it on a training box so the
+# OOM-watch actually prints. Not used by the API/serving path.
+psutil==6.1.0
