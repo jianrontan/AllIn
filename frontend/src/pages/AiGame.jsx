@@ -14,6 +14,7 @@ import PlayingCard from '../components/PlayingCard';
 import EvCounter from '../components/EvCounter';
 import IntroModal from '../components/IntroModal';
 import LoginPrompt from '../components/LoginPrompt';
+import { AnnouncementsButton } from '../components/Announcements';
 import GoogleSignInButton from '../components/GoogleSignInButton';
 
 // Standardized snake_case localStorage key (matches the other allin_* keys
@@ -558,7 +559,7 @@ function AiGame() {
         return (
             <div className="min-h-screen flex flex-col items-center justify-center
                             bg-[radial-gradient(ellipse_at_center,#0c2a1f_0%,#0a0a0a_72%)]">
-                <h1 className="text-2xl font-bold mb-2">Play With AI</h1>
+                <h1 className="text-2xl font-bold mb-2">Play with AI</h1>
                 {error
                     ? (
                         <>
@@ -659,7 +660,7 @@ function AiGame() {
                         <Link to="/" className="text-sm text-amber-400 hover:text-amber-300">
                             ← Home
                         </Link>
-                        <h1 className="text-xl sm:text-2xl font-bold">Play With AI</h1>
+                        <h1 className="text-xl sm:text-2xl font-bold">Play with AI</h1>
                         {/* Bot record + your lifetime P/L, stacked under the title.
                             Hidden on phones (they don't fit beside the right-side
                             cluster); shown there in a full-width strip below the bar. */}
@@ -679,6 +680,7 @@ function AiGame() {
                                 {showDebug ? 'Debug ✓' : 'Debug'}
                             </button>
                         )}
+                        <AnnouncementsButton />
                         <GoogleSignInButton registered={account?.isRegistered}
                             handle={account?.handle} />
                     </div>
