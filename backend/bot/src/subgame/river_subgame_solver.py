@@ -271,44 +271,44 @@ class RiverSubgameSolver(BlueprintStrategy):
                       'gadget_exploit': 0, 'gadget_clamp': 0}
 
     # -- BotStrategy interface -------------------------------------------------
-    def decide(self, info_set_key, legal_actions, public_state):
-        ps = public_state or {}
-        self.last_debug = None
-        # Near-terminal all-in guard runs FIRST (facing a jam that commits the whole
-        # stack is a pure equity decision). _run_guard is shared with the turn solver.
+    def _pre_solve_guards(self, info_set_key, legal_actions, ps):
+        """The all-in / deep-raise / first-act guards that run before ANY solve, on every
+        street. Returns an action to PLAY, or None to proceed to the solver/blueprint.
+        SHARED between the river decide and the TURN decide so both run the IDENTICAL guard
+        set the deployed bot uses -- otherwise the turn solver acts on nodes production
+        intercepts with a guard (a faithfulness gap caught in the 2026-06-16 gate review)."""
+        # Near-terminal all-in guard FIRST (facing a stack-committing jam is pure equity).
         guard = self._run_guard(legal_actions, ps)
         if guard is not None:
             return guard
-        # Deep-raise guard: a raise OR jam into a node the blueprint never trained
-        # (beyond the 3-aggression training cap, e.g. a human 5-bet -> pf_*_ip_slll).
-        # super().decide() would hit BlueprintStrategy's passive fallback (uniform
-        # call/fold) and FOLD THE NUTS half the time. Decide it by equity vs the range
-        # instead (call/fold only -- never a stray raise from an untrained node). The
-        # all-in guard above owns the TRUSTED jam; this catches the untrained jam it
-        # defers on (collapsed read) plus every non-all-in deep raise. See
-        # _facing_deep_raise_guard.
+        # Deep-raise guard: a raise/jam into an UNTRAINED beyond-cap node (e.g. a human
+        # 5-bet -> pf_*_ip_slll). The blueprint's passive fallback would FOLD THE NUTS half
+        # the time; decide by equity vs the range instead (call/fold only, no stray raise).
         try:
             deep = self._facing_deep_raise_guard(info_set_key, legal_actions, ps)
         except Exception:
-            # Never crash a live hand (advance_bot_turns only catches GameError). Count
-            # + record so a genuine defect surfaces instead of silently degrading.
+            # Never crash a live hand. Count + record so a genuine defect surfaces; prefer
+            # CALL over the blueprint's 50/50 coin-flip so an ERROR never folds the nuts.
             self._fallback_count += 1
             self.stats['fallback'] += 1
             self.last_debug = {'mode': 'deep_guard_error', 'street': ps.get('street')}
-            # Safe degradation: at an untrained faced-bet node, prefer CALL over the
-            # blueprint's 50/50 coin-flip so an ERROR never folds the nuts.
             deep = self._safe_untrained_call(info_set_key, legal_actions, ps)
         if deep is not None:
             return deep
-        # Inference #1: at an UNTRAINED first-to-act postflop node, super().decide() checks
-        # 100% (passive fallback) and surrenders value with a strong made hand. Value-bet
-        # a trained size on high equity instead (never a stray/off-grid size).
+        # First-act value guard: value-bet a trained size at an untrained first-to-act node
+        # instead of the passive check that surrenders value with a strong made hand.
         try:
             first_act = self._first_act_value_guard(info_set_key, legal_actions, ps)
         except Exception:
             first_act = None
-        if first_act is not None:
-            return first_act
+        return first_act
+
+    def decide(self, info_set_key, legal_actions, public_state):
+        ps = public_state or {}
+        self.last_debug = None
+        guarded = self._pre_solve_guards(info_set_key, legal_actions, ps)
+        if guarded is not None:
+            return guarded
         spec = self._solver_inputs(ps)
         if spec is None:
             self.last_debug = {'mode': 'blueprint', 'street': ps.get('street')}

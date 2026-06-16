@@ -64,7 +64,7 @@ AllIn/
 │   │   ├── src/
 │   │   │   ├── config.py                     # resolve_blueprint_path() — picks the active DB
 │   │   │   ├── abstractions/
-│   │   │   │   ├── card_abstractions.py      # 30-fine/10-coarse preflop + 20/16/10 postflop (delegates to PostflopV2)
+│   │   │   │   ├── card_abstractions.py      # 169-fine(lossless)/10-coarse preflop + 20/16/10 postflop (delegates to PostflopV2)
 │   │   │   │   ├── postflop_v2.py            # Distribution-aware postflop buckets (table lookup + river runtime)
 │   │   │   │   ├── postflop_features.py      # Shared: equity dist, EMD, rank7, board_winrates, centroid_hash
 │   │   │   │   ├── canonical.py              # Suit-isomorphism canonicalisation of (hole, board)
@@ -154,15 +154,16 @@ one info set; CFR stores one strategy entry per info-set key.
 
 Finer, equity- and texture-driven buckets (the old hand-named buckets are gone):
 
-- **Decoupled preflop buckets — 30 fine / 10 coarse** (imperfect recall). Fine
-  (`pf_0`..`pf_29`) is used in preflop keys; the coarse class (0..9) is the postflop
-  `startBucket`. Both are equal-frequency quantilings of the same Monte Carlo equity
-  table (`scripts/compute_preflop_equity.py`), derived at import in
+- **Decoupled preflop buckets — lossless 169 fine / 10 coarse** (imperfect recall). Fine
+  (`pf_0`..`pf_168`, one bucket per canonical hand — perfect preflop resolution) is used in
+  preflop keys; the coarse class (0..9) is the postflop `startBucket`. Both derive from the
+  same Monte Carlo equity table (`scripts/compute_preflop_equity.py`) at import in
   `card_abstractions.py`. The fine→coarse collapse happens in
   `cfr/keys.make_info_set_key` for postflop streets. See `CLAUDE.md` for the full
-  fine/coarse key contract.
+  fine/coarse key contract. (Was 30 fine before the lossless-preflop change.)
 - **Distribution-aware (potential-aware) postflop buckets** — integers, **20 flop /
-  16 turn / 10 river** (`PostflopV2`). Each hand is described by the *distribution* of
+  16 turn / 10 river** in the served snapshot (the in-flight retrain re-fits to **30 / 24 /
+  10**) (`PostflopV2`). Each hand is described by the *distribution* of
   its equity-vs-uniform-range over board runouts (a 30-bin histogram) and clustered by
   Earth Mover's Distance, so hands with equal current equity but different *trajectories*
   (a static made hand vs a polarized draw) get different buckets — which the old
@@ -331,7 +332,7 @@ run_blueprint_trainer.run_training(N)         # tests/run_blueprint_trainer.py
       cfr(..., updating_player = i % 2)        # P0-perspective value
         PokerGame.get_legal_actions(street, history, pot, player, stacks…)
         keys.make_info_set_key(street, position, preflop_bucket, strength, pattern)
-          CardAbstraction.get_bucket(cards, board)   # 30-fine/10-coarse preflop / 20-16-10 postflop
+          CardAbstraction.get_bucket(cards, board)   # 169-fine(lossless)/10-coarse preflop / 20-16-10 postflop
         InformationSet.get_strategy(legal_actions)   # CFR+ regret matching (pure)
         [updating player] explore all actions → recurse, update regrets (discount, floor 0)
         [opponent]        sample one action  → recurse, accumulate_strategy
@@ -524,7 +525,7 @@ the test harness could drop it too and drive `PokerGame` directly.
 ## 12. PlantUML Diagrams
 
 > ⚠️ **These diagrams predate the SQLite migration, the abstraction overhaul
-> (30-fine/10-coarse preflop / 20-16-10 distribution-aware postflop), the position-aware keys,
+> (169-fine(lossless)/10-coarse preflop / 20-16-10 distribution-aware postflop), the position-aware keys,
 > the range tracker, and the `game/` engine.** They still
 > convey the broad shape (training vs inference, key assembly) but the class
 > names, bucket names, JSON storage, and "bug annotations" are stale. Treat
@@ -541,8 +542,10 @@ the test harness could drop it too and drive `PokerGame` directly.
 
 ---
 
-*Last updated: 2026-06-08 — refreshed the `subgame/` package listing (river solver
-shipped, turn solver shelved), the postflop bucket counts (20/16/10) and pattern
-chars, and the Known-Limitations note. Core module reference dates to the 2026-05-22
-rewrite for the SQLite blueprint, equity/texture buckets, position-aware keys, the
-Flask-free `game/` engine, `cfr/keys.py`, and the exploitability evaluator.*
+*Last updated: 2026-06-16 — lossless 169-bucket preflop (was 30), gamma=1 (was 2), and a
+finer-postflop (30/24) cloud retrain in flight; the turn solver REVIVED via continual
+re-solving (1a/1b/1c built, decisive gate post-retrain). Earlier: 2026-06-08 refreshed the
+`subgame/` package listing (river solver shipped), bucket counts and pattern chars, and the
+Known-Limitations note; the core module reference dates to the 2026-05-22 rewrite for the
+SQLite blueprint, equity/texture buckets, position-aware keys, the Flask-free `game/` engine,
+`cfr/keys.py`, and the exploitability evaluator.*

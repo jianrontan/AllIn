@@ -145,7 +145,7 @@ A heads-up blueprint is trained with Monte Carlo CFR+ and stored in SQLite.
 | Component | File | Status |
 |---|---|---|
 | Hand evaluation | `src/abstractions/hand_evaluator.py` (phevaluator) | ✅ |
-| Card abstraction | `src/abstractions/card_abstractions.py` — **decoupled imperfect-recall preflop: 30 fine buckets (`pf_0..pf_29`, preflop keys) / 10 coarse classes (postflop `startBucket`)** + **distribution-aware (potential-aware) postflop buckets: 20 flop / 16 turn / 10 river** (`PostflopV2`, EMD-clustered equity distributions) | ✅ |
+| Card abstraction | `src/abstractions/card_abstractions.py` — **decoupled imperfect-recall preflop: LOSSLESS 169 fine buckets (`pf_0..pf_168`, one per canonical hand, preflop keys) / 10 coarse classes (postflop `startBucket`)** + **distribution-aware (potential-aware) postflop buckets: 20 flop / 16 turn / 10 river served (the in-flight retrain re-fits to 30/24/10)** (`PostflopV2`, EMD-clustered equity distributions). NB: gamma is now 1.0 (was 2.0). | ✅ |
 | Preflop equity precompute | `scripts/compute_preflop_equity.py` | ✅ |
 | Postflop bucket pipeline | `scripts/compute_postflop_buckets.py` (fit centroids) → `scripts/bake_postflop_table.py` (bake canonical→bucket tables, centroid-stamped) → `src/abstractions/{postflop_v2,postflop_features,canonical}.py` | ✅ |
 | Action abstraction | `src/abstractions/action_abstractions.py` — small/medium/large + preflop ladders + all-in. **`menu_mode` toggle (`control` \| `capped` \| `capped_no2`, `src/abstractions/sizing.py`): `capped` adds the 2.0× `overbet2` tier and DROPS the voluntary all-in node (Fix #4); auto-derived at every boundary via `db_menu_mode`.** | ✅ |

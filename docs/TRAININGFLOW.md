@@ -36,7 +36,8 @@ keys.make_info_set_key(street, position, preflop_bucket, strength, pattern)
 │     └── PostflopV2: distribution-aware (potential-aware) bucket —
 │         canonicalise (hole,board) → O(log n) lookup in the pre-baked
 │         centroid table (flop/turn); river = exact equity → spike → nearest
-│         river centroid. 20 flop / 16 turn / 10 river. Computed once per hand
+│         river centroid. 20 flop / 16 turn / 10 river (served; → 30/24/10 in the
+│         in-flight retrain — see the Abstraction note below). Computed once per hand
 │         (memoized), lazily on first use of each street.
 ├── position = 'ip' (P0) | 'oop' (P1)
 ├── pattern  = current-street betting only (resets each street)  e.g. "k"

@@ -32,6 +32,7 @@ evals) dominates and is SLOW (~20-50s single-core at n=48-64). So:
 """
 import logging
 import time
+import zlib
 
 import numpy as np
 
@@ -101,13 +102,17 @@ class TurnSubgameSolver(RiverSubgameSolver):
         if ps.get('street') != 'turn':
             return super().decide(info_set_key, legal_actions, public_state)
         self.last_debug = None
-        guard = self._run_guard(legal_actions, ps)
-        if guard is not None:
-            return guard
+        # Run the FULL deployed guard set (all-in / deep-raise / first-act), not just the
+        # all-in guard -- so the turn solver only fires where the deployed river stack would
+        # NOT have a guard own the node (gate-faithfulness fix, 2026-06-16).
+        guarded = self._pre_solve_guards(info_set_key, legal_actions, ps)
+        if guarded is not None:
+            return guarded
         spec = self._turn_solver_inputs(ps)
         if spec is None:
             self.last_debug = {'mode': 'blueprint', 'street': 'turn'}
-            return BlueprintStrategy.decide(self, info_set_key, legal_actions, public_state)
+            action = BlueprintStrategy.decide(self, info_set_key, legal_actions, public_state)
+            return self._premium_no_fold(action, legal_actions, ps)   # match the parent path
         self.stats['turn_calls'] += 1
         try:
             dist, node, info = self.solve_turn_for_action(**spec)
@@ -227,8 +232,10 @@ class TurnSubgameSolver(RiverSubgameSolver):
             # took only the lowest-rank rivers (deuces/treys) -> the leaf, the strength
             # PARTITION, and the 1c exact gate all saw low runouts only, biasing toward
             # made hands (the N0 overaggression symptom). Sample uniformly with a
-            # per-board-deterministic RNG (reproducible per board, no systematic bias).
-            rsamp = np.random.default_rng(abs(hash(tuple(board))) % (2 ** 32))
+            # per-board-deterministic RNG. STABLE seed (zlib.crc32 of the sorted board), not
+            # Python's salted hash(), so the same board samples the same rivers across
+            # PROCESSES -> bit-reproducible reruns (MEDIUM-1, 2026-06-16 review).
+            rsamp = np.random.default_rng(zlib.crc32(''.join(sorted(board)).encode()))
             rivers = sorted(rsamp.choice(rivers, size=self.leaf_rivers,
                                          replace=False).tolist())
 
@@ -239,7 +246,11 @@ class TurnSubgameSolver(RiverSubgameSolver):
         bidx = {b: i for i, b in enumerate(buckets)}
         ba = build_turn_board_arrays(board)               # light: hands/c1/c2 (no buckets)
         idx = hand_index_map(ba)
-        tb_idx = np.array([bidx[part[h]] for h in ba['hands']], dtype=np.int64)
+        # part.get(...) not part[...]: at leaf_rivers in {1,2} a hand made of the sampled
+        # river card(s) can be absent from `part` -> KeyError. leaf_rivers>=3 (gate/tests)
+        # always covers every hand; degrade a missing hand to the weakest bucket instead of
+        # crashing (MEDIUM-3, 2026-06-16).
+        tb_idx = np.array([bidx[part.get(h, buckets[0])] for h in ba['hands']], dtype=np.int64)
         tree = build_turn_tree(pot_entry, stacks, menu=self.menu,
                                max_aggressions=LIVE_TURN_MAX_AGGRESSIONS)
 
@@ -291,8 +302,15 @@ class TurnSubgameSolver(RiverSubgameSolver):
         if not converged:
             self.stats['turn_timeout'] += 1
 
-        dist = read_action_strategy(solver, node, hole, ba, idx)
         node_reach0, node_reach1 = solver.reach_into(edge_path, reach0, reach1)
+        # Into-node reach guard (mirrors the river solver's): if the bot's hand has ~zero
+        # reach INTO this node (a line it ~never takes), read_action_strategy returns the
+        # ~uniform 1/A fallback -- a random read the EV gate could wave through. Defer to
+        # blueprint. Root hero[row] is checked above; this catches a non-empty turn_path
+        # (MEDIUM-2, 2026-06-16).
+        if (node_reach0 if bot_seat == 0 else node_reach1)[row] <= 1e-12:
+            raise ValueError("bot hand has ~zero reach into the turn node; defer to blueprint")
+        dist = read_action_strategy(solver, node, hole, ba, idx)
         info = {'cfr': solver, 'ba': ba, 'idx': idx,
                 'reach0': node_reach0, 'reach1': node_reach1,
                 'iters': done, 'gap': None, 'converged': converged, 'seconds': seconds,

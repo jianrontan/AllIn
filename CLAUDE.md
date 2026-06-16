@@ -119,8 +119,8 @@ Frontend (AiGame.jsx)
 
 The system revolves around a string key that uniquely identifies a poker situation. The format **includes position** (added so in-position and out-of-position play are learned separately):
 
-- **Preflop**: `{fineBucket}_{position}_{pattern}` — uses the **fine** 30-bucket id.
-  Example: `pf_27_ip_` (a strong preflop bucket — fine buckets run pf_0..pf_29 — in position, no actions yet)
+- **Preflop**: `{fineBucket}_{position}_{pattern}` — uses the **fine** (lossless, 169-bucket) id.
+  Example: `pf_160_ip_` (a strong preflop bucket — fine buckets run pf_0..pf_168, one per canonical hand — in position, no actions yet)
 
 - **Postflop**: `{coarseClass}_{strength}_{position}_{street}_{pattern}` — `startBucket` is the **coarse** 10-class id (`make_info_set_key` collapses the fine bucket; a postflop key never carries a fine id, so `coarseClass` ∈ pf_0..pf_9).
   Example: `pf_9_5_ip_turn_m` (coarse preflop class 9 → strength bucket 5, in position, turn, opponent bet medium)
@@ -280,8 +280,10 @@ as input, so the range tracker has to exist before the solver.
   exploitability (`src/evaluation/`); baselined at ~11,256 (BR) / ~3,636 (LBR) mbb/hand.
   Built first so every later change is *scored, not guessed*.
 - **Phase 1b — strategy-sum discount (gamma)** ✅ done. Linear-CFR-style avg-strategy
-  discount (`gamma=2`) with its own opponent-node clock (`information_set.py`,
-  `blueprint_trainer.py`). (Not canonical DCFR — see the trainer docstring.)
+  discount with its own opponent-node clock (`information_set.py`, `blueprint_trainer.py`).
+  Shipped with `gamma=2`; **the current default is `gamma=1`** (uniform time-average — a
+  gamma=2 sweep over-purified into a U-curve), used by the lossless-preflop retrain. (Not
+  canonical DCFR — see the trainer docstring.)
 - **Phase 1a — Pseudo-harmonic action translation** ✅ done (2026-05-26), shipped together
   with unrestricted custom human bet sizing. Inference-only (no retraining). `cfr/translation.py`
   blends the two bracketing grid sizes (Ganzfried-Sandholm) over a per-node grid; consumed by
@@ -291,8 +293,9 @@ as input, so the range tracker has to exist before the solver.
   beside the size buttons). Result: LBR **3609 → 1670 mbb/hand** (~54% cut) on the v2 9.15M
   snapshot. Tests: `tests/test_custom_betting.py`.
 - **Phase 2 — Potential-aware postflop buckets** ✅ done. The distribution-aware abstraction:
-  decoupled 30-fine/10-coarse preflop + **20 flop / 16 turn / 10 river** EMD-clustered postflop
-  buckets (`PostflopV2`), baked into the capped run. Replaced the old 8-bucket heuristic.
+  decoupled preflop (now lossless 169-fine/10-coarse) + **20 flop / 16 turn / 10 river**
+  (the in-flight retrain re-fits to **30/24/10**) EMD-clustered postflop buckets (`PostflopV2`),
+  baked into the capped run. Replaced the old 8-bucket heuristic.
 - **Phase 3 — Hand-level Bayesian range tracker** ✅ done. Hand-level (not bucket-level) range
   (`game/range_tracker.py`), hooked into `GameSession` JSON state, with a confidence score that
   decays on off-tree actions. **Prerequisite for Phase 4.**

@@ -16,11 +16,11 @@ start
 
 partition "Card Abstraction (card_abstractions.py)" {
   if (community empty?) then (yes - preflop)
-    :preflop_bucket(hole) returns FINE id pf_0..pf_29 (equal-freq quantiling of MC equity);
+    :preflop_bucket(hole) returns FINE id pf_0..pf_168 (LOSSLESS - one per canonical hand);
     :postflop_strength = None;
   else (postflop)
     :PostflopV2 = distribution of equity-vs-range over runouts, EMD-clustered to a centroid;
-    :postflop_strength = bucket id (20 flop, 16 turn, 10 river);
+    :postflop_strength = bucket id (20 flop, 16 turn, 10 river served; 30/24/10 retrain);
     :preflop_bucket(hole) still computed, carried in as the FINE id;
   endif
 }

@@ -23,7 +23,7 @@ loop N iterations (alternating updating_player = i % 2)
     PG --> BT: [fold, call, bet_small, bet_medium,\nbet_large, bet_overbet, ... allin]
 
     BT -> CA: get_bucket(hole, community)\n(preflop_bucket fine; postflop V2 strength)
-    note right of CA: preflop → fine pf_0..pf_29\npostflop → distribution-aware bucket\n(20 flop / 16 turn / 10 river, EMD-clustered)
+    note right of CA: preflop → fine pf_0..pf_168 (lossless)\npostflop → distribution-aware bucket\n(20/16/10 served; 30/24/10 retrain, EMD-clustered)
     CA --> BT: fine bucket + postflop strength
 
     BT -> KEYS: make_info_set_key(street, position,\nfine bucket, strength, bet_pattern)

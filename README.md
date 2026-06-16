@@ -7,6 +7,10 @@ championship-level poker bots. It approximates **game-theory-optimal (GTO)**
 strategy through millions of iterations of self-play, serves that strategy
 through a **Flask** API, and exposes it in an interactive **React** platform.
 
+> 🔴 **Live at [allin.jianrontan.com](https://allin.jianrontan.com)** — play heads-up
+> against the bot. Backend on AWS Lightsail + DynamoDB, frontend on Cloudflare Pages,
+> auth via Cognito + Google, edge (DNS/CDN/WAF) on Cloudflare.
+
 ---
 
 ## 🎯 AI & Machine Learning Overview
@@ -16,15 +20,16 @@ through a **Flask** API, and exposes it in an interactive **React** platform.
   opponent actions, walking one trajectory through the game tree instead of the
   full exponential tree — making millions of training iterations tractable.
 - **Discounted CFR+ (Linear-CFR-style)**: time-discounted updates — regret discount
-  **α = 1.5**, strategy-sum discount **γ = 2.0** — for faster, more stable convergence
-  toward a Nash equilibrium. (CFR+ with a `((t-1)/t)^α` discount on floored regrets and
-  a separate `t^γ`-weighted average strategy — not the canonical DCFR α/β/γ scheme.)
+  **α = 1.5**, strategy-sum discount **γ = 1.0** (a Linear-CFR uniform time-average) — for
+  stable convergence toward a Nash equilibrium. (CFR+ with a `((t-1)/t)^α` discount on
+  floored regrets and a `t^γ`-weighted average strategy — not the canonical DCFR α/β/γ scheme.)
 - **Self-play reinforcement learning**: no human data and no hand-crafted
   heuristics — the strategy emerges purely from **regret minimization**.
 - **Multi-layer abstraction**: a hierarchical state representation built from
-  **decoupled 30-fine / 10-coarse equity-based preflop buckets + distribution-aware
-  (potential-aware) postflop buckets (20 flop / 16 turn / 10 river)** clustered by
-  Earth Mover's Distance over equity distributions.
+  **lossless 169-fine / 10-coarse equity-based preflop buckets** (one fine bucket per
+  canonical hand — perfect preflop resolution) **+ distribution-aware (potential-aware)
+  postflop buckets** clustered by Earth Mover's Distance over equity distributions
+  (20 flop / 16 turn / 10 river in the served snapshot; a finer **30 / 24** retrain is underway).
 
 ### 📊 Trained Blueprint (active model)
 ```
@@ -35,6 +40,9 @@ Served blueprint (capped run, 25M-iteration snapshot — see Deployment):
 ├── Game:               Heads-up NLHE, 100 BB effective stacks (SB 1 / BB 2)
 └── Storage:            SQLite (incremental checkpoint + resume)
 ```
+*The served snapshot uses the earlier 30-bucket preflop scheme. A **lossless-preflop (169) +
+γ=1 + finer-postflop (30/24)** retrain is in progress (parallel MCCFR on a cloud box) and will
+replace it once it converges and beats the 25.5M on the BR/LBR scoreboard.*
 
 ### 🔬 Algorithmic Architecture
 ```
@@ -95,7 +103,7 @@ SQLite checkpoint → automatic active-blueprint selection → API inference
 
 ### 🤖 Strategy Engine
 - **Fast inference**: direct blueprint lookup from SQLite, no per-decision search.
-- **Distribution-aware abstractions**: 30-fine/10-coarse decoupled preflop + 20/16/10 potential-aware postflop buckets (EMD-clustered equity distributions).
+- **Distribution-aware abstractions**: lossless 169-fine/10-coarse decoupled preflop + 20/16/10 (→ 30/24 in the in-flight retrain) potential-aware postflop buckets (EMD-clustered equity distributions).
 - **Mixed-strategy output**: probability distributions over fold / call / bet /
   raise / all-in, sampled at play time.
 - **Honest "unknown" handling**: situations never reached in training report
@@ -196,8 +204,13 @@ python tests/run_evaluation.py --samples 1000   # exploitability in mbb/hand (lo
 - 🧊 **Turn/flop depth-limited solving** — built and validated in the lab, but
   **shelved**: it lowered exploitability yet did not beat the blueprint in real
   games (a cross-street consistency problem needing continual re-solving). See ROADMAP.
-- 📅 **Online 1v1 play on AWS** — DynamoDB session store, Cloudflare Pages frontend,
-  +EV leaderboard (unrestricted human bet sizing already shipped)
+- ✅ **Online 1v1 play on AWS** — **shipped, live at [allin.jianrontan.com](https://allin.jianrontan.com)**:
+  Lightsail Containers (Flask + gunicorn), DynamoDB session/leaderboard/hand-recap stores,
+  Cognito + Google auth, Cloudflare edge (DNS/CDN/WAF), Cloudflare Pages frontend, global +EV
+  leaderboard, unrestricted human bet sizing
+- 📅 **Continual re-solving turn/flop** — revive the shelved depth-limited solver with
+  blueprint counterfactual values as the leaf function (the path that unlocks the bot's own
+  flop/turn overbets and 5-bets)
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for detail, and
 [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) for the architecture.

@@ -312,9 +312,17 @@ class RangeTracker:
         belief, integrated over board runouts. River -> exact; turn -> all rivers;
         flop/preflop -> Monte Carlo over `n_runouts` completions. Card removal
         excludes opponent hands colliding with the hero, the board, or the runout.
-        Returns 0.5 if the belief has no live mass (degenerate)."""
-        rng = rng or random.Random()
+        Returns 0.5 if the belief has no live mass (degenerate).
+
+        The default RNG is SEEDED deterministically from (hero, board) -- not a fresh
+        unseeded Random() -- so the flop/preflop Monte-Carlo runout sample is identical for
+        the same spot every time. This makes the guard equity reproducible AND lets the
+        CRN-paired turn-vs-river gate cancel exactly on non-deviation hands (two arms hit the
+        same spot -> same runouts -> same equity -> same call/fold; an unseeded Random would
+        draw independent runouts per arm and spuriously flip pot-odds knife-edges). A
+        `random.Random(str)` seed is stable across processes (unlike Python's salted hash)."""
         hero = list(hero_hand)
+        rng = rng or random.Random(''.join(sorted(hero)) + '|' + ''.join(sorted(board)))
         dead = set(hero) | set(board)
         undealt = [c for c in _FULL_DECK if c not in dead]
         need = 5 - len(board)

@@ -130,7 +130,7 @@ package "subgame - Phase 4 river solver" {
   }
 }
 
-package "subgame - turn (built + validated, SHELVED)" {
+package "subgame - turn (REVIVED via continual re-solving; gate pending)" {
   class TurnSubgameSolver {
     + decide(info_set_key, legal_actions, public_state) : str
     + solve_turn_for_action(board, pot_entry, stacks, args) : str
@@ -146,8 +146,9 @@ package "subgame - turn (built + validated, SHELVED)" {
   }
   note bottom of TurnSubgameSolver
     Cut in-abstraction exploitability ~99% (M0-M2)
-    but failed the real-game N0 gate; shelved
-    pending continual re-solving. NOT served.
+    but failed the real-game N0 gate. REVIVED via
+    continual re-solving (1a/1b/1c built); the
+    decisive gate runs post-retrain. NOT served yet.
   end note
 }
 
@@ -202,7 +203,7 @@ RiverSubgameSolver --> RiverTree : builds
 RiverSubgameSolver --> RiverCFR : runs vectorized CFR+
 RiverSubgameSolver ..> RangeTracker : consumes both ranges
 
-RiverSubgameSolver <|-- TurnSubgameSolver : (shelved, adds turn path)
+RiverSubgameSolver <|-- TurnSubgameSolver : (revived, adds turn path)
 RiverCFR <|-- TurnCFR
 TurnSubgameSolver --> TurnTree : builds
 TurnSubgameSolver --> TurnCFR : runs vectorized CFR+
