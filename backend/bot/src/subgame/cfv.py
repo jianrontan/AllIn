@@ -336,6 +336,105 @@ def turn_leaf_matrix_both(board4, pot, stacks, db, evaluator, cards,
     return M0, M1, buckets, bidx, tb
 
 
+def _bias_strategy(bp, tree, villain_seat, bias, menu):
+    """Modicum bias continuation: a COPY of `bp` (node_id -> [H,A]) with the VILLAIN's
+    decision nodes reweighted toward `bias` -- x10 on the matching action columns then
+    renormalized per row. Hero nodes unchanged. bias in {'baseline','fold','call','raise'}
+    ('baseline' returns bp unchanged). 'raise' targets every bet/raise/all-in char."""
+    from .blueprint_projection import tree_action_char
+    if bias == 'baseline':
+        return bp
+    call_chars = ('c', 'k')
+    out = list(bp)
+    for node in tree.decision_nodes:
+        if node.player != villain_seat:
+            continue
+        mat = bp[node.node_id]
+        if mat is None:
+            continue
+        w = np.ones(len(node.actions))
+        for a_i, action in enumerate(node.actions):
+            ch = tree_action_char(action, node, menu)
+            hit = ({'fold': ch == 'f', 'call': ch in call_chars,
+                    'raise': ch not in ('f',) + call_chars}[bias])
+            if hit:
+                w[a_i] = 10.0
+        biased = mat * w[None, :]
+        rs = biased.sum(axis=1, keepdims=True)
+        out[node.node_id] = np.divide(biased, rs, out=np.zeros_like(biased), where=rs > 1e-12)
+    return out
+
+
+def turn_leaf_matrix_multivalued(board4, pot, stacks, db, evaluator, cards,
+                                 menu=None, rivers=None, partition=None, ba_cache=None,
+                                 biases=('baseline', 'fold', 'call', 'raise')):
+    """MULTI-VALUED (Modicum) turn leaf: the OPPONENT picks the worst-for-hero among
+    `biases` blueprint river continuations, instead of trusting a single blueprint
+    continuation (the source of the −76 over-prediction). Independent M0/M1 (NOT −M0^T):
+    M0 (hero=seat0) biases the VILLAIN=seat1 strategy each way and takes the element-wise
+    MIN over biases; M1 (hero=seat1) biases seat0 and mins. Multi-valued states are
+    intentionally NOT zero-sum at the leaf (the opponent's continuation choice is a max
+    for them, not mirrored), so CFR+'s root zero-sum/exploitability no longer hits ~0 --
+    fine for an OFFLINE EV gate (we read realized play, not the convergence gap).
+    Drop-in for turn_leaf_matrix_both: returns (M0, M1, buckets, bidx, tb)."""
+    tb = partition if partition is not None else {
+        h: turn_bucket(h, board4, cards) for h in turn_hands(board4)}
+    buckets = sorted(set(tb.values()))
+    bidx = {b: i for i, b in enumerate(buckets)}
+    B = len(buckets)
+    board_set = set(board4)
+    river_iter = [r for r in (rivers if rivers is not None else FULL_DECK)
+                  if r not in board_set]
+    nb = list(biases)
+    # per-bias accumulators for both seats' leaf matrices
+    ps0 = [{h: np.zeros(B) for h in tb} for _ in nb]   # M0: hero seat0, villain seat1
+    pc0 = [{h: np.zeros(B) for h in tb} for _ in nb]
+    ps1 = [{h: np.zeros(B) for h in tb} for _ in nb]   # M1: hero seat1, villain seat0
+    pc1 = [{h: np.zeros(B) for h in tb} for _ in nb]
+
+    for r in river_iter:
+        board5 = list(board4) + [r]
+        ba = _get_ba(board5, evaluator, cards, ba_cache)
+        hands5 = ba['hands']
+        tb5 = [tb[hb] for hb in hands5]
+        full = np.ones(len(hands5))
+        tree = build_river_tree(pot, stacks)
+        bp = blueprint_strategy_on_tree(tree, ba, db.get_average_strategy, postflop_menu=menu)
+        cfr = RiverCFR(tree, ba)
+        for k, bias in enumerate(nb):
+            bp1 = _bias_strategy(bp, tree, 1, bias, menu)   # villain=seat1 (for M0)
+            bp0 = _bias_strategy(bp, tree, 0, bias, menu)   # villain=seat0 (for M1)
+            for vb in buckets:
+                vmask = np.fromiter((1.0 if b == vb else 0.0 for b in tb5), float, len(tb5))
+                if vmask.sum() <= 0:
+                    continue
+                compat = compatible_mass(ba, vmask)
+                j = bidx[vb]
+                v0, _ = cfr._eval(tree.root, full, vmask, lambda nid, _b=bp1: _b[nid])
+                _, v1 = cfr._eval(tree.root, vmask, full, lambda nid, _b=bp0: _b[nid])
+                for i, hb in enumerate(hands5):
+                    if compat[i] > 1e-9:
+                        ps0[k][hb][j] += v0[i] / compat[i]; pc0[k][hb][j] += 1.0
+                        ps1[k][hb][j] += v1[i] / compat[i]; pc1[k][hb][j] += 1.0
+
+    M0s = [_collapse_matrix(ps0[k], pc0[k], tb, bidx, B) for k in range(len(nb))]
+    M1s = [_collapse_matrix(ps1[k], pc1[k], tb, bidx, B) for k in range(len(nb))]
+
+    def _opp_pick(Ms):
+        # The opponent picks ONE continuation per VILLAIN bucket (column), worst-for-hero,
+        # by that column's (uniform-reach) hero value -- the Modicum multi-valued choice.
+        # NOT an element-wise (per-cell) min: that lets the opponent pick a different
+        # continuation per cell, a min-of-k order-statistic bias that makes the leaf wildly
+        # over-pessimistic (and the solver over-defensive). Per-column is realistic.
+        S = np.stack(Ms)                              # [k, B, B]
+        pick = S.sum(axis=1).argmin(axis=0)           # [B]: per-column worst-for-hero
+        return np.stack([S[pick[j], :, j] for j in range(S.shape[2])], axis=1)
+
+    M0 = _opp_pick(M0s)                               # hero seat0, villain seat1 picks per col
+    M1 = _opp_pick(M1s)                               # hero seat1, villain seat0 picks per col
+    return M0, M1, buckets, bidx, tb
+
+
 def leaf_value_vec(M, tb_idx, c1, c2, reach):
     """VECTORIZED card-removal-aware reach-conditioned leaf value, per hero hand
     (the solve-time form of bucketed_measure_leaf_cr). M: [B,B] hero-bucket x

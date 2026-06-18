@@ -41,9 +41,11 @@ from ..evaluation.showdown_kernel import build_turn_board_arrays
 from .river_subgame_solver import RiverSubgameSolver, SOLVER_MAX_SPR
 from .turn_tree import build_turn_tree
 from .turn_cfr import TurnCFR
-from .cfv import (turn_strength, equal_freq_partition, turn_leaf_matrix_both, FULL_DECK)
+from .cfv import (turn_strength, equal_freq_partition, turn_leaf_matrix_both,
+                  turn_leaf_matrix_multivalued, FULL_DECK)
 from .range_inputs import (project_tracker, blend_villain, hand_index_map, hand_row,
                            read_action_strategy)
+from .blueprint_projection import blueprint_cfv_turn
 
 _LOG = logging.getLogger(__name__)
 
@@ -83,9 +85,14 @@ class TurnSubgameSolver(RiverSubgameSolver):
     TURN_TIME_BUDGET = 10.0
 
     def __init__(self, blueprint_db, *, n_buckets=48, leaf_rivers=6,
-                 turn_max_iters=300, max_spr_turn=None, turn_time_budget=None, **kw):
+                 turn_max_iters=300, max_spr_turn=None, turn_time_budget=None,
+                 multivalued_leaf=False, **kw):
         super().__init__(blueprint_db, **kw)
         self.n_buckets = int(n_buckets)
+        # Phase 5b #2 experiment: Modicum multi-valued leaf (opponent picks worst-of-4
+        # bias continuations) instead of the single blueprint continuation. OFFLINE only
+        # (4x leaf cost). Default off.
+        self.multivalued_leaf = bool(multivalued_leaf)
         self.leaf_rivers = int(leaf_rivers)       # 0 -> all river runouts (offline only)
         self.turn_max_iters = int(turn_max_iters)
         self.max_spr_turn = float(self.TURN_MAX_SPR if max_spr_turn is None else max_spr_turn)
@@ -175,6 +182,19 @@ class TurnSubgameSolver(RiverSubgameSolver):
         if 'board4' not in info:
             return super()._hand_action_evs(info, node, row)
         solver = info['cfr']
+        if self.multivalued_leaf:
+            # Phase 5b #2: gate on the SOLVE's own MULTI-VALUED (robust) leaf values --
+            # self-consistent with the multi-valued solve and conservative: it won't wave
+            # through a deviation that loses under the opponent's WORST continuation. (Grading
+            # on the single-continuation exact leaf while the solve used the multi-valued one
+            # was the de-risk's unfixed confound -- the optimistic gate let bad deviations
+            # through; that is the leaf fix that matters most.)
+            r0, r1 = info['reach0'], info['reach1']
+            vill = np.asarray(r1 if node.player == 0 else r0, float)
+            zmv = compatible_mass(solver.ba, vill)[row]
+            if zmv <= 1e-9:
+                return None
+            return solver.node_action_values(node, r0, r1)[row] / zmv
         exact = ExactLeafTurnCFR(
             solver.tree, info['ba'], solver.tb_idx, solver.leaf_matrix_fn,
             info['board4'], self.db, self._evaluator, self._cards,
@@ -244,7 +264,9 @@ class TurnSubgameSolver(RiverSubgameSolver):
         part = equal_freq_partition(strength, self.n_buckets)
         buckets = sorted(set(part.values()))
         bidx = {b: i for i, b in enumerate(buckets)}
-        ba = build_turn_board_arrays(board)               # light: hands/c1/c2 (no buckets)
+        # safe_gadget needs the FULL ba (pf/strg2/groups2) for the blueprint-turn projection
+        # in the opt-out (blueprint_cfv_turn); the plain direct solve only needs hands/c1/c2.
+        ba = build_turn_board_arrays(board, self._cards if self.safe_gadget else None)
         idx = hand_index_map(ba)
         # part.get(...) not part[...]: at leaf_rivers in {1,2} a hand made of the sampled
         # river card(s) can be absent from `part` -> KeyError. leaf_rivers>=3 (gate/tests)
@@ -254,8 +276,10 @@ class TurnSubgameSolver(RiverSubgameSolver):
         tree = build_turn_tree(pot_entry, stacks, menu=self.menu,
                                max_aggressions=LIVE_TURN_MAX_AGGRESSIONS)
 
+        _leaf_matrix = (turn_leaf_matrix_multivalued if self.multivalued_leaf
+                        else turn_leaf_matrix_both)
         def leaf_fn(pot, st):
-            M0, M1, _, _, _ = turn_leaf_matrix_both(
+            M0, M1, _, _, _ = _leaf_matrix(
                 board, pot, st, self.db, self._evaluator, self._cards,
                 menu=self._postflop_menu, rivers=rivers, partition=part, ba_cache=ba_cache)
             return M0, M1
@@ -290,11 +314,29 @@ class TurnSubgameSolver(RiverSubgameSolver):
                 raise TimeoutError(
                     f"turn leaf-build exceeded {self.turn_time_budget:g}s budget "
                     "(SPR too high for the tree size); falling back to blueprint")
+        # SAFE GADGET (Phase 5b #1): when safe_gadget is on, solve under the re-solving
+        # gadget -- the villain gets a per-hand opt-out at the blueprint TURN-entry CFV
+        # (blueprint_cfv_turn), so the solved turn strategy is no-more-exploitable than the
+        # blueprint within the depth-limited game (validated by test_safe_turn_gadget). The
+        # inherited run_gadget uses TurnCFR's depth-limited leaf automatically. Off -> the
+        # plain direct (unsafe-v1) solve, the old behaviour.
+        gadget = bool(self.safe_gadget)
+        if gadget:
+            villain_seat = 1 - bot_seat
+            hero_reach = reach0 if bot_seat == 0 else reach1
+            villain_reach = reach1 if bot_seat == 0 else reach0
+            optout = blueprint_cfv_turn(tree, ba, self.db.get_average_strategy,
+                                        reach0, reach1, villain_seat, tb_idx, leaf_fn,
+                                        self._postflop_menu)
         chunk = max(1, int(getattr(self, 'check_every', 40)))
         done = 0
         while done < self.turn_max_iters:
-            solver.run(reach0, reach1, iters=min(chunk, self.turn_max_iters - done))
-            done += min(chunk, self.turn_max_iters - done)
+            step = min(chunk, self.turn_max_iters - done)
+            if gadget:
+                solver.run_gadget(hero_reach, villain_reach, optout, villain_seat, iters=step)
+            else:
+                solver.run(reach0, reach1, iters=step)
+            done += step
             if time.perf_counter() - t0 >= self.turn_time_budget:
                 break
         seconds = time.perf_counter() - t0

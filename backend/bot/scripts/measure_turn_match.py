@@ -76,7 +76,8 @@ def _build_bot(kind, rawdb, fb, args):
     elif kind == 'turn':
         s = TurnSubgameSolver(rawdb, n_buckets=args.n_buckets, leaf_rivers=args.leaf_rivers,
                               turn_max_iters=args.turn_iters, turn_time_budget=args.turn_budget,
-                              max_spr_turn=args.turn_max_spr, **served)
+                              max_spr_turn=args.turn_max_spr,
+                              multivalued_leaf=getattr(args, 'multivalued_leaf', False), **served)
     else:
         raise ValueError(kind)
     s.db = fb                       # cache blueprint reads across hands (huge speedup)
@@ -190,7 +191,8 @@ def _opponent_action(style, opponent, sess):
     return opponent.decide(sess.info_set_key(sess.data['human_seat']), sess.legal_actions(), {})
 
 
-def _hand_chips(seed_h, human_seat, bot, opponent, opp_style, strat_fn, menu, max_steps):
+def _hand_chips(seed_h, human_seat, bot, opponent, opp_style, strat_fn, menu, max_steps,
+                want_aivat=False):
     """#4 CRN: play ONE hand on a FRESH session seeded for pairing; return the bot's chips.
     PAIRING-LEAK FIX: deck/opponent/blueprint-sampling share the global `random` while the
     solver samples from `_rng`; once the turn bot fires and consumes `_rng` (not `random`),
@@ -218,6 +220,15 @@ def _hand_chips(seed_h, human_seat, bot, opponent, opp_style, strat_fn, menu, ma
         return orig_decide(key, legal, public)
 
     bot.decide = seeded_decide
+    _log = {'streets': [], 'folder': None}
+    orig_apply = sess.apply_action
+    if want_aivat:                            # log streets/folder for the AIVAT record
+        def _wrapped_apply(action, solved_hero_probs=None):
+            if action == 'fold':
+                _log['folder'] = sess.current_player()
+            _log['streets'].append(sess.data['street'])
+            return orig_apply(action, solved_hero_probs=solved_hero_probs)
+        sess.apply_action = _wrapped_apply
     ocount = [0]
     try:
         steps = 0
@@ -232,7 +243,48 @@ def _hand_chips(seed_h, human_seat, bot, opponent, opp_style, strat_fn, menu, ma
             steps += 1
     finally:
         bot.decide = orig_decide
-    return -float(sess.data['human_net'])     # fresh session: bot's chips this hand
+        sess.apply_action = orig_apply
+    bot_chips = -float(sess.data['human_net'])     # fresh session: bot's chips this hand
+    if want_aivat:
+        rec = _aivat_record(sess, 1 - human_seat, _log)
+        rec['result'] = bot_chips
+        return bot_chips, rec
+    return bot_chips
+
+
+def _aivat_record(session, bot_seat, log):
+    """Assemble an AIVATEstimator record from a FINISHED session + the per-action `log`
+    ({'streets':[...], 'folder': seat|None}). Same shape as _play_and_record's record, so
+    the paired arms feed the estimator identically -- and non-diverged hands produce
+    IDENTICAL records, so they cancel in the (turn - river) AIVAT diff (pairing preserved).
+    'result' is filled by the caller (the hand's bot-chip delta)."""
+    d = session.data
+    res = d.get('result') or {}
+    g = session.game
+    st = min(d['street'], 3)
+    p0_tot = d['p0_invested'] + g.get_player_contribution_this_round(
+        d['history'], st, d['starting_pot'], 0, d['p0_invested'], d['p1_invested'])
+    p1_tot = d['p1_invested'] + g.get_player_contribution_this_round(
+        d['history'], st, d['starting_pot'], 1, d['p0_invested'], d['p1_invested'])
+    showdown = res.get('reason') == 'showdown'
+    both_allin = (abs(p0_tot - STARTING_STACK) < 1e-6 and abs(p1_tot - STARTING_STACK) < 1e-6)
+    allin_street = log['streets'][-1] if (showdown and both_allin and log['streets']) else None
+    a_cards = d['p0_cards'] if bot_seat == 0 else d['p1_cards']
+    b_cards = d['p1_cards'] if bot_seat == 0 else d['p0_cards']
+    # c2 (river-runout CV): mirror _play_and_record so the PAIRED arms get c2 too. Without
+    # this the paired AIVAT was c3-only, and turn deviations (which reach showdown far more
+    # often than all-in) had NO variance removed -- the dominant non-all-in luck source went
+    # unaddressed. Non-diverged hands build the IDENTICAL river_range in both arms -> cancels.
+    river_range = None
+    board = list(d['community'])
+    if d.get('river_entry_opp') is not None and len(board) >= 5:
+        opp = RangeTracker.from_dict(d['river_entry_opp'], session.cards)
+        river_range = {'range': opp, 'turn_board': board[:4], 'river_card': board[4],
+                       'pot': float(d['starting_pot'])}
+    return {'seat_of_A': bot_seat, 'hand_a': list(a_cards), 'hand_b': list(b_cards),
+            'board': board, 'events': [], 'river_range': river_range,
+            'allin_street': allin_street, 'folded': log['folder'],
+            'invested': [p0_tot, p1_tot]}
 
 
 def run_paired(path, hands, seed, args):
@@ -262,7 +314,21 @@ def run_paired(path, hands, seed, args):
     opponent = BlueprintStrategy(fb)
     strat_fn = BlueprintStrategy(fb).range_model_fn()
     opp_style = args.opponent
-    print(f"PAIRED (CRN) river-vs-turn | {os.path.basename(path)} | menu={menu} | hands={hands} "
+    import src.subgame.river_subgame_solver as _rss
+    _base_river_spr = _rss.SOLVER_MAX_SPR
+    measure = getattr(args, 'measure', 'turn')
+    # arm A = baseline, arm B = +the-solver-under-test. 'turn': A=river-only, B=river+turn.
+    # 'river': A=blueprint (NO solving), B=river solver. Toggle SOLVER_MAX_SPR (module const,
+    # read at the river fire gate) for the river arm; max_spr_turn (instance) for the turn arm.
+    la, lb = ('blueprint', 'river') if measure == 'river' else ('river', 'turn')
+    def _set_arm(with_solver):
+        if measure == 'river':
+            bot.max_spr_turn = -1.0                                # turn OFF in both arms
+            _rss.SOLVER_MAX_SPR = _base_river_spr if with_solver else -1.0
+        else:
+            _rss.SOLVER_MAX_SPR = _base_river_spr                  # river ON in both arms
+            bot.max_spr_turn = turn_cap if with_solver else -1.0
+    print(f"PAIRED (CRN) {lb}-vs-{la} | {os.path.basename(path)} | menu={menu} | hands={hands} "
           f"seed={seed} opp={opp_style} | turn(n={args.n_buckets},rivers={args.leaf_rivers},"
           f"it={args.turn_iters},spr<={turn_cap:g})")
     print("  ONE-bot ARGMAX, fixed-iters (deterministic); per-decision RNG reseed -> "
@@ -270,38 +336,92 @@ def run_paired(path, hands, seed, args):
     diffs = []
     r_tot = t_tot = 0.0
     ndiv = 0
+    _div_hands = []                          # per-deviation ledger: (hand, seat, realized mbb)
+    estimator = None
+    turn_recs, river_recs = [], []
+    if args.aivat:                           # AIVAT the paired diff: c3 collapses the all-in
+        from src.evaluation.aivat import AIVATEstimator   # variance that dominates vs maxbet.
+        estimator = AIVATEstimator(BlueprintDB(path, read_only=True), seed=seed)
     t0 = time.time()
     for h in range(hands):
         seed_h = seed * 1_000_003 + h
         human_seat = h % 2
-        bot.max_spr_turn = -1.0          # river arm: turn solver DISABLED (acts as river bot)
+        _set_arm(False)                  # baseline arm (la): river-only, or pure blueprint
         rc = _hand_chips(seed_h, human_seat, bot, opponent, opp_style, strat_fn, menu,
-                         args.max_steps)
-        bot.max_spr_turn = turn_cap      # turn arm: turn solver ENABLED
+                         args.max_steps, want_aivat=args.aivat)
+        _set_arm(True)                   # +solver arm (lb): +turn solver, or +river solver
         tc = _hand_chips(seed_h, human_seat, bot, opponent, opp_style, strat_fn, menu,
-                         args.max_steps)
+                         args.max_steps, want_aivat=args.aivat)
+        if args.aivat:
+            rc, _rrec = rc; tc, _trec = tc
+            river_recs.append(_rrec); turn_recs.append(_trec)
         d = tc - rc
         diffs.append(d)
         r_tot += rc
         t_tot += tc
         if abs(d) > 1e-9:
             ndiv += 1
+            _div_hands.append((h, human_seat, d / BIG_BLIND * 1000.0))   # per-deviation ledger
         if (h + 1) % max(1, hands // 10) == 0:
             nn = len(diffs)
             md = sum(diffs) / nn / BIG_BLIND * 1000.0
-            print(f"  hand {h + 1:5d}: (turn-river) {md:+8.1f} mbb/hand  diverged={ndiv}/{nn}  "
+            print(f"  hand {h + 1:5d}: ({lb}-{la}) {md:+8.1f} mbb/hand  diverged={ndiv}/{nn}  "
                   f"({time.time() - t0:.0f}s)", flush=True)
     rawdb.close()
+    _rss.SOLVER_MAX_SPR = _base_river_spr     # restore the module constant
     n = len(diffs)
     mean_d = sum(diffs) / n if n else 0.0
     var = sum((x - mean_d) ** 2 for x in diffs) / n if n else 0.0
     md_mbb = mean_d / BIG_BLIND * 1000.0
     se_mbb = (math.sqrt(var / n) / BIG_BLIND * 1000.0) if n else 0.0
-    print(f"\n  river arm {r_tot / n / BIG_BLIND * 1000.0:+.1f}  turn arm "
+    print(f"\n  {la} arm {r_tot / n / BIG_BLIND * 1000.0:+.1f}  {lb} arm "
           f"{t_tot / n / BIG_BLIND * 1000.0:+.1f} mbb/hand (raw, paired draws)")
-    print(f"  PAIRED (turn - river) = {md_mbb:+.1f} +/- {se_mbb:.1f} mbb/hand over {n} hands "
+    print(f"  PAIRED ({lb} - {la}) = {md_mbb:+.1f} +/- {se_mbb:.1f} mbb/hand over {n} hands "
           f"(diverged on {ndiv} = {100.0 * ndiv / max(1, n):.1f}%; {time.time() - t0:.0f}s)")
+    if estimator is not None and turn_recs:
+        # PAIRED control variate: subtract the per-hand control-variate DIFF (Δc2 river-runout
+        # + Δc3 all-in-EV; Δc1=0 since both arms share the deck) from the raw DIFF with UNIT
+        # coefficient -- the classic AIVAT estimator. Each c_k has conditional mean 0, so this
+        # is UNBIASED (E[adiff]=E[D]) regardless of correlation, and it matches the (verified)
+        # unpaired AIVATEstimator semantics. We deliberately do NOT fit beta in-sample: only the
+        # ~handful of diverged hands carry signal, so an in-sample lstsq overfits the realized
+        # stack-offs and can INFLATE the diff variance (that was the +278 se blow-up). Non-
+        # diverged hands have ΔX=0 and D=0 -> drop out, so the se reflects only diverged hands.
+        VT = np.array([estimator._hand_variates(r) for r in turn_recs], float)   # [n,3]=c1,c2,c3
+        VR = np.array([estimator._hand_variates(r) for r in river_recs], float)
+        D = np.array(diffs, float)                              # per-hand raw diff (chips)
+        dCV = (VT - VR)[:, 1:].sum(axis=1)                      # Δc2 + Δc3 (Δc1 structurally 0)
+        adiff = (D - dCV) * (1000.0 / 2.0)                     # per-hand AIVAT diff (mbb)
+        rawmbb = D * (1000.0 / 2.0)
+        amd = float(adiff.mean())
+        ase = float(adiff.std(ddof=1) / len(adiff) ** 0.5) if len(adiff) > 1 else 0.0
+        # Guard (M2): if the CVs INCREASE the diff variance on this sample (poorly correlated --
+        # e.g. turn deviations that rarely reach all-in, so Δc3 is just noise), they HURT. Report
+        # the raw paired diff as the estimate rather than a worse se mislabeled "AIVAT".
+        if adiff.var() <= rawmbb.var() or rawmbb.var() <= 1e-12:
+            vr = (1.0 - adiff.var() / rawmbb.var()) if rawmbb.var() > 1e-12 else 0.0
+            print(f"  AIVAT ({lb} - {la}) = {amd:+.1f} +/- {ase:.1f} mbb/hand  (PAIRED control "
+                  f"variate, var -{vr * 100:.0f}% vs raw; all-in/runout luck collapsed)")
+        else:
+            print(f"  AIVAT ({lb} - {la}): control variates INFLATE the diff variance on this "
+                  f"sample (would be {amd:+.1f} +/- {ase:.1f}); too few all-in/showdown "
+                  f"deviations for the CVs to grip -> use the RAW paired diff above as the "
+                  f"estimate ({md_mbb:+.1f} +/- {se_mbb:.1f}).")
     _turn_stats_report(bot)
+    # Per-deviation attribution (the low-variance dev signal): the aggregate (turn-river) is
+    # noise-dominated by a few big-swing hands, so show WHERE the EV comes from -- which
+    # diverged hands win vs lose. A few big losers => fixable spots, not a broad failure.
+    if _div_hands:
+        win = [x for x in _div_hands if x[2] > 0]
+        lose = [x for x in _div_hands if x[2] < 0]
+        sw, sl = sum(x[2] for x in win), sum(x[2] for x in lose)
+        print(f"\n  PER-DEVIATION ({len(_div_hands)} diverged): {len(win)} win (+{sw:.0f}) / "
+              f"{len(lose)} lose ({sl:.0f}) mbb-total -> net {sw + sl:+.0f} over {n} hands")
+        srt = sorted(_div_hands, key=lambda x: x[2])
+        print("    LOSERS  (hand/seat:mbb): " +
+              "  ".join(f"#{h}/s{s}:{d:+.0f}" for h, s, d in srt[:6]))
+        print("    WINNERS (hand/seat:mbb): " +
+              "  ".join(f"#{h}/s{s}:{d:+.0f}" for h, s, d in srt[-6:][::-1]))
     print("\n  GATE: paired diff > 0 beyond ~2se => turn solving ADDS EV over river-only.")
 
 
@@ -323,6 +443,10 @@ def main():
     p.add_argument('--turn-max-spr', type=float, default=10.0,
                    help="skip turns above this SPR (bigger tree -> leaf-build timeout). Keep "
                         "it in the band that solves within --turn-budget.")
+    p.add_argument('--multivalued-leaf', action='store_true',
+                   help="Phase 5b #2 EXPERIMENT: Modicum multi-valued turn leaf (opponent picks "
+                        "worst of 4 bias continuations) instead of the single blueprint leaf. ~4x "
+                        "leaf cost -> OFFLINE only (raise --turn-budget).")
     p.add_argument('--opponent', choices=['blueprint', 'maxbet', 'jam', 'widejam'],
                    default='blueprint',
                    help="paired-gate villain. 'maxbet' builds pots -> LOW-SPR turns -> the turn "
@@ -331,7 +455,11 @@ def main():
     p.add_argument('--river-budget', type=float, default=5.0)  # served strategy_api.py value
     p.add_argument('--max-steps', type=int, default=400)
     p.add_argument('--paired', action='store_true',
-                   help="#4 CRN-paired river-vs-turn diff (low variance); ignores --bot/--aivat.")
+                   help="#4 CRN-paired diff (low variance); ignores --bot.")
+    p.add_argument('--measure', choices=['turn', 'river'], default='turn',
+                   help="paired diff to measure: 'turn' = (river+turn) - (river-only) = the TURN "
+                        "solver's gain; 'river' = (river-only) - (blueprint) = the RIVER solver's "
+                        "gain. Same metric -> apples-to-apples comparison.")
     args = p.parse_args()
 
     path = args.db or resolve_blueprint_path()

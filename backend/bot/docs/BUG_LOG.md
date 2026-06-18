@@ -10,6 +10,53 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-025 — Paired-AIVAT measurement: dead c2 control variate + in-sample β-fit inflated the turn-solver estimate
+
+| | |
+|---|---|
+| **Date** | 2026-06-18 |
+| **Area** | Measurement harness (`scripts/measure_turn_match.py` `run_paired`/`_aivat_record`) |
+| **Severity** | Medium (mis-measures EV — no production impact) · **Status** | Fixed (uncommitted) |
+
+**Summary.** The turn-solver gain measured **raw −96.1 ± 86.6** mbb/hand but **AIVAT +88.9 ± 278.2** — the AIVAT *flipped the sign* and the standard error *tripled*. An AIVAT control variate that **increases** variance is a contradiction in terms (the whole point is to reduce it), so the +89 "gain" was an artifact, not signal.
+
+**Root cause (two compounding bugs).**
+1. **Dead c2 (C1).** In the PAIRED path, `_aivat_record` hardcoded `river_range=None` (the unpaired `_play_and_record` built it from `river_entry_opp`). With it `None`, AIVAT's c2 (river-runout) variate was **0 for every hand in both arms** — so the "AIVAT" was c3 (all-in-EV) only. Turn deviations reach *showdown* far more often than *all-in*, so the dominant non-all-in luck source went entirely unaddressed.
+2. **In-sample β-fit (C2).** The paired diff `D` was regressed on the control-variate diffs via `np.linalg.lstsq(dX, D)` and the fitted residual reported as AIVAT. Only the ~25/2000 *diverged* hands carry signal (non-diverged: `D=0`, `ΔX≈0`), so the fit was effectively **2 free params on ~25 high-variance rows** (really 1, given the dead c2). It **overfit** the realized stack-offs, and the residual variance came out *larger* than the raw — i.e. variance reduction went **negative**. The printout's `var {-vr*100:+.0f}%` label then displayed an inflated reduction misleadingly.
+
+**Fix.**
+- C1: build `river_range` in `_aivat_record` exactly as `_play_and_record` does (non-diverged hands build the identical range in both arms → cancels in the diff; diverged showdown hands now get c2 applied).
+- C2: replace the lstsq β-fit with the classic **unit-coefficient** subtraction `adiff = (D − (Δc2+Δc3))·500` — provably unbiased (each `c_k` has conditional mean 0) and matches the verified unpaired estimator; can't overfit.
+- Guard (M2): if `adiff.var() > rawmbb.var()` (CVs hurt on this sample — too few all-in/showdown deviations), report the **raw** paired diff as the estimate instead of a worse se mislabeled "AIVAT".
+
+**Why it wasn't caught.** The river-gain measurement (+207.5) looked clean — there the deviations *are* frequent all-in stack-offs vs maxbet, so c3 correlated with `D` and the fit happened to help (se stayed ~88). The turn case (rare, mostly-showdown deviations) is exactly where the dead c2 + overfit bit, and the contradictory +89/−96 split was the only tell.
+
+**Lesson.** A control variate that *raises* the standard error is a bug, not a tighter estimate — always sanity-check that `var_reduction ≥ 0` and fall back to raw otherwise. And keep the paired-diff CV at unit coefficient (classic AIVAT); fitting β in-sample on a handful of informative rows reintroduces the variance you came to remove. Found by a measurement-code audit agent.
+
+---
+
+## BUG-024 — Safe-resolving gadget regret reset every solve increment → live safety guarantee silently lost
+
+| | |
+|---|---|
+| **Date** | 2026-06-18 |
+| **Area** | Subgame solving — `src/subgame/river_cfr.py` `run_gadget` (served river path; turn inherits it) |
+| **Severity** | High (degrades the no-more-exploitable-than-blueprint guarantee on the LIVE bot) · **Status** | Fixed (uncommitted) |
+
+**Summary.** The safe re-solving gadget's villain regret table (`g_regret`, the per-hand Follow-vs-Terminate opt-out belief) was a **function-local** in `run_gadget`, allocated fresh on every call. But the served path (`solve_control.solve_river_gadget`, and the turn solver's own loop) runs the gadget in `check_every`-sized **chunks** — with the served default `max_iters=400, check_every=40`, that's **10 calls**. So the villain opt-out belief was **wiped and restarted from the uniform 0.5/0.5 prior 10 times**, while the hero's `regret`/`strat_sum`/`_iter` clock all correctly persisted across the chunks.
+
+**Root cause.** `g_regret = np.zeros((self.H, 2))` lived inside `run_gadget` rather than on the instance. The hero state was deliberately persisted (the documented `run(100)+run(100) == run(200)` invariant) but the gadget regret was missed — so the hero averaged its strategy against a villain whose entry/opt-out belief never converged past 40 iterations.
+
+**Why it matters.** The villain's converged follow-probability is the mechanism that enforces "the villain only enters the subgame with hands that beat the blueprint opt-out." If it perpetually restarts near-uniform, the gadget doesn't reach the reach-gadget equilibrium and the **no-more-exploitable-than-blueprint guarantee — the entire reason Phase 5a exists — is not delivered** on the served `safe_gadget=True, anchor='auto'` clamp path.
+
+**Fix.** Promote `g_regret` to persisted instance state `self._g_regret` (lazily allocated `[H,2]` on first `run_gadget`, mutated in place, reset only on fresh solver construction) — mirroring `self.regret`. A chunked solve is now bit-identical to a single-shot one.
+
+**Why it wasn't caught.** Every gadget safety test (`test_safe_river_gadget.py`) called `run_gadget` **single-shot** (`iters=_ITERS` in one call), which never triggers the reset — so the hard safety gate passed while the chunked served path was degraded. Added `test_gadget_increment_equivalence` (10×30 vs 1×300 must match to <1e-9; measured 0.0e+00 after the fix) to guard exactly this.
+
+**Lesson.** When state is "persist across increments" by design, test the *incremental* path, not just the single-shot one — an invariant documented for one piece of state (`self.regret`) doesn't enforce it for a sibling (`g_regret`). Found by a solver-correctness audit agent.
+
+---
+
 ## BUG-023 — Bot over-jams a counterfeited / range-dominated made hand (the proposing-side leak)
 
 | | |

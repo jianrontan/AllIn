@@ -195,7 +195,51 @@ def test_gadget_blueprint_anchor_no_more_exploitable():
     print("PASS test_gadget_blueprint_anchor_no_more_exploitable")
 
 
-TESTS = [test_gadget_blueprint_anchor_no_more_exploitable]
+def test_gadget_increment_equivalence():
+    """run_gadget split into check_every-sized chunks MUST equal a single-shot solve.
+
+    run_gadget is fully deterministic (vectorized, no sampling), so a chunked solve
+    can only differ from one continuous solve if some per-iteration state fails to
+    persist across calls. The villain gadget regret (g_regret) was exactly such a
+    bug: a function-local reset every chunk, so the served check_every-chunked path
+    (solve_river_gadget runs 10x40 by default) restarted the villain opt-out belief
+    from uniform every chunk while the hero strat_sum accumulated -- the gadget never
+    converged and the no-more-exploitable-than-blueprint guarantee was silently lost.
+    Every prior safety test ran run_gadget single-shot, so none caught it. This asserts
+    the increment-equivalence that self.regret/self._iter were always documented to hold."""
+    raw, db = _blueprint_raw()
+    menu = None
+    if db is not None:
+        from src.abstractions.sizing import db_menu_mode, postflop_menu_for
+        menu = postflop_menu_for(db_menu_mode(db))
+    board, hole, bot_seat, pot, behind = _SPOTS[0]
+    ba = build_board_arrays(board, _EVAL, _CARDS)
+    idx = hand_index_map(ba)
+    tree = build_river_tree(pot, (behind, behind))
+    villain_seat = 1 - bot_seat
+    hero_reach = _uniform_reach(board, [], ba, idx)
+    villain_true = _uniform_reach(board, hole, ba, idx)
+    g0, g1 = (hero_reach, villain_true) if villain_seat == 1 else (villain_true, hero_reach)
+    optout = blueprint_cfv(tree, ba, raw, g0, g1, villain_seat, menu)
+
+    one = RiverCFR(tree, ba)
+    one.run_gadget(hero_reach, villain_true, optout, villain_seat, iters=300)
+    chunked = RiverCFR(tree, ba)                 # mirror the served chunked path
+    for _ in range(10):
+        chunked.run_gadget(hero_reach, villain_true, optout, villain_seat, iters=30)
+    if db is not None:
+        db.close()
+
+    worst = max(float(np.abs(one.average_strategy(nid) - chunked.average_strategy(nid)).max())
+                for nid in range(len(tree.decision_nodes)))
+    print(f"  increment-equivalence: max avg-strategy diff (10x30 vs 1x300) = {worst:.2e}")
+    assert worst < 1e-9, (f"chunked run_gadget != single-shot ({worst:.2e}) -- the villain "
+                          "gadget regret is not persisting across increments")
+    print("PASS test_gadget_increment_equivalence")
+
+
+TESTS = [test_gadget_blueprint_anchor_no_more_exploitable,
+         test_gadget_increment_equivalence]
 
 if __name__ == '__main__':
     sys.exit(0 if run() else 1)

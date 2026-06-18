@@ -96,6 +96,18 @@ BlueprintDB.save_batch(...) every `checkpoint_every` iterations
   fold the button" for a week. A healthy run shows weak hands folding a lot with a wide strength gradient;
   `COLLAPSE` means a weak bucket folds <5% while playing one size >75%. Run it on any DB:
   `python scripts/check_strategy_shape.py [--db <path>] [--verbose]` (exit code 2 on COLLAPSE).
+- **Selecting the ship snapshot.** A run keeps a snapshot per `TRACK_EVERY`. The scoreboard
+  `~/progress.txt` gives **BR** (paired across snapshots — seed 42, same boards — so its
+  checkpoint-to-checkpoint deltas are trustworthy) and **LBR** (NOT paired by default: the victim
+  *samples* its action and desyncs the deal stream, so LBR swings between checkpoints are noise —
+  use `paired=True` to compare two snapshots). Aggregate BR is **reach-weighted toward the
+  best-response line**, so it understates RARE-line quality that matters against humans. Two
+  read-only probes diagnose a snapshot: `scripts/probe_seat_ev.py` (EV(current) vs EV(served=average),
+  split by seat) and `scripts/probe_rare_line_convergence.py` (visit-tail + pairwise strategy-drift
+  by position × rarity tier — *is the rare/OOP tail still converging?*). **Don't pick the ship
+  snapshot by the BR minimum alone** — BR can bottom while rare lines are still improving; confirm
+  with a **human-like match eval** (`scripts/run_maniac_live.py` / `compare_gadget_policies.py --aivat`
+  vs maniac/calling-station), which weights lines by human reach.
 - Hand evaluation goes through `postflop_features.rank7`, which precomputes card→id ids
   and calls phevaluator's internal evaluator directly (skips per-call string parsing);
   river equity is computed via the vectorized `board_winrates` shared across both

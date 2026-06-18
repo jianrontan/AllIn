@@ -113,6 +113,46 @@ def solve_river_gadget(tree, ba, hero_reach, villain_reach, optout, villain_seat
                  'converged': bool(done >= max_iters)}
 
 
+def solve_turn_gadget(tree, ba, tb_idx, leaf_matrix_fn, hero_reach, villain_reach,
+                      optout, villain_seat, *, max_iters=1000, check_every=50,
+                      time_budget=None):
+    """Solve the depth-limited TURN subgame under the SAFE re-solving gadget -- the turn
+    analogue of solve_river_gadget. `TurnCFR.run_gadget` is INHERITED from RiverCFR and
+    automatically uses TurnCFR's depth-limited leaf (the river collapsed into the leaf
+    matrices) via _cfr -> _terminal, so no turn-specific gadget code is needed. The
+    villain gets a per-hand opt-out paying `optout` (blueprint TURN-entry CFV from
+    blueprint_projection.blueprint_cfv_turn), so the solved HERO turn strategy is
+    no-more-exploitable than the blueprint within the depth-limited game.
+
+    Same budget loop + `converged = ran the full max_iters within budget` proxy as
+    solve_river_gadget (the gadget reshapes the villain range, so there is no cheap
+    per-iteration Nash gap; the EV gate's non-converged margin consumes the proxy)."""
+    from .turn_cfr import TurnCFR
+    cfr = TurnCFR(tree, ba, tb_idx, leaf_matrix_fn)
+    hero_reach = np.asarray(hero_reach, float)
+    villain_reach = np.asarray(villain_reach, float)
+    optout = np.asarray(optout, float)
+    t0 = time.time()
+    done = 0
+    per_iter = None
+    while done < max_iters:
+        step = min(check_every, max_iters - done)
+        if time_budget is not None:
+            remaining = time_budget - (time.time() - t0)
+            if remaining <= 0:
+                break
+            if per_iter and per_iter > 0 and math.isfinite(remaining):
+                step = max(1, min(step, int(remaining / per_iter)))
+        bt = time.time()
+        cfr.run_gadget(hero_reach, villain_reach, optout, villain_seat, iters=step)
+        per_iter = (time.time() - bt) / step
+        done += step
+        if time_budget is not None and (time.time() - t0) >= time_budget:
+            break
+    return cfr, {'iters': done, 'gap': None, 'seconds': time.time() - t0,
+                 'converged': bool(done >= max_iters)}
+
+
 # Below this compatible-villain-mass the per-action EVs are undefined: dividing the
 # tiny `vals` row by a tiny `z` blows the chip-EVs up to garbage that would dominate the
 # EV-gate margin and spuriously deviate/keep. Return None so the caller keeps the

@@ -117,6 +117,32 @@ def blueprint_turn_strategy_on_tree(tree, ba, raw_strategy, postflop_menu=None):
     return _project(tree, ba, raw_strategy, 2, ba['strg2'], ba['groups2'], postflop_menu)
 
 
+def blueprint_cfv_turn(tree, ba, raw_strategy, reach0, reach1, villain_seat,
+                       tb_idx, leaf_matrix_fn, postflop_menu=None):
+    """Per-villain-hand counterfactual value at the TURN-entry root with BOTH players on
+    the blueprint -- turn betting per the projected blueprint turn strategy, the river
+    collapsed into the depth-limited leaf (= the blueprint river continuation). The TURN
+    analogue of `blueprint_cfv`; the opt-out floor for the turn safe-solving gadget.
+
+    `v_blueprint_turn(h)` is what villain hand h is guaranteed by NOT entering the turn
+    re-solve. Giving the villain this per-hand floor in the gadget game makes the
+    re-solved TURN strategy no-more-exploitable than the blueprint *within the
+    depth-limited game* (the leaf's river is the blueprint continuation, same as the
+    solve's leaf -- so the opt-out is consistent with the gadget constraint).
+
+    `ba` MUST be build_turn_board_arrays(board4, cards) (carries strg2/groups2 for the
+    projection); `tb_idx`/`leaf_matrix_fn` are the SAME leaf bucketing + matrices the
+    solve uses. reach0/reach1 are the turn-ENTRY reaches. `villain_seat` is the non-hero
+    seat. Returns a length-H vector in MEASURE units (HERO-reach weighted), matching
+    solve_turn_gadget's value floor."""
+    from .turn_cfr import TurnCFR
+    cfr = TurnCFR(tree, ba, tb_idx, leaf_matrix_fn)
+    strat = blueprint_turn_strategy_on_tree(tree, ba, raw_strategy, postflop_menu)
+    v0, v1 = cfr._eval(tree.root, np.asarray(reach0, float),
+                       np.asarray(reach1, float), lambda nid: strat[nid])
+    return v1 if villain_seat == 1 else v0
+
+
 def _project(tree, ba, raw_strategy, street, strg, groups, postflop_menu):
     """Shared projection: street 3 (river, strg[3]/groups[3]) or 2 (turn,
     strg2/groups2). _node_patterns + tree_action_char + blueprint_to_tree_dist are

@@ -49,6 +49,14 @@ class RiverCFR:
         # better strategies. run(100)+run(100) is therefore bit-identical to run(200).
         self._iter = 0
         self._t_weight = 1.0
+        # Villain gadget regret [H, 2] (Follow vs Terminate), PERSISTED across
+        # run_gadget() increments exactly like self.regret / self._iter above.
+        # The served path runs the gadget in check_every-sized chunks; if this
+        # reset each chunk the villain opt-out belief would restart from uniform
+        # every chunk while the hero strat_sum kept accumulating -> the gadget
+        # never converges and the no-more-exploitable-than-blueprint guarantee is
+        # lost. Lazily allocated on first run_gadget (H known at construction).
+        self._g_regret = None
 
     # -- current strategy (regret-matching+) -----------------------------------
     def _strategy(self, nid):
@@ -160,7 +168,9 @@ class RiverCFR:
         hero_reach = np.asarray(hero_reach, float)
         vg = np.asarray(villain_gadget_reach, float)
         optout = np.asarray(optout, float)
-        g_regret = np.zeros((self.H, 2))          # per villain hand: [Follow, Terminate]
+        if self._g_regret is None:                # persisted across increments (see __init__)
+            self._g_regret = np.zeros((self.H, 2))   # per villain hand: [Follow, Terminate]
+        g_regret = self._g_regret                 # in-place updates below mutate the instance state
         for _ in range(iters):
             self._iter += 1
             self._t_weight = float(self._iter)
