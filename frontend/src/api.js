@@ -26,7 +26,15 @@ const uuidv4 = () =>
 
 // The browser's stable anonymous identity. Created + persisted on first call;
 // also primes the module-level playerId used by game requests.
+// DEV: VITE_DEV_PLAYER_ID forces the identity (play-AS a profiled player, e.g. for testing the
+// exploiter via scripts/dev_launch.py). Vite only exposes it on the dev build, so it's inert in prod.
 export function getPlayerId() {
+    const devId = import.meta.env.VITE_DEV_PLAYER_ID;
+    if (devId) {
+        localStorage.setItem(PLAYER_ID_KEY, devId);
+        playerId = devId;
+        return devId;
+    }
     let id = localStorage.getItem(PLAYER_ID_KEY);
     if (!id) {
         id = uuidv4();

@@ -32,6 +32,8 @@ backend/bot/analysis/archive
 # from the committed centroids via scripts/bake_postflop_table.py, so they are
 # git-ignored. Only the small centroids (the real inputs) are committed.
 backend/bot/analysis/abstractions/postflop_table_*.npz
+# .npy mmap extracts (ALLIN_MMAP_POSTFLOP=1): derived from the .npz at runtime, mmap-able.
+backend/bot/analysis/abstractions/postflop_table_*.npy
 
 # Seed-compare baseline snapshot: a binary tied to the exact code+abstraction, so
 # it goes stale on any abstraction change (sizing/bake/evaluator) and a check

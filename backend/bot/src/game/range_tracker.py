@@ -218,30 +218,25 @@ class RangeTracker:
         return mat
 
     # -- Bayesian update + confidence ---------------------------------
-    def observe(self, strategy_fn, action, street, position, bet_pattern, legal, board):
-        """Condition the belief on the opponent having taken `action` here, and
-        update confidence by how well that action matched the model."""
+    def observe(self, strategy_fn, action, street, position, bet_pattern, legal, board, blend=None):
+        """Condition the belief on the opponent having taken `action` here, and update confidence by
+        how well it matched the model. `blend` (optional) is the pseudo-harmonic translation of an
+        OFF-GRID bet -- [(grid_action, weight), ...] -- so the bet is credited to BOTH bracketing sizes
+        (more faithful + less confidence erosion than snapping to the single nearest size)."""
         legal = list(legal)
-        if action not in legal:
-            # Off-MENU action: an emergent/custom all-in (or far-off-grid bet) that the
-            # node's ABSTRACT legal set doesn't list. E.g. a capped/deep-stack river jam:
-            # with voluntary_allin=False, 'allin' enters legal only via stack-clamp, so a
-            # player who instead makes a voluntary custom raise-to-stack has it normalized
-            # to 'allin' by apply_action -- which is then NOT in `legal`. The opponent
-            # model has no column for it, so we can't do the Bayesian reweight; keep the
-            # prior range rather than crash (this previously raised ValueError and 500'd
-            # the live hand). Conditioning on such actions would need the model to expose
-            # an all-in probability at these nodes (future work).
-            #
-            # BUT the action is MAXIMALLY off-model, so we MUST still collapse confidence:
-            # leaving it untouched is what let the bot hold a UNIFORM, never-updated belief
-            # at 100% confidence and trust "opponent jams any-two", calling off 100 BB with
-            # T8o vs a real (strong) jam range (BUG-022). Drop confidence below the guards'
-            # trust threshold so consumers fall back to a no-read default.
+        # Resolve the observation to (legal action, weight) entries: the BLEND for an off-grid bet, else
+        # the single action. Empty (off-MENU / un-snappable -- e.g. a custom raise-to-stack normalized
+        # to 'allin' that isn't legal) -> we can't Bayesian-reweight (the model has no column for it),
+        # so keep the prior range but STILL collapse confidence (the action is maximally off-model;
+        # leaving it untouched let the bot trust a never-updated uniform belief and stack off light vs a
+        # real jam -- BUG-022). Conditioning on those would need the model to expose an all-in prob here.
+        obs = [(a, w) for a, w in (blend or [(action, 1.0)]) if a in legal]
+        if not obs:
             self.confidence *= _OFF_MENU_CONFIDENCE_DECAY
             return
-        ai = legal.index(action)
         mat = self._action_matrix(strategy_fn, street, position, bet_pattern, legal, board)
+        idx = [(legal.index(a), w) for a, w in obs]
+        col = sum(w * mat[:, i] for i, w in idx)         # per-hand P(observed | hand), blended over brackets
 
         wt = self.w.sum()
         if wt > 1e-12:
@@ -249,7 +244,7 @@ class RangeTracker:
             avg_sum = avg.sum()
             if avg_sum > 1e-12:
                 avg = avg / avg_sum
-                p_a = float(avg[ai])
+                p_a = sum(w * float(avg[i]) for i, w in idx)   # range-averaged P(observed), blended
                 entropy = float(-np.sum(avg * np.log(avg + 1e-12)))
                 surprise = -np.log(p_a + 1e-12)
                 # Cap excess-surprise so a single legal-but-near-zero-probability
@@ -263,7 +258,7 @@ class RangeTracker:
                 excess = min(max(0.0, surprise - entropy), float(np.log(10.0)))
                 self.confidence *= float(np.exp(-excess))
 
-        new_w = self.w * mat[:, ai]
+        new_w = self.w * col
         s = new_w.sum()
         if s > 1e-12:
             self.w = new_w / s          # renormalise to keep weights from underflowing

@@ -17,6 +17,8 @@ Design notes
   happens only in public_view().
 """
 import copy
+import json
+import os
 import logging
 import math
 
@@ -94,7 +96,8 @@ _DEFAULT_MAX_RAISES_PER_STREET = float('inf')
 
 class GameSession:
     def __init__(self, data, strategy_fn=None, menu_mode=_DEFAULT_MENU_MODE,
-                 max_raises_per_street=_DEFAULT_MAX_RAISES_PER_STREET):
+                 max_raises_per_street=_DEFAULT_MAX_RAISES_PER_STREET,
+                 hero_strategy_fn=None):
         self.data = data
         # The serving engine MUST use the same action abstraction the served
         # blueprint was trained under. Serving a 'capped' blueprint through a
@@ -126,6 +129,12 @@ class GameSession:
         # so DB-free callers (tests, the strategy explorer) are unaffected. Never
         # serialised -- it's a rebuilt helper like self.game / self.cards.
         self.strategy_fn = strategy_fn
+        # Phase 6 (design C1): the bot's OWN range (hero reach -> the river solve's hero_range)
+        # must be tracked under the BLUEPRINT -- what the bot actually plays -- NOT the opponent
+        # model. When exploitation swaps strategy_fn to the human model, hero_strategy_fn stays the
+        # blueprint so the bot's self-belief (and the +207 mbb river solver) isn't corrupted.
+        # Defaults to strategy_fn -> off the exploit path BOTH are the blueprint, unchanged.
+        self.hero_strategy_fn = hero_strategy_fn if hero_strategy_fn is not None else strategy_fn
 
     # ------------------------------------------------------------------
     # Construction / serialisation
@@ -134,26 +143,28 @@ class GameSession:
     @classmethod
     def new(cls, session_id, player_id, strategy_fn=None,
             menu_mode=_DEFAULT_MENU_MODE,
-            max_raises_per_street=_DEFAULT_MAX_RAISES_PER_STREET):
+            max_raises_per_street=_DEFAULT_MAX_RAISES_PER_STREET,
+            hero_strategy_fn=None):
         session = cls({
             'session_id': session_id,
             'player_id': player_id,
             'human_net': 0.0,
         }, strategy_fn=strategy_fn, menu_mode=menu_mode,
-            max_raises_per_street=max_raises_per_street)
+            max_raises_per_street=max_raises_per_street, hero_strategy_fn=hero_strategy_fn)
         session._deal_hand(hand_number=1, human_seat=0)
         return session
 
     @classmethod
     def from_dict(cls, data, strategy_fn=None,
                   menu_mode=_DEFAULT_MENU_MODE,
-                  max_raises_per_street=_DEFAULT_MAX_RAISES_PER_STREET):
+                  max_raises_per_street=_DEFAULT_MAX_RAISES_PER_STREET,
+                  hero_strategy_fn=None):
         # Deep-copy so the live session never aliases the stored dict's nested
         # lists/dicts (history, action_log, community, opp_range, ...). Without
         # this, in-place mutations would leak into the store before put() and a
         # mid-apply failure could corrupt the persisted state.
         return cls(copy.deepcopy(data), strategy_fn=strategy_fn, menu_mode=menu_mode,
-                   max_raises_per_street=max_raises_per_street)
+                   max_raises_per_street=max_raises_per_street, hero_strategy_fn=hero_strategy_fn)
 
     def to_dict(self):
         return self.data
@@ -473,10 +484,15 @@ class GameSession:
             tracker = self._load_range()
             street = d['street']
             board = d['community'][:_BOARD_COUNT[min(street, 3)]]
+            # Off-grid human bet -> credit BOTH bracketing grid sizes (pseudo-harmonic blend) instead of
+            # snapping to the single nearest one: a more faithful range update + less confidence erosion.
+            obs_blend = ([(ga, w) for c, w in translated
+                          if (ga := self._grid_action_for_char(c, legal)) is not None]
+                         if translated else None)
             tracker.observe(self.strategy_fn, snapped_action, street, self._opp_position(),
-                            d['bet_pattern'], legal, board)
+                            d['bet_pattern'], legal, board, blend=obs_blend)
             new_opp_range = tracker.to_dict()
-        if (player != d['human_seat'] and self.strategy_fn is not None
+        if (player != d['human_seat'] and self.hero_strategy_fn is not None
                 and d.get('bot_range') is not None):
             bt = self._load_bot_range()
             street = d['street']
@@ -490,7 +506,12 @@ class GameSession:
                 if d['street'] == 2:
                     d['turn_deviated'] = True
             else:
-                bt.observe(self.strategy_fn, snapped_action, street, self._bot_position(),
+                # C1: the bot's OWN range is tracked under the BLUEPRINT (hero_strategy_fn), NOT
+                # the (exploit-swapped) opponent model -- the bot plays the blueprint here, so its
+                # self-belief must be modeled as such. (The pre-river tilt's tiny delta-capped
+                # deviation is not separately recorded -- exact per-hand recording awaits the E5
+                # range-vs-range solve, which produces per-hand probs natively.)
+                bt.observe(self.hero_strategy_fn, snapped_action, street, self._bot_position(),
                            d['bet_pattern'], legal, board)
             new_bot_range = bt.to_dict()
 
@@ -689,6 +710,10 @@ class GameSession:
             'hole_cards': d['p0_cards'] if actor == 0 else d['p1_cards'],
             'to_call': to_call,
             'opp_range': self._load_range(),
+            # Phase 6: opaque per-player exploitation payload ({chardist, delta}) when the
+            # transport sets session.exploit; the game core just passes it through, the bot
+            # consumes it. None (the default) -> the bot plays the blueprint, unchanged.
+            'exploit': getattr(self, 'exploit', None),
         }
         # On the RIVER, hand the subgame solver its inputs: the river-entry
         # snapshots of both ranges (frozen before river betting), the river-entry
@@ -713,10 +738,9 @@ class GameSession:
         # turn path. d['starting_pot'] / d['p0_invested'] are turn-entry values (this
         # street's bets live in d['history'], folded into invested only at the next
         # street), so they are the turn-ENTRY pot/stacks, not the mid-turn ones.
-        # NOTE: inert under the live (river-only) bot -- the turn solver is SHELVED
-        # (failed the N0 real-game gate; see ROADMAP Phase 4). Kept wired so the
-        # revival path doesn't have to re-thread this through the session. The turn
-        # snapshot above (d['turn_entry_*']) exists only to feed this.
+        # NOTE: LIVE when the turn solver is served (ALLIN_TURN_SOLVE=1 -> TurnSubgameSolver);
+        # inert under the default river-only bot. The turn snapshot above (d['turn_entry_*'])
+        # exists to feed this; kept wired whether or not the turn solver is enabled.
         if street == 2 and d.get('turn_entry_bot') is not None:
             state['botSeat'] = actor
             state['turnEntryPot'] = d['starting_pot']
@@ -878,6 +902,29 @@ class GameSession:
         }
 
 
+def _json_safe(d):
+    """Return a JSON-serializable view of a debug dict for the overlay (the response is jsonify'd).
+    Drops any field whose VALUE isn't JSON-serializable -- e.g. the solver's INTERNAL
+    {frozenset(hand): prob} 'heroRangeUpdate' (frozenset keys can't be JSON keys) -- rather than 500
+    the whole response on one bad diagnostic. Keys are coerced to str. last_debug itself is untouched
+    (advance_bot_turns still reads heroRangeUpdate off it directly to chain the bot's range). Non-dict
+    input is returned if serializable, else a placeholder."""
+    if not isinstance(d, dict):
+        try:
+            json.dumps(d)
+            return d
+        except (TypeError, ValueError):
+            return '<unserializable>'
+    out = {}
+    for k, v in d.items():
+        try:
+            json.dumps(v)
+            out[str(k)] = v
+        except (TypeError, ValueError):
+            continue                              # drop the non-serializable field, keep the rest
+    return out
+
+
 def _record_bot_debug(session, bot_strategy, public, key, legal, action):
     """Append one bot decision to session.data['bot_debug'] for the debug overlay:
     the info-set key, the blueprint's strategy at that key, the action chosen, and
@@ -891,11 +938,30 @@ def _record_bot_debug(session, bot_strategy, public, key, legal, action):
         'street': public.get('street'),
         'infoSetKey': key,
         'chosen': action,
-        'strategy': {a: round(float(p), 4) for a, p in strategy.items()},
+        'strategy': {a: round(float(p), 4) for a, p in strategy.items()},  # SERVED (post-translation)
     }
+    # Deep-jam translation visibility (correctness fix): if the RAW blueprint wanted to JAM ('allin')
+    # but a standalone all-in wasn't legal (deep stack), the SERVED 'strategy' above had that mass
+    # RE-TRANSLATED into sized bets. Surface the raw intent + the routing so the overlay isn't
+    # misleading -- it previously looked like the blueprint was folding when it actually wanted to jam.
+    try:
+        db = getattr(bot_strategy, 'db', None)
+        raw = db.get_average_strategy(key) if db is not None else None
+        if raw:
+            am = float(raw.get('allin', 0.0))
+            if (am > 1e-9 and 'allin' not in legal
+                    and os.environ.get('ALLIN_DEEP_JAM_ROUTING', '1') == '1'):
+                tot = sum(max(0.0, float(v)) for v in raw.values()) or 1.0
+                scheme = os.environ.get('ALLIN_DEEP_JAM_WEIGHT', 'medium')
+                if scheme not in ('medium', 'top', 'small'):
+                    scheme = 'medium'                 # report the RESOLVED scheme, not a bad env value
+                record['rawBlueprint'] = {a: round(max(0.0, float(v)) / tot, 4) for a, v in raw.items()}
+                record['deepJamRoute'] = {'allinPct': round(100.0 * am / tot, 1), 'scheme': scheme}
+    except Exception:
+        pass
     solver = getattr(bot_strategy, 'last_debug', None)
     if solver is not None:
-        record['solver'] = solver
+        record['solver'] = _json_safe(solver)
     session.data.setdefault('bot_debug', []).append(record)
 
 
@@ -926,7 +992,10 @@ def advance_bot_turns(session, bot_strategy, stop_on_new_card=False):
         legal = session.legal_actions()
         public = session.bot_public_state()
         action = bot_strategy.decide(key, legal, public)
-        _record_bot_debug(session, bot_strategy, public, key, legal, action)
+        try:
+            _record_bot_debug(session, bot_strategy, public, key, legal, action)
+        except Exception:
+            pass                                      # debug capture must never disrupt a hand
         # 1a: if a subgame solver DEVIATED, it exposes the solved per-hand probability of
         # the played action; thread it so the bot's own range chains off the SOLVED play
         # (continual re-solving). Absent -> blueprint range update inside apply_action.

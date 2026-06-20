@@ -12,11 +12,28 @@ only needs the key, but a future SubgameSolvingStrategy needs real pot/stack/
 board values, so it is passed in from day one. Adding the smarter bot later
 means writing a new class here — nothing else changes.
 """
+import os
 import random
 import threading
 from abc import ABC, abstractmethod
 
 from ..cfr import translation
+
+# Deep-stack all-in translation (default ON). When the blueprint wants to JAM but a standalone
+# 'allin' isn't legal (deep stack), route that mass to the legal sized bets instead of letting it leak
+# proportionally into call/fold. ALLIN_DEEP_JAM_ROUTING=0 disables (restores the old proportional spread).
+_DEEP_JAM_ROUTING = os.environ.get('ALLIN_DEEP_JAM_ROUTING', '1') == '1'
+# How to weight the routed jam mass across the legal sized bets. 'medium' (DEFAULT) peaks at the MEDIUM
+# value/protection size -- the most sound vs a BALANCED opponent (overbetting a non-polarized hand is
+# exploitable; small underbets value). 'top' = size-weighted toward overbet2 (max aggression -- only
+# best vs a station/maniac that pays/folds). 'small' peaks at small. Select via ALLIN_DEEP_JAM_WEIGHT.
+_JAM_WEIGHT_SCHEMES = {
+    'medium': {'small': 1.0, 'medium': 3.0, 'large': 2.0, 'xlarge': 1.0, 'overbet': 0.6, 'overbet2': 0.3},
+    'top':    {'small': 0.33, 'medium': 0.66, 'large': 1.0, 'xlarge': 1.25, 'overbet': 1.5, 'overbet2': 2.0},
+    'small':  {'small': 3.0, 'medium': 2.0, 'large': 1.0, 'xlarge': 0.5, 'overbet': 0.5, 'overbet2': 0.3},
+}
+_JAM_WEIGHTS = _JAM_WEIGHT_SCHEMES.get(os.environ.get('ALLIN_DEEP_JAM_WEIGHT', 'medium'),
+                                       _JAM_WEIGHT_SCHEMES['medium'])
 
 
 class BotStrategy(ABC):
@@ -79,6 +96,7 @@ class BlueprintStrategy(BotStrategy):
         stored = self.db.get_average_strategy(info_set_key) if self.db else None
         if stored:
             weights = {a: max(0.0, stored.get(a, 0.0)) for a in legal_actions}
+            weights = self._route_dropped_allin(weights, stored, legal_actions)
             total = sum(weights.values())
             if total > 1e-12:
                 dist = {a: w / total for a, w in weights.items()}
@@ -112,10 +130,41 @@ class BlueprintStrategy(BotStrategy):
         stored = self.db.get_average_strategy(info_set_key) if self.db else None
         if stored:
             weights = {a: max(0.0, stored.get(a, 0.0)) for a in legal_actions}
+            weights = self._route_dropped_allin(weights, stored, legal_actions)
             total = sum(weights.values())
             if total > 1e-12:
                 return {a: w / total for a, w in weights.items()}
         return {}
+
+    def _route_dropped_allin(self, weights, stored, legal_actions):
+        """Deep-stack all-in translation. The blueprint may want to JAM ('allin'), learned when
+        stacks were ~committed. On a DEEP stack a standalone 'allin' isn't legal, so its mass would
+        otherwise spread PROPORTIONALLY into the leftover -- leaking into call/FOLD (the bot folds
+        hands it wanted to commit). Instead route that mass to the legal sized bets/raises weighted
+        toward the LARGEST (a jam's closest legal expression is the biggest bet), tapering down by
+        bet size. Only fires when 'allin' has mass but isn't legal (deep); at low SPR 'allin' IS
+        legal -> untouched. Mutates + returns `weights`. Disable via ALLIN_DEEP_JAM_ROUTING=0."""
+        if not _DEEP_JAM_ROUTING:
+            return weights
+        am = stored.get('allin', 0.0)
+        if am <= 1e-9 or 'allin' in legal_actions:
+            return weights
+        sized = {}
+        for a in legal_actions:
+            if a.startswith(('bet_', 'raise_')) and '_' in a:
+                w = _JAM_WEIGHTS.get(a.split('_', 1)[1])
+                if w:
+                    sized[a] = float(w)
+        tot = sum(sized.values())
+        if tot > 0:
+            for a, m in sized.items():
+                weights[a] = weights.get(a, 0.0) + am * m / tot
+        elif 'call' in legal_actions:
+            # No sized bet legal (e.g. re-raise capped) -> route the jam mass to CALL (the closest
+            # legal "commit") rather than letting it leak proportionally into fold -- closes the
+            # residual of the original bug (review finding, 2026-06-20).
+            weights['call'] = weights.get('call', 0.0) + am
+        return weights
 
     def _state_distribution(self, info_set_key, legal_actions, public_state):
         """Distribution accounting for action translation. When the opponent
@@ -157,6 +206,24 @@ class BlueprintStrategy(BotStrategy):
                 if t > 1e-12:
                     return w / t
             return np.ones(n) / n
+        return fn
+
+    def hero_range_model_fn(self):
+        """Like range_model_fn but returns the bot's ACTUAL served per-hand strategy
+        (`_distribution`: deep-jam ROUTED + PURIFIED), so the HERO range fed to the subgame solver
+        matches how the bot really plays at each key -- not the raw blueprint. The VILLAIN range keeps
+        `range_model_fn` (the opponent plays the raw blueprint; it does NOT route/purify). Closes the
+        hero-range routing+purification asymmetry (review, 2026-06-20)."""
+        import numpy as np
+
+        def fn(key, legal):
+            n = len(legal)
+            if not n:
+                return np.array([])
+            dist = self._distribution(key, legal)          # routed + purified served play
+            w = np.array([float(dist.get(a, 0.0)) for a in legal])
+            t = w.sum()
+            return w / t if t > 1e-12 else np.ones(n) / n
         return fn
 
 

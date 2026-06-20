@@ -112,12 +112,36 @@ class PostflopV2:
         if street not in self._tables:
             path = os.path.join(_ABSTRACTIONS_DIR, f'postflop_table_{street}.npz')
             if os.path.exists(path):
-                d = np.load(path)
-                self._verify_stamp(street, d)
-                self._tables[street] = (d['ids'], d['buckets'])
+                if os.environ.get('ALLIN_MMAP_POSTFLOP') == '1':
+                    self._tables[street] = self._mmap_table(street, path)
+                else:
+                    d = np.load(path)
+                    self._verify_stamp(street, d)
+                    self._tables[street] = (d['ids'], d['buckets'])
             else:
                 self._tables[street] = None
         return self._tables[street]
+
+    def _mmap_table(self, street, npz_path):
+        """Actually memory-map the table to keep the ~107MB int64 `ids` array OFF the heap on a
+        RAM-tight box. numpy does NOT mmap members of a .npz -- np.load(mmap_mode=) full-loads each
+        member (verified at runtime) -- so extract the two members to sibling .npy files ONCE (a
+        .npy IS mmap-able) and memory-map those. The one-time extraction needs ~one member resident;
+        every load after pages from disk. The .npy are derived artifacts (git-ignored)."""
+        ids_npy = os.path.join(_ABSTRACTIONS_DIR, f'postflop_table_{street}.ids.npy')
+        bkt_npy = os.path.join(_ABSTRACTIONS_DIR, f'postflop_table_{street}.buckets.npy')
+        d = np.load(npz_path)                       # NpzFile: lazy -- stamp reads only small members
+        self._verify_stamp(street, d)               # propagate a stale-table hard error
+        try:
+            if not (os.path.exists(ids_npy) and os.path.exists(bkt_npy)):
+                np.save(ids_npy, d['ids'])          # one-time full load of the big members, then freed
+                np.save(bkt_npy, d['buckets'])
+            return (np.load(ids_npy, mmap_mode='r'), np.load(bkt_npy, mmap_mode='r'))
+        except OSError:
+            # Read-only filesystem (the prod container) or no space -> can't extract/mmap. Fall back
+            # to the full in-RAM load, which the deployed instance already handles. mmap stays a
+            # dev / measurement aid on a writable, memory-tight box.
+            return (d['ids'], d['buckets'])
 
     def _verify_stamp(self, street, d):
         """Guard against a stale table: confirm it was baked from the centroids

@@ -22,6 +22,8 @@ blueprint<->tree bridge (step 6b); until then the solver returns the solved
 strategy when the solve converged and otherwise falls back to the blueprint.
 """
 import logging
+import os
+import random
 import threading
 from collections import OrderedDict
 
@@ -157,6 +159,13 @@ class RiverSubgameSolver(BlueprintStrategy):
     # (KQo/A5s/55). Judging vs the top ~20% folds those while never folding premiums.
     # See BUG-022. (Preflop only; the postflop EMD strength buckets aren't equity-ordered.)
     JAM_RANGE_FRACTION = 0.20
+    # FLOP/TURN uninformed deep-raise/faced floor. A postflop shove is MORE selected than a preflop
+    # 5-bet, so a tighter fraction (~0.13) is arguably more accurate -- but it's UNMEASURED and risks
+    # over-folding vs a LOOSE pool, so the default stays 0.20 (no behavior change). Tune + measure via
+    # ALLIN_JAM_FRAC_POSTFLOP (a maniac/jam match). NB: only the deep-raise guard (money-behind /
+    # collapsed-read) uses this; a faced all-in with a TRUSTED read goes through _facing_allin_guard
+    # and uses the real belief equity instead -- so this is NOT the lever for a trusted-read over-call.
+    JAM_RANGE_FRACTION_POSTFLOP = float(os.environ.get('ALLIN_JAM_FRAC_POSTFLOP', '0.20'))
 
     # Inference #1: at an UNTRAINED first-to-act postflop node the passive fallback checks
     # 100%; value-bet a trained size only when equity clears this high bar (so it's a thin/
@@ -303,6 +312,18 @@ class RiverSubgameSolver(BlueprintStrategy):
             first_act = None
         return first_act
 
+    def _exploit_debug(self, ps):
+        """Exploitation state for the debug overlay so you can SEE whether the exploit is ON and, on a
+        blueprint decision, WHY it didn't tilt: exploitOn=True means the session has the swapped human
+        model + the A/B arm is 'on'; readConfidence < guardConfidence is why the tilt deferred to the
+        blueprint (the confidence brake). None/off when exploitation isn't active for the session."""
+        ex = ps.get('exploit')
+        belief = ps.get('opp_range')
+        conf = getattr(belief, 'confidence', None) if belief is not None else None
+        return {'exploitOn': ex is not None,
+                'readConfidence': round(float(conf), 3) if conf is not None else None,
+                'guardConfidence': self.guard_confidence}
+
     def decide(self, info_set_key, legal_actions, public_state):
         ps = public_state or {}
         self.last_debug = None
@@ -311,7 +332,14 @@ class RiverSubgameSolver(BlueprintStrategy):
             return guarded
         spec = self._solver_inputs(ps)
         if spec is None:
-            self.last_debug = {'mode': 'blueprint', 'street': ps.get('street')}
+            exdbg = self._exploit_debug(ps)
+            tilted = self._exploit_tilt_dist(info_set_key, legal_actions, ps)
+            if tilted is not None:
+                self.last_debug = {'mode': 'exploit_tilt', 'street': ps.get('street'), **exdbg,
+                                   'tiltedStrategy': {a: round(float(p), 4) for a, p in tilted.items()}}
+                action = random.choices(list(tilted), weights=list(tilted.values()))[0]
+                return self._premium_no_fold(action, legal_actions, ps)
+            self.last_debug = {'mode': 'blueprint', 'street': ps.get('street'), **exdbg}
             action = super().decide(info_set_key, legal_actions, public_state)
             return self._premium_no_fold(action, legal_actions, ps)
         self.stats['river_calls'] += 1
@@ -353,7 +381,8 @@ class RiverSubgameSolver(BlueprintStrategy):
         if guard is not None:
             self.stats['allin_guard'] += 1
             self.last_debug = {'mode': 'allin_guard', 'street': ps.get('street'),
-                               'action': guard}
+                               'action': guard, **self._exploit_debug(ps),
+                               **(getattr(self, '_allin_guard_dbg', None) or {})}
         return guard
 
     def _gate_and_pick(self, dist, node, info, info_set_key, legal_actions, ps, spec,
@@ -516,6 +545,13 @@ class RiverSubgameSolver(BlueprintStrategy):
             # correct if that ever changes.)
             final_pot = pot_mid - to_call + 2.0 * bot_stack
         ev_call = eq * final_pot - call_cost         # EV(fold) = 0 (forfeit, no further loss)
+        # Surface the numbers the guard decided on (debug overlay): the bot's equity vs the BELIEF,
+        # the equity it NEEDS (pot odds), and the chip EV of calling. Lets you judge whether a faced-
+        # all-in call/fold was sound (eq >= need = a +EV call) or a belief over/under-estimate.
+        self._allin_guard_dbg = {
+            'guardEq': round(eq, 3),
+            'guardNeed': round(call_cost / final_pot, 3) if final_pot > 0 else None,
+            'guardEvCall': round(ev_call, 2)}
         if ev_call > self.guard_margin:
             return 'call'
         if ev_call < -self.guard_margin:
@@ -605,7 +641,7 @@ class RiverSubgameSolver(BlueprintStrategy):
             # Centroid means are equity-ordered + draw-aware. (Inference #5 extended the
             # earlier turn-all-in-only fix to the money-behind case; same implied-odds
             # trade as B1. River is solver-owned (_solver_inputs returns early above).)
-            eq = self._jam_range_equity(hole, board, self.JAM_RANGE_FRACTION)
+            eq = self._jam_range_equity(hole, board, self.JAM_RANGE_FRACTION_POSTFLOP)
         # EV(call) vs EV(fold)=0, with all-in-for-less handled (mirror the all-in
         # guard's chip math). For the money-behind deep-raise case this is the eq >=
         # pot-odds rule but scored as if the call runs out -- the documented v1
@@ -740,6 +776,31 @@ class RiverSubgameSolver(BlueprintStrategy):
             return True
         eff_n = 1.0 / float((p * p).sum())
         return (eff_n / n_live) < self.INFORMATIVE_RATIO
+
+    def _exploit_tilt_dist(self, info_set_key, legal_actions, ps):
+        """Phase 6 PRE-RIVER exploitation: tilt the blueprint distribution toward the actions whose
+        EV improved because the opponent responds off-GTO (fold-equity), capped at delta (the risk
+        budget). Returns the tilted dist, or None to DEFER to the blueprint -- when exploitation is
+        off, the read is untrusted (confidence < guard_confidence), the node is untrained, or on ANY
+        fault. Gated on confidence ONLY (not _belief_is_informative): a wide range can still carry a
+        usable fold-response leak, and we want to exploit a player's marginal tendency from hand 1.
+        Only the pre-river path calls this; the river is the subgame solver's job."""
+        ex = ps.get('exploit')
+        if not ex:
+            return None
+        try:
+            belief = ps.get('opp_range')
+            if belief is None or getattr(belief, 'confidence', 0.0) < self.guard_confidence:
+                return None
+            if not (self.db and self.db.get_average_strategy(info_set_key)):
+                return None                            # untrained node -> blueprint / guard path
+            base = super()._state_distribution(info_set_key, legal_actions, ps)
+            from ..exploitation.tilt import response_aware_tilt
+            return response_aware_tilt(base, info_set_key, ps, self.db,
+                                       ex['chardist'], ex.get('delta', 0.0)) or None
+        except Exception:
+            self._fallback_count += 1                  # any fault -> blueprint (never 500 a hand)
+            return None
 
     def _trust_read(self, tracker):
         """Use the tracked range for a stack-off only when CONFIDENT and INFORMATIVE."""

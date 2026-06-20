@@ -62,6 +62,7 @@ class RecordingSolver(RiverSubgameSolver):
         super().__init__(*a, **k)
         self.log = []
         self.cripple_guard2 = cripple_guard2
+        self.deep_jam_fires = 0   # deep-stack spots where blueprint wanted 'allin' but it wasn't legal
         self.deep_allin = 0      # deep-guard fires that were FACED ALL-INS (the #2 path)
         self.deep_nonallin = 0   # deep-guard fires with money behind (the #1 path)
         self.value_jams = 0      # C1: deep-guard upgraded a monster's call to an all-in
@@ -71,6 +72,13 @@ class RecordingSolver(RiverSubgameSolver):
         self.blend_untrained_bracket = 0   # #4: a bracket KEY was untrained (the leak precondition)
         self.blend_untrained_fold = 0      # #4: folded WHILE a bracket was untrained (the actual leak)
         self.firstact_untrained_checks = 0   # #5: first-to-act check at an untrained key
+
+    def _route_dropped_allin(self, weights, stored, legal_actions):
+        # Count spots where the deep-stack all-in translation applies (allin in blueprint, not legal).
+        # Same count ON or OFF (it's the SITUATION); the routing flag changes the ACTION, seen in BB/hand.
+        if stored.get('allin', 0.0) > 1e-9 and 'allin' not in legal_actions:
+            self.deep_jam_fires += 1
+        return super()._route_dropped_allin(weights, stored, legal_actions)
 
     def _facing_deep_raise_guard(self, key, legal, ps):
         if self.cripple_guard2:
@@ -174,6 +182,19 @@ def human_action(session, style):
         if 'fold' in legal:
             return 'fold'                            # weak hand -> fold (never get stacked light)
         return 'check' if 'check' in legal else 'call'
+    if style == 'passive':
+        # Calling-station-ish: mostly call/check + occasional SMALL/MEDIUM aggression; NEVER big-bet/
+        # all-in/fold. Keeps pots DEEP (so the deep-jam routing fires) AND pays off the bot's value at
+        # showdown -> a clean, LOW-VARIANCE read of the routing's EV (unlike the all-in-heavy maniac).
+        import random as _r
+        facing = 'call' in legal
+        opts = ([('call', 70), ('raise_small', 22), ('raise_medium', 8)] if facing
+                else [('check', 65), ('bet_small', 25), ('bet_medium', 10)])
+        opts = [(a, w) for a, w in opts
+                if a in legal and (a in ('call', 'check') or session._action_cost(a) < stack)]
+        if opts:
+            return _r.choices([a for a, _ in opts], weights=[w for _, w in opts])[0]
+        return 'call' if facing else ('check' if 'check' in legal else 'call')
     if best is not None:
         return best                                  # room for a non-all-in max raise -> escalate
     if style == 'jam' and 'allin' in legal:
@@ -238,7 +259,7 @@ def main():
     p.add_argument('--db', default=None)
     p.add_argument('--hands', type=int, default=20000)
     p.add_argument('--seed', type=int, default=42)
-    p.add_argument('--style', choices=['maxbet', 'jam', 'overbet', 'shove', 'widejam'],
+    p.add_argument('--style', choices=['maxbet', 'jam', 'overbet', 'shove', 'widejam', 'passive'],
                    default='maxbet')
     p.add_argument('--cripple2', action='store_true',
                    help="Simulate the pre-#2 bot (deep guard defers on faced all-ins).")
@@ -272,6 +293,8 @@ def main():
     print(f"   untrained-bracket present={bot.blend_untrained_bracket}  "
           f"fold-WITH-untrained-bracket (the leak)={bot.blend_untrained_fold}")
     print(f"#5 first-to-act untrained checks={bot.firstact_untrained_checks}")
+    print(f"DEEP-JAM routing spots (allin wanted but not legal): {bot.deep_jam_fires}  "
+          f"[ALLIN_DEEP_JAM_ROUTING={os.environ.get('ALLIN_DEEP_JAM_ROUTING','1')}]")
     print(f"BUG-022 loose call-offs (called off stack, weak hand): {len(bot.loose_calloffs)}")
     for bk, hole, key in bot.loose_calloffs[:8]:
         print(f"    bucket {bk}: called {hole}  key={key}")

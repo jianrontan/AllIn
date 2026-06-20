@@ -112,12 +112,35 @@ FROM base AS prod
 # ALLIN_RIVER_CACHE_BOARDS: with workers now long-lived, bound the one cache
 # that grows (river-board equity LRU): 20k boards ~= 52MB/worker vs the 100k
 # default's ~260MB -- the right trade on a 1GB instance with 2 workers.
+# --- Phase 6 exploitation + depth-limited turn solver (flag-gated, SECURE-OFF in the image) ---
+# ALLIN_MMAP_POSTFLOP: memory-map the baked tables (extract members to .npy + mmap them) to keep the
+#   ~107MB turn `ids` array off the heap. OFF in the image -- the instance already handles the full
+#   load, and the extraction needs a WRITABLE table dir (the image's is read-only, so it would just
+#   fall back to the full load). It's a dev/measurement aid on a writable, RAM-tight box. NOTE:
+#   np.load(mmap_mode=) does NOT mmap .npz members -- only the extracted .npy work.
+# ALLIN_GADGET_ANCHOR=auto: the SAFE re-solving anchor (provably <= blueprint). NEVER set 'belief' in
+#   prod -- that gives up the safety floor; 'belief' is for LOCAL single-player exploit testing only.
+# ALLIN_EXPLOIT / ALLIN_TURN_SOLVE: OFF in the image (secure-by-default, like ALLIN_DEBUG_OVERLAY).
+#   Enabling them in prod is NOT just a flag flip:
+#     * ALLIN_EXPLOIT=1 needs the SERVED blueprint and the shipped opponent_models/ to share the SAME
+#       abstraction. This image serves blueprint_final (20/16); the models were fit on the 30/24
+#       retrain snapshot, so exploit would hit HumanModel's abstraction guard and SELF-DISABLE. To run
+#       it in prod, EITHER ship+serve the 30/24 blueprint (un-ignore snapshots/, pin ALLIN_BLUEPRINT_DB)
+#       OR re-fit the opponent models on blueprint_final. The models DO ship (not .dockerignored).
+#     * ALLIN_TURN_SOLVE=1 additionally needs the turn gadget's ROBUST anchor (it currently hardcodes
+#       the belief anchor -- see strategy_api turn branch) AND a head-to-head validation, before any
+#       public use. A turn solve holds a solve permit up to ALLIN_TURN_BUDGET (16s) -> revisit the
+#       permit count vs the edge rate limit first.
 ENV PYTHONUNBUFFERED=1 \
     ALLIN_LOG_LEVEL=INFO \
     ALLIN_SESSION_STORE=memory \
     ALLIN_DEBUG_OVERLAY=0 \
     ALLIN_MAX_REQUESTS=50000 \
-    ALLIN_RIVER_CACHE_BOARDS=20000
+    ALLIN_RIVER_CACHE_BOARDS=20000 \
+    ALLIN_MMAP_POSTFLOP=0 \
+    ALLIN_GADGET_ANCHOR=auto \
+    ALLIN_EXPLOIT=0 \
+    ALLIN_TURN_SOLVE=0
 
 EXPOSE 5000
 

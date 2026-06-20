@@ -1,5 +1,7 @@
 from flask import Flask, request, jsonify, Response
 from flask_cors import CORS
+import hashlib
+import json
 import logging
 import math
 import sys
@@ -7,6 +9,7 @@ import os
 import threading
 import time
 import uuid
+from collections import OrderedDict
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 backend_dir = os.path.dirname(current_dir)
@@ -38,7 +41,7 @@ from bot.src.game.player_store import (
     make_player_store, InvalidHandle, HandleTaken, AccountConflict,
     sanitize_display_name)
 from bot.src.game.global_stats_store import make_global_stats_store
-from bot.src.game.hand_store import make_hand_store, recap_from_session
+from bot.src.game.hand_store import make_hand_store, recap_from_session, InMemoryHandStore
 from bot.src.game.game_session import GameSession, advance_bot_turns, GameError, BIG_BLIND
 from bot.src.game.cards import to_engine
 from bot.src.cfr.poker_game import make_custom_action, STARTING_STACK
@@ -99,7 +102,7 @@ def _blueprint_unavailable_503():
 # analysis/blueprints/blueprint_*.db (snapshots/ is not searched), so the served
 # default is blueprint_final.db (the 25M snapshot). Pin ALLIN_BLUEPRINT_DB only to
 # override that (e.g. a different-sizing blueprint).
-# Served live bot. safe_gadget + gadget_anchor='auto' (Phase 5a, "policy B"): on the
+# Served live bot. safe_gadget + gadget_anchor=os.environ.get('ALLIN_GADGET_ANCHOR', 'auto') (Phase 5a, "policy B"): on the
 # river it exploits the tracked read (unsafe-v1) ONLY when a per-spot safety self-check
 # proves that is no-more-exploitable than the blueprint, else it clamps to the
 # blueprint-anchored re-solving gadget -- provably ≤ blueprint on the wrong-belief tail.
@@ -110,10 +113,49 @@ def _blueprint_unavailable_503():
 # sweep (seed 42, 50 samples) found 1% the optimum (off 14621 -> 1% 14534 mbb; 5% and
 # full=argmax both WORSE), a small safe win that keeps genuine mixes. EXPLORER_BOT below
 # is left UNpurified (it inspects the raw blueprint). See docs/ROADMAP.md (purify track).
+# Validate the gadget anchor ONCE -- an invalid env value would otherwise raise deep inside BOT
+# construction and crash-loop the worker (no degraded-mode JSON). Unknown -> warn + safe default.
+_GADGET_ANCHOR = os.environ.get('ALLIN_GADGET_ANCHOR', 'auto')
+if _GADGET_ANCHOR not in ('belief', 'blueprint', 'confidence', 'auto'):
+    _LOG.warning("ALLIN_GADGET_ANCHOR=%r invalid; falling back to 'auto'.", _GADGET_ANCHOR)
+    _GADGET_ANCHOR = 'auto'
+if _GADGET_ANCHOR == 'belief':
+    _LOG.warning("ALLIN_GADGET_ANCHOR='belief' GIVES UP the safe-gadget <=blueprint floor "
+                 "(read-driven, no wrong-belief guarantee) -- intended for personal/exploit "
+                 "testing, NOT public production. Use 'auto' in prod.")
+# Confidence gate for the exploit tilt + the all-in guard's belief-trust. Default 0.2 (prod). LOWER
+# it (e.g. 0.1, via dev_launch) so exploitation engages on weaker reads for testing -- riskier
+# (acts on a less-certain belief at a stack-off), so keep 0.2 in production.
+_GUARD_CONFIDENCE = float(os.environ.get('ALLIN_GUARD_CONFIDENCE', '0.2'))
 if BLUEPRINT_DB is not None:
-    BOT = RiverSubgameSolver(BLUEPRINT_DB, max_iters=200, check_every=40,
-                             time_budget=5.0, safe_gadget=True, gadget_anchor='auto',
-                             purify_threshold=0.01)
+    # ALLIN_TURN_SOLVE=1 serves the depth-limited TURN solver (subclass of RiverSubgameSolver --
+    # adds the turn street, inherits river + the pre-river tilt). Experimental + slower (leaf
+    # build) so default OFF. With exploitation ON, the turn solve best-responds to the human
+    # range = a proper range-vs-range TURN exploit (no heuristic limits). Env-tunable.
+    # SAFETY NOTE: the turn gadget is hardcoded to the BELIEF anchor (solve_turn_for_action) and
+    # IGNORES _GADGET_ANCHOR -- the knob only governs the inherited RIVER path. So turn safety is
+    # "<= blueprint relative to the BELIEVED villain range" only, NOT the robust uniform-range
+    # guarantee test_safe_turn_gadget validates. Fine for a non-adversarial personal test; a wrong
+    # human fit on the turn forfeits the safety tail. Thread the anchor in before public exposure.
+    if os.environ.get('ALLIN_TURN_SOLVE', '0') == '1':
+        from bot.src.subgame.turn_subgame_solver import TurnSubgameSolver
+        BOT = TurnSubgameSolver(
+            # Defaults: a FINER leaf (24 buckets / 4 rivers -- 16/3 was too coarse to resolve the
+            # exploit) within a 12s budget, SPR gate 8 (fires on more turns than the river's 6). On a
+            # constrained PUBLIC box lower these (BUCKETS 16 / BUDGET 6) -- see the latency review.
+            BLUEPRINT_DB, n_buckets=int(os.environ.get('ALLIN_TURN_BUCKETS', '24')),
+            leaf_rivers=int(os.environ.get('ALLIN_TURN_RIVERS', '4')),
+            max_spr_turn=float(os.environ.get('ALLIN_TURN_MAX_SPR', '8')),
+            turn_time_budget=float(os.environ.get('ALLIN_TURN_BUDGET', '12')),
+            multivalued_leaf=False, max_iters=200, check_every=40, time_budget=10.0,
+            safe_gadget=True, gadget_anchor=_GADGET_ANCHOR, purify_threshold=0.01,
+            guard_confidence=_GUARD_CONFIDENCE)
+        _LOG.info("turn solver ENABLED: n_buckets=%d max_spr=%.0f budget=%.0fs",
+                  BOT.n_buckets, BOT.max_spr_turn, BOT.turn_time_budget)
+    else:
+        BOT = RiverSubgameSolver(BLUEPRINT_DB, max_iters=200, check_every=40,
+                                 time_budget=10.0, safe_gadget=True, gadget_anchor=_GADGET_ANCHOR,
+                                 purify_threshold=0.01, guard_confidence=_GUARD_CONFIDENCE)
     # A separate solver for the Strategy Explorer's on-demand river solve. It is
     # NOT latency-critical (an explicit "solve" click, not a live turn), so it
     # gets more iterations for a better-converged answer and a slightly larger
@@ -126,6 +168,158 @@ else:
 # Opponent model for the hand-level range tracker (Phase 3); injected into every
 # GameSession so the bot maintains a belief over the human's hand as it plays.
 BOT_RANGE_FN = BOT.range_model_fn() if BOT is not None else None
+# The HERO (bot's-own) range model: the bot's ACTUAL served play (deep-jam routed + purified), so the
+# subgame solver's hero range matches how the bot really plays -- not the raw blueprint. VILLAIN range
+# stays BOT_RANGE_FN (the opponent plays the raw blueprint; doesn't route/purify). C1 keeps hero on the
+# blueprint, NOT the exploit model -- this just makes that blueprint range faithful to routing+purify.
+HERO_RANGE_FN = BOT.hero_range_model_fn() if BOT is not None else None
+
+# Phase 6 opponent EXPLOITATION (default OFF). When ALLIN_EXPLOIT=1, the range tracker's
+# assumed opponent model is swapped from the blueprint ("opponent = GTO") to the fitted
+# per-player / population HUMAN model ("opponent = this human"). Still gadget-protected
+# (gadget-protected via _GADGET_ANCHOR, default 'auto'), so the served strategy stays <= blueprint.
+# HumanModel verifies abstraction consistency with the served blueprint on load and RAISES
+# on a mismatch -> we catch it and stay on the blueprint rather than mis-serve.
+HUMAN_MODEL = None
+if BLUEPRINT_DB is not None and os.environ.get('ALLIN_EXPLOIT', '0') == '1':
+    try:
+        from bot.src.exploitation.opponent_model import HumanModel
+        _OPP_DIR = os.environ.get('ALLIN_OPPONENT_MODEL_DIR') or os.path.join(
+            os.path.dirname(os.path.dirname(_BLUEPRINT_PATH)), 'opponent_models')
+        HUMAN_MODEL = HumanModel(
+            _OPP_DIR, BLUEPRINT_DB,
+            alpha_player=float(os.environ.get('ALLIN_EXPLOIT_ALPHA', '10')),
+            alpha_pop=float(os.environ.get('ALLIN_EXPLOIT_ALPHA_POP', '160')))
+        _LOG.info("opponent exploitation ENABLED: %d player models from %s",
+                  len(HUMAN_MODEL.players), _OPP_DIR)
+    except Exception as exc:                 # mismatch / missing artifacts -> stay on blueprint
+        HUMAN_MODEL = None
+        _LOG.error("opponent exploitation requested but failed to load (%s); "
+                   "falling back to the blueprint opponent model", exc)
+
+
+# Live A/B arm for exploitation measurement. 'on' (treatment) plays the exploit; 'off' (control) plays
+# the PURE BLUEPRINT even with HUMAN_MODEL loaded. `ALLIN_AB_ARM` forces it ('on'/'off' for dev to play
+# each side) or 'random' = a STABLE 50/50 split by player_id (prod A/B). The arm is recorded per hand
+# (recap 'exploitArm') so EV(on) vs EV(off) is measurable (scripts/analyze_ab.py). Default 'on' = the
+# exploit runs whenever configured (no split); unchanged byte-for-byte when exploitation is off.
+_AB_ARM = os.environ.get('ALLIN_AB_ARM', 'on').strip().lower()
+
+
+def _ab_arm(player_id):
+    if _AB_ARM in ('on', 'off'):
+        return _AB_ARM
+    # 'random': STABLE per-player (hashlib, not hash() -- survives restarts so a player stays one arm).
+    h = hashlib.md5(str(player_id).encode()).digest()[0] if player_id else 0
+    return 'on' if h % 2 == 0 else 'off'
+
+
+def _exploit_enabled(player_id):
+    """Exploitation runs for this session iff HUMAN_MODEL is loaded AND the A/B arm is 'on'."""
+    return HUMAN_MODEL is not None and _ab_arm(player_id) == 'on'
+
+
+def _range_fn_for(player_id):
+    """The range tracker's opponent model for a session: the per-player HUMAN model when exploitation
+    is enabled AND the A/B arm is 'on' (population fallback for an unknown player), else the blueprint
+    (the default + the A/B CONTROL arm -- byte-for-byte today's behavior when ALLIN_EXPLOIT is off)."""
+    if _exploit_enabled(player_id):
+        return HUMAN_MODEL.strategy_fn_for(player_id)
+    return BOT_RANGE_FN
+
+# Pre-river exploitation tilt risk budget (total-variation cap from the blueprint). Small by
+# default -- provably near-blueprint; widen only as the offline scoreboard's measured EV justifies.
+_EXPLOIT_DELTA = float(os.environ.get('ALLIN_EXPLOIT_DELTA', '0.05'))
+
+
+def _exploit_for(player_id):
+    """Per-player PRE-RIVER exploitation payload ({chardist, delta}) for the bot, or None when
+    exploitation is off. Set on the GameSession so bot_public_state passes it to the solver, which
+    tilts trained pre-river nodes toward the opponent's off-GTO fold response (capped at delta)."""
+    if not _exploit_enabled(player_id):              # off, or the A/B CONTROL arm -> no tilt
+        return None
+    return {'chardist': HUMAN_MODEL.chardist_for(player_id), 'delta': _EXPLOIT_DELTA}
+
+
+# Live last-N (recency): ALLIN_EXPLOIT_RECENT_N>0 refits the opponent model from the player's most
+# RECENT N hands at session start, so the read reflects CURRENT play (vs the static fitted profile).
+# A hard last-N window IS recency; EB shrinkage handles the smaller sample (thin -> defers to the
+# population model). Dev source = the export JSONL; prod would query the allin-hands DynamoDB table
+# (same recap shape -- TODO). Cached per player per process (re-fit on restart) so it isn't re-fit
+# on every request. OFF by default (=0) -> the static fitted profile, unchanged.
+_EXPLOIT_RECENT_N = int(os.environ.get('ALLIN_EXPLOIT_RECENT_N', '0'))
+# Shrinkage for the live last-N personal layer. Defaults to alpha_player (no change); LOWER it
+# (e.g. 4-5) so the well-sampled COARSE rung moves at small N -- but TUNE it (chronological-holdout
+# LL on recent windows), don't guess (EXPLOITATION_PLAN v3).
+_EXPLOIT_RECENT_ALPHA = float(os.environ.get('ALLIN_EXPLOIT_RECENT_ALPHA',
+                                             os.environ.get('ALLIN_EXPLOIT_ALPHA', '10')))
+# Re-fit cadence: re-fit the live last-N window every K completed hands (WITHIN-session adaptation --
+# the sliding window). 0 = re-fit only per game (/game/new). The source is the live recap store
+# (HANDS: in-memory on dev, DynamoDB in prod -- the SAME code path), so the window actually advances
+# as the player keeps playing; e.g. N=100 + REFRESH=50 = a 100-hand window re-fit every 50 hands.
+_EXPLOIT_RECENT_REFRESH = int(os.environ.get('ALLIN_EXPLOIT_RECENT_REFRESH', '0'))
+_RECENT_MISS = object()                          # sentinel: fit ran, player has NO recent history
+_RECENT_LOCK = threading.Lock()                  # guards the caches under gunicorn --threads
+_RECENT_CAP = int(os.environ.get('ALLIN_RECENT_CACHE_CAP', '2000'))   # per-process LRU bound
+_RECENT_CD = OrderedDict()                       # player_id -> chardist fn | _RECENT_MISS (LRU-capped)
+_RECENT_HANDS = OrderedDict()                    # player_id -> hands since last fit (evicted with _RECENT_CD)
+
+
+def _apply_live_recent(session, player_id, refresh=False):
+    """Override the session's opponent model + tilt payload with a fit from the player's RECENT
+    hands (live last-N), when enabled. `refresh=True` (at /game/new) RE-FITS the latest window so a
+    returning player isn't frozen at first-sighting; else reuses the per-process cache so the
+    per-request _load_session path stays O(1). Reuses session.cards (no extra table load); caches a
+    MISS sentinel for historyless players so they don't re-query the store every request. Crash-safe;
+    only touches strategy_fn + exploit.chardist (hero_strategy_fn / the C1 blueprint hero range is
+    never overridden). No-op when off / unknown player / no recent history."""
+    if not player_id or not _exploit_enabled(player_id) or _EXPLOIT_RECENT_N <= 0:
+        return                                        # off, control arm, or recency disabled
+    try:
+        cd = None
+        if not refresh:
+            with _RECENT_LOCK:
+                cd = _RECENT_CD.get(player_id)
+                if cd is not None:
+                    _RECENT_CD.move_to_end(player_id)     # LRU touch
+        if cd is None:                            # cold, /game/new refresh, or an every-K invalidation
+            recaps = HANDS.list_for_player(player_id, n=_EXPLOIT_RECENT_N)  # live store: dev mem/prod DDB
+            cd = (HUMAN_MODEL.chardist_from_recent(recaps, session.cards, alpha=_EXPLOIT_RECENT_ALPHA)
+                  if recaps else _RECENT_MISS)
+            with _RECENT_LOCK:
+                _RECENT_CD[player_id] = cd
+                _RECENT_CD.move_to_end(player_id)
+                _RECENT_HANDS[player_id] = 0      # reset the hands-since-fit counter on every fit
+                while len(_RECENT_CD) > _RECENT_CAP:      # bound per-process memory (LRU evict)
+                    old_pid, _ = _RECENT_CD.popitem(last=False)
+                    _RECENT_HANDS.pop(old_pid, None)
+            if recaps:
+                _LOG.info("live last-N: refit %s from %d recent hands",
+                          str(player_id)[:8], len(recaps))
+        if cd is _RECENT_MISS:
+            return                                # no recent history -> keep the static model
+        session.strategy_fn = HUMAN_MODEL._strategy_fn(cd)
+        if getattr(session, 'exploit', None) is not None:
+            session.exploit = {**session.exploit, 'chardist': cd}
+    except Exception as exc:                      # never break session creation
+        _LOG.warning("live last-N refit failed for %s (%s); using static model", player_id, exc)
+
+
+def _note_hand_for_recent(player_id):
+    """Advance the live last-N refresh cadence on a completed hand: every ALLIN_EXPLOIT_RECENT_REFRESH
+    hands, invalidate the player's cached fit so the next session-load re-fits from the now-larger
+    recent window (within-session adaptation -- the sliding window). No-op when off / refresh disabled."""
+    if (HUMAN_MODEL is None or _EXPLOIT_RECENT_N <= 0
+            or _EXPLOIT_RECENT_REFRESH <= 0 or not player_id):
+        return
+    with _RECENT_LOCK:
+        n = _RECENT_HANDS.get(player_id, 0) + 1
+        if n >= _EXPLOIT_RECENT_REFRESH:
+            _RECENT_CD.pop(player_id, None)       # invalidate -> next _apply_live_recent re-fits
+            _RECENT_HANDS[player_id] = 0
+        else:
+            _RECENT_HANDS[player_id] = n
+
 
 # SessionStore: chosen by ALLIN_SESSION_STORE (default 'memory'). Set it to
 # 'dynamodb' for a multi-worker / multi-box deploy so games are shared and
@@ -139,6 +333,30 @@ GLOBAL = make_global_stats_store()
 # that consume it are post-launch — but capturing now means launch-window hands
 # aren't lost forever). One PutItem per completed hand inside the same hook.
 HANDS = make_hand_store()
+
+# Dev warm-start (live last-N): ALLIN_SEED_HANDS_JSONL=<export.jsonl> seeds the IN-MEMORY hand store
+# with the player's exported history, so the live last-N fit has real hands to read on dev WITHOUT
+# connecting to (or writing into) prod DynamoDB. The JSONL is an export of DynamoDB (scripts/
+# export_hands.py) -- re-run that to refresh with the latest. No-op unless set AND the store is
+# in-memory (prod DynamoDB already holds the history). Play as your real playerId so the seeded
+# hands (keyed by that id) feed your session.
+_SEED_HANDS = os.environ.get('ALLIN_SEED_HANDS_JSONL')
+if _SEED_HANDS and isinstance(HANDS, InMemoryHandStore):
+    try:
+        _seeded = 0
+        with open(_SEED_HANDS, encoding='utf-8') as _fh:
+            for _line in _fh:
+                _line = _line.strip()
+                if not _line:
+                    continue
+                try:
+                    HANDS.put(json.loads(_line))
+                    _seeded += 1
+                except Exception:
+                    continue
+        _LOG.info("seeded %d hands into the in-memory store from %s", _seeded, _SEED_HANDS)
+    except OSError as _e:
+        _LOG.warning("could not seed hands from %s: %s", _SEED_HANDS, _e)
 
 # River-solve concurrency cap: a single river decision can burn several seconds
 # of CFR (BOT.time_budget), so without a bound N simultaneous solves pin every
@@ -908,8 +1126,11 @@ def _load_session(session_id, claimed_player_id):
     if not claimed_player_id or claimed_player_id != data.get('player_id'):
         # 404 (not 403) so we don't confirm a session id exists to a non-owner.
         return None, (jsonify({"error": "session not found or expired"}), 404)
-    return GameSession.from_dict(data, strategy_fn=BOT_RANGE_FN,
-                                 menu_mode=BLUEPRINT_MENU_MODE), None
+    sess = GameSession.from_dict(data, strategy_fn=_range_fn_for(data.get('player_id')),
+                                 menu_mode=BLUEPRINT_MENU_MODE, hero_strategy_fn=HERO_RANGE_FN)
+    sess.exploit = _exploit_for(data.get('player_id'))
+    _apply_live_recent(sess, data.get('player_id'))
+    return sess, None
 
 
 def _run_bot(session, **kwargs):
@@ -987,6 +1208,7 @@ def _record_hand_end(session, pre_status, pre_net):
     except Exception:
         _LOG.warning("hand-recap capture failed for player=%s session=%s",
                      player_id, sid, exc_info=True)
+    _note_hand_for_recent(player_id)              # live last-N: advance the every-K re-fit cadence
 
 
 def _persist(session):
@@ -1049,7 +1271,10 @@ def _sweep_once(max_resolved=20):
                         or fresh.get('status') != 'in_hand'):
                     continue                     # changed since the snapshot
                 session = GameSession.from_dict(
-                    fresh, strategy_fn=BOT_RANGE_FN, menu_mode=BLUEPRINT_MENU_MODE)
+                    fresh, strategy_fn=_range_fn_for(fresh.get('player_id')),
+                    menu_mode=BLUEPRINT_MENU_MODE, hero_strategy_fn=HERO_RANGE_FN)
+                session.exploit = _exploit_for(fresh.get('player_id'))
+                _apply_live_recent(session, fresh.get('player_id'))
                 _resolve_abandoned(session)
                 _persist(session)
                 resolved += 1
@@ -1178,7 +1403,9 @@ def game_new():
     if _rate_limited('game_new', _client_ip(), limit=20, window_seconds=60):
         return jsonify({"error": "too many new games — slow down"}), 429
     data = request.get_json(silent=True) or {}
-    raw_pid = data.get('playerId')
+    # ALLIN_DEV_FORCE_PLAYER (dev only) forces every new session to a chosen playerId, so you can play
+    # AS a profiled player (e.g. 'ron') and watch the bot exploit their model. Ignored in prod (unset).
+    raw_pid = os.environ.get('ALLIN_DEV_FORCE_PLAYER') or data.get('playerId')
     # Mint a fresh UUID if the client didn't send one OR sent garbage. Don't
     # blindly trust a non-UUID-shaped string into a DynamoDB key.
     if raw_pid and _valid_player_id(raw_pid):
@@ -1201,8 +1428,12 @@ def game_new():
     session_id = str(uuid.uuid4())
     # No contention on a freshly-minted id, but lock for uniformity.
     with SESSIONS.lock(session_id):
-        session = GameSession.new(session_id, player_id, strategy_fn=BOT_RANGE_FN,
-                                  menu_mode=BLUEPRINT_MENU_MODE)
+        session = GameSession.new(session_id, player_id,
+                                  strategy_fn=_range_fn_for(player_id),
+                                  menu_mode=BLUEPRINT_MENU_MODE, hero_strategy_fn=HERO_RANGE_FN)
+        session.exploit = _exploit_for(player_id)
+        session.data['ab_arm'] = _ab_arm(player_id)            # recorded per hand for the EV A/B
+        _apply_live_recent(session, player_id, refresh=True)   # new game -> re-fit the latest window
         pre_status, pre_net = session.data['status'], session.data.get('human_net', 0.0)
         _run_bot(session)                    # bot may act first (when it is SB)
         _record_hand_end(session, pre_status, pre_net)   # rare: bot folds hand 1 outright
@@ -1275,6 +1506,10 @@ def game_bot_action():
     """Run the bot's pending turn(s). Split out from /action so the client can
     render the freshly-dealt board and a 'thinking' indicator before the (possibly
     slow) river solve. A no-op if it isn't the bot's turn."""
+    # Bound abuse of the solve-triggering endpoint (the _SOLVE_SEMAPHORE caps CONCURRENCY; this caps
+    # per-IP VOLUME). 120/min is generous for legit play (a few bot-actions per hand x a few hands/min).
+    if _rate_limited('bot_action', _client_ip(), limit=120, window_seconds=60):
+        return jsonify({"error": "too many requests — slow down"}), 429
     data = request.get_json(silent=True) or {}
     session_id = data.get('id')
     player_id = data.get('playerId')
@@ -1361,15 +1596,24 @@ def stats():
     now = time.time()
     c = _STATS_CACHE
     if c['data'] is None or now - c['ts'] > _STATS_TTL_SECONDS:
-        g = GLOBAL.get()
-        c['data'] = {
-            'totalHands': g['totalHands'],
-            'totalNetBB': round(float(g['totalNetBB']), 2),
-            'totalPlayers': g['totalPlayers'],
-            'blueprint': _BLUEPRINT_PATH.name,
-            'iterations': BLUEPRINT_DB.get_metadata('total_iterations', 0),
-        }
-        c['ts'] = now
+        try:
+            g = GLOBAL.get()
+            c['data'] = {
+                'totalHands': g['totalHands'],
+                'totalNetBB': round(float(g['totalNetBB']), 2),
+                'totalPlayers': g['totalPlayers'],
+                'blueprint': _BLUEPRINT_PATH.name,
+                'iterations': BLUEPRINT_DB.get_metadata('total_iterations', 0),
+            }
+            c['ts'] = now
+        except Exception:
+            # A store fault must NOT 500 the hottest endpoint (every client polls it). Serve the
+            # last-known-good cache, or a zero-state if we never had one.
+            _LOG.warning("stats: GLOBAL.get failed; serving stale/zero-state", exc_info=True)
+            if c['data'] is None:
+                c['data'] = {'totalHands': 0, 'totalNetBB': 0.0, 'totalPlayers': 0,
+                             'blueprint': _BLUEPRINT_PATH.name,
+                             'iterations': BLUEPRINT_DB.get_metadata('total_iterations', 0)}
     return jsonify(c['data'])
 
 
@@ -1397,9 +1641,16 @@ def leaderboard():
     now = time.time()
     hit = _LEADERBOARD_CACHE.get(ck)
     if hit is None or now - hit[0] > _LEADERBOARD_TTL_SECONDS:
-        hit = (now, {'players': PLAYERS.top(n=n, min_hands=min_hands,
-                                            accounts_only=accounts_only)})
-        _LEADERBOARD_CACHE[ck] = hit
+        try:
+            hit = (now, {'players': PLAYERS.top(n=n, min_hands=min_hands,
+                                                accounts_only=accounts_only)})
+            _LEADERBOARD_CACHE[ck] = hit
+        except Exception:
+            # A store fault (missing table / throttle / expired key) must NOT 500 a public endpoint.
+            # Serve the cached board if we have one (even stale), else an empty board.
+            _LOG.warning("leaderboard: PLAYERS.top failed; serving stale/empty", exc_info=True)
+            if hit is None:
+                hit = (now, {'players': []})
     return jsonify(hit[1])
 
 
@@ -1598,6 +1849,9 @@ def _health_payload():
         "riverGadget": (None if BOT is None
                         else ("off" if not BOT.safe_gadget else BOT.gadget_anchor)),
         "purify": (None if BOT is None else BOT.purify_threshold),
+        # Phase 6 opponent exploitation: false when off (default), else #player models + tilt budget.
+        "exploit": (False if HUMAN_MODEL is None
+                    else {"players": len(HUMAN_MODEL.players), "delta": _EXPLOIT_DELTA}),
         "commit": os.environ.get('ALLIN_GIT_SHA'),
     }
 

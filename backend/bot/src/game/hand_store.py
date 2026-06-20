@@ -101,6 +101,7 @@ def recap_from_session(session, *, blueprint_name=None, ts_ms=None):
         'humanNetAfter': round(human_net_after, 2),
         'menuMode': getattr(session, 'menu_mode', None),
         'blueprint': blueprint_name,
+        'exploitArm': d.get('ab_arm'),               # 'on'|'off'|None -- the live exploitation A/B arm
     }
 
 
@@ -166,7 +167,11 @@ class DynamoDBHandStore(HandStore):
         from botocore.exceptions import ClientError
         from botocore.config import Config
         self._ClientError = ClientError
-        kwargs = {'config': Config(retries={'mode': 'adaptive', 'max_attempts': 5})}
+        # Explicit timeouts: list_for_player runs on the request thread under the session lock
+        # (live last-N cold fit), so a stalled DynamoDB call must fail fast (-> static-model
+        # fallback) instead of hanging the request for boto3's 60s default x retries.
+        kwargs = {'config': Config(connect_timeout=3, read_timeout=5,
+                                   retries={'mode': 'adaptive', 'max_attempts': 3})}
         if region:
             kwargs['region_name'] = region
         if endpoint_url:

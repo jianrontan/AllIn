@@ -227,11 +227,17 @@ function BotDebug({ debug }) {
         .sort((a, b) => b[1] - a[1]);
 
     const badge = (s) => {
-        if (s.mode === 'river_solver')
+        if (s.mode === 'river_solver' || s.mode === 'turn_solver') {
+            const p = s.mode === 'turn_solver' ? 'turn ' : '';
             return s.deviated
-                ? ['solver · deviated', 'bg-fuchsia-900/60 text-fuchsia-200']
-                : ['solver · kept BP', 'bg-sky-900/60 text-sky-200'];
+                ? [p + 'solver · deviated', 'bg-fuchsia-900/60 text-fuchsia-200']
+                : [p + 'solver · kept BP', 'bg-sky-900/60 text-sky-200'];
+        }
+        if (s.mode === 'exploit_tilt') return ['exploit tilt', 'bg-emerald-900/60 text-emerald-200'];
         if (s.mode === 'allin_guard') return ['all-in guard', 'bg-amber-900/60 text-amber-200'];
+        if (s.mode === 'deep_raise_guard') return ['deep-raise guard', 'bg-amber-900/60 text-amber-200'];
+        if (s.mode === 'first_act_value') return ['first-act value', 'bg-amber-900/60 text-amber-200'];
+        if (s.mode === 'premium_no_fold') return ['premium no-fold', 'bg-amber-900/60 text-amber-200'];
         if (s.mode === 'fallback') return ['solver fallback', 'bg-rose-900/60 text-rose-200'];
         return ['blueprint', 'bg-neutral-800 text-neutral-400'];
     };
@@ -259,11 +265,59 @@ function BotDebug({ debug }) {
                         <div className="text-neutral-500 mb-1">
                             chose <span className="text-neutral-200 font-semibold break-all">{r.chosen}</span>
                         </div>
-                        <div className="text-neutral-600 mb-0.5">blueprint strategy</div>
-                        <DistBars rows={dist(r.strategy)} />
-                        {s && s.mode === 'river_solver' && (
+                        {s && s.exploitOn !== undefined && (
+                            <div className="text-[10px] mb-1">
+                                <span className="text-neutral-500">exploit </span>
+                                <span className={s.exploitOn ? 'text-emerald-400' : 'text-neutral-500'}>
+                                    {s.exploitOn ? 'ON' : 'off'}
+                                </span>
+                                {s.exploitOn && s.readConfidence != null && (
+                                    <span className={s.readConfidence < s.guardConfidence
+                                        ? 'text-amber-400' : 'text-emerald-300'}>
+                                        {' · read ' + s.readConfidence}
+                                        {s.readConfidence < s.guardConfidence
+                                            ? ' < ' + s.guardConfidence + ' → blueprint (retreated)'
+                                            : ' ≥ ' + s.guardConfidence}
+                                    </span>
+                                )}
+                            </div>
+                        )}
+                        {s && s.guardEq !== undefined && (
+                            <div className="text-[10px] mb-1 text-neutral-400">
+                                all-in guard: eq{' '}
+                                <span className={s.guardNeed != null && s.guardEq >= s.guardNeed
+                                    ? 'text-emerald-300' : 'text-amber-400'}>{s.guardEq}</span>
+                                {s.guardNeed != null && <span> vs need {s.guardNeed}</span>}
+                                {' '}· EV(call) {s.guardEvCall}
+                            </div>
+                        )}
+                        {r.deepJamRoute && (
+                            <div className="text-[10px] mb-1 text-amber-300">
+                                deep stack: blueprint wanted ALL-IN {r.deepJamRoute.allinPct}% (not legal here)
+                                {' '}→ re-translated to sized bets ({r.deepJamRoute.scheme})
+                            </div>
+                        )}
+                        {r.rawBlueprint && (
                             <>
-                                <div className="text-neutral-600 mt-2 mb-0.5">solved (river subgame)</div>
+                                <div className="text-neutral-600 mb-0.5">blueprint intent (raw · incl. all-in)</div>
+                                <DistBars rows={dist(r.rawBlueprint)} />
+                            </>
+                        )}
+                        <div className="text-neutral-600 mb-0.5">
+                            {r.deepJamRoute ? 'served (re-translated)' : 'blueprint strategy'}
+                        </div>
+                        <DistBars rows={dist(r.strategy)} />
+                        {s && s.tiltedStrategy && (
+                            <>
+                                <div className="text-emerald-400/80 mt-2 mb-0.5">exploit-tilted (served)</div>
+                                <DistBars rows={dist(s.tiltedStrategy)} />
+                            </>
+                        )}
+                        {s && (s.mode === 'river_solver' || s.mode === 'turn_solver') && (
+                            <>
+                                <div className="text-neutral-600 mt-2 mb-0.5">
+                                    solved ({s.mode === 'turn_solver' ? 'turn' : 'river'} subgame)
+                                </div>
                                 <DistBars rows={dist(s.solvedStrategy)} />
                                 <div className="mt-1.5 text-[11px] text-neutral-500 tabular-nums leading-relaxed">
                                     EV solved {s.evSolved} vs BP {s.evBaseline}
