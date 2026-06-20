@@ -27,6 +27,37 @@ cd backend/api
 python strategy_api.py
 ```
 
+### Local exploitation / stats testing (against a copy of prod data)
+To dev against real, persistent data (the stats UI, opponent exploitation, live last-N), run a LOCAL
+DynamoDB and clone prod into it. The store interface is backend-agnostic, so dev (local DynamoDB) runs
+the SAME code path as prod. (PowerShell: set the env vars with `$env:VAR='...'` instead of the inline form.)
+```bash
+# 1. DynamoDB Local — use a Windows BIND MOUNT for persistence. A NAMED VOLUME hits a non-root write
+#    wall (SQLite "unable to open database file" crash-loop -> localhost:8000 READ-TIMEOUT; --user root
+#    -> "Invalid directory"); a bind mount is writable. git-bash: prefix `MSYS_NO_PATHCONV=1`.
+docker run -d --name allin-ddb -p 8000:8000 -v C:/Users/<you>/ddb-data:/data \
+  amazon/dynamodb-local -jar DynamoDBLocal.jar -sharedDb -dbPath /data
+#    Later sessions: `docker start allin-ddb` (data persists in the bind mount — NO re-clone).
+
+# 2. Clone prod -> local (needs prod READ creds via `aws configure`; only WRITES to --endpoint). From backend/bot:
+python scripts/clone_dynamo_to_local.py --endpoint http://localhost:8000
+
+# 3. Run the API against the local copy + exploitation flags. From backend/api (bash inline-env shown):
+ALLIN_STORE_BACKEND=dynamodb ALLIN_SESSION_STORE=dynamodb ALLIN_DYNAMODB_ENDPOINT=http://localhost:8000 \
+AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local AWS_DEFAULT_REGION=ap-southeast-1 \
+ALLIN_BLUEPRINT_DB=analysis/blueprints/snapshots/snap_52500000.db ALLIN_OPPONENT_MODEL_DIR=analysis/opponent_models \
+ALLIN_EXPLOIT=1 ALLIN_EXPLOIT_RECENT_N=100 ALLIN_EXPLOIT_RECENT_REFRESH=50 \
+ALLIN_GADGET_ANCHOR=belief ALLIN_MMAP_POSTFLOP=1 python strategy_api.py
+```
+- The 30/24 `snap_*` blueprint is REQUIRED for exploitation (the models were fit under it; a mismatch
+  self-disables exploit). `ALLIN_GADGET_ANCHOR=belief` lets it actually exploit (drops the ≤-blueprint
+  floor — local only; prod stays `auto`). Cold (empty store) -> the bot starts at the population model
+  and adapts as you play; re-clone (`clone_dynamo_to_local.py`, upserts) to refresh from prod.
+- Failure modes: clone hangs with no output = AWS creds not in THIS shell (boto3 IMDS timeout; the
+  hardened script now fails fast — `aws configure`). localhost:8000 read-timeout = the container can't
+  write its DB (use the bind mount, not a named volume). `aws dynamodb scan --table-name allin-hands
+  --endpoint-url http://localhost:8000 --select COUNT` to spot-check (paginated count for the true total).
+
 ### Frontend (React/Vite, port 5173)
 ```bash
 cd frontend
@@ -237,7 +268,7 @@ Leaderboard / accounts:
 - `POST /api/player` — set the caller's unique username; rate-limited (10/min/player + 30/min/IP → 429).
 - `POST /api/auth/google` — verify a Cognito Google ID token, resolve the canonical account; rate-limited (20/min/IP → 429); generic 401 on bad token (reason logged server-side).
 
-Health: `GET /api/test` (alias `GET /api/healthz`) — returns 200 with `{status:"ok", blueprint, iterations, postflopTables, sessionStore, debugOverlay, riverGadget, purify, commit}` when healthy; **503 with `{status:"degraded", error}`** when the blueprint failed to load at import (a `before_request` guard then 503s every other endpoint while degraded).
+Health: `GET /api/test` (alias `GET /api/healthz`) — returns 200 with `{status:"ok", blueprint, iterations, postflopTables, sessionStore, debugOverlay, riverGadget, purify, exploit, commit}` when healthy (`exploit` = `{players, delta}` when `ALLIN_EXPLOIT=1`, else null); **503 with `{status:"degraded", error}`** when the blueprint failed to load at import (a `before_request` guard then 503s every other endpoint while degraded).
 
 ### Environment Variables
 
@@ -253,6 +284,35 @@ The full, authoritative list is in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) ("En
 - `ALLIN_LOG_LEVEL` (INFO) / `ALLIN_GIT_SHA` (build commit, surfaced in healthz).
 - `ALLIN_BLUEPRINT_CACHE_DIR` — where S3 source caches the downloaded blueprint (default OS tempdir; set to a stable mount in containers).
 - `ALLIN_RIVER_CACHE_BOARDS` — `PostflopV2` river board LRU cap (default 100k).
+- **Phase 6 exploitation + turn-solve (flag-gated, default OFF — image ships them off):**
+  - `ALLIN_EXPLOIT` — `1` swaps the range tracker's opponent model from the blueprint to the fitted
+    per-player/population HUMAN model (`HumanModel`, `ALLIN_OPPONENT_MODEL_DIR`); turn/river then solve
+    range-vs-range vs the human read, pre-river applies the bounded value-aware tilt. **Requires the
+    served blueprint and the opponent models to share an abstraction** — else `HumanModel`'s guard
+    raises, is caught, and exploit self-disables (stays on the blueprint). `ALLIN_EXPLOIT_DELTA` (0.05)
+    pre-river tilt risk budget; `ALLIN_EXPLOIT_ALPHA` (10) / `ALLIN_EXPLOIT_ALPHA_POP` (160) EB shrinkage.
+  - `ALLIN_EXPLOIT_RECENT_N` — `>0` enables LIVE LAST-N: refit the personal layer from the player's
+    most-recent N hands (read from the live recap store — in-memory dev / DynamoDB prod, same code path)
+    at session start, so the read reflects CURRENT play vs the static lifetime profile. Per player per
+    process, refreshed at `/game/new`. `ALLIN_EXPLOIT_RECENT_REFRESH` (=K; re-fit every K completed hands
+    mid-session, 0=per-game) = the sliding window (e.g. N=100 + REFRESH=50). `ALLIN_EXPLOIT_RECENT_ALPHA`
+    (default = `ALLIN_EXPLOIT_ALPHA`; LOWER ~4-5 so the coarse rung moves at small N — but TUNE it, don't
+    guess). 0 (default) = static fitted profile. Closes "changed since last session"; mid-session change
+    is the sliding window's job (needs the live store as source, which it is).
+  - `ALLIN_SEED_HANDS_JSONL` — dev warm-start: seed the IN-MEMORY hand store from an export JSONL at
+    startup so live last-N has history without DynamoDB. No-op unless set AND the store is in-memory.
+  - `ALLIN_DYNAMODB_ENDPOINT` — point all stores at a local/alt DynamoDB (e.g. `http://localhost:8000`
+    for DynamoDB Local; see the dev-workflow command above). Honored by all four stores.
+  - `ALLIN_TURN_SOLVE` — `1` serves `TurnSubgameSolver` (turn + river; experimental). `ALLIN_TURN_BUCKETS`
+    (24) / `ALLIN_TURN_RIVERS` (4) / `ALLIN_TURN_MAX_SPR` (10) / `ALLIN_TURN_BUDGET` (16s). NOTE: the turn
+    gadget is belief-anchored only (ignores the anchor below) — robust-anchor work pending before public use.
+  - `ALLIN_GADGET_ANCHOR` — safe-gadget anchor for the river solve: `auto` (default, ≤blueprint) |
+    `belief` (max exploit, NO safety floor — local testing only) | `blueprint` | `confidence`. Invalid →
+    warns + falls back to `auto`. Surfaced in healthz `riverGadget`.
+  - `ALLIN_MMAP_POSTFLOP` — `1` extracts the baked `.npz` table members to `.npy` and memory-maps them
+    (keeps the ~107MB turn `ids` off the heap). Dev/measurement aid on a WRITABLE box; OFF in the image
+    (the instance handles the full load + its table dir is read-only → graceful full-load fallback).
+    NB `np.load(mmap_mode=)` does NOT mmap `.npz` members — only the extracted `.npy`.
 - **Gunicorn / entrypoint tuning (Docker only):** `ALLIN_WORKERS`, `ALLIN_THREADS` (4), `ALLIN_TIMEOUT` (120), `ALLIN_GRACEFUL_TIMEOUT` (120), `ALLIN_MAX_REQUESTS` (500), `ALLIN_MAX_REQUESTS_JITTER` (50), `ALLIN_BIND` (`0.0.0.0:5000`).
 - `ALLIN_DEBUG` (1) / `ALLIN_DEV_HOST` / `ALLIN_DEV_PORT` — dev server only; irrelevant under gunicorn.
 - `VITE_API_BASE` / `VITE_COGNITO_DOMAIN` / `VITE_COGNITO_APP_CLIENT_ID` / `VITE_COGNITO_REDIRECT_URI` — frontend build-time config.
@@ -304,11 +364,15 @@ as input, so the range tracker has to exist before the solver.
   ranges from Phase 3, runs vectorized CFR+, reads off the bot's action, and is **served live**
   (EV-gated; falls back to the blueprint pre-river). The bot's hole cards flow through `decide()`'s
   public state. The depth-limited **turn/flop** solver (`subgame/turn_*.py`, `cfv.py`) was built and
-  lab-validated (M0–M2, ~98.6% less exploitable in-abstraction) but **SHELVED**: the N0 real-game
-  gate failed (lower exploitability did not beat the blueprint head-to-head — a cross-street
-  consistency break needing continual re-solving, an architecture rebuild). See
+  lab-validated (M0–M2, ~98.6% less exploitable in-abstraction); the N0 GTO real-game gate failed
+  (lower exploitability did not beat the blueprint head-to-head — a cross-street consistency break).
+  As of 2026-06-19 it is **SERVABLE behind `ALLIN_TURN_SOLVE=1`** (`TurnSubgameSolver`,
+  smoke-validated to RUN ~1.3-1.4s/solve + the turn-dev→river clamp; `scripts/smoke_turn_exploit.py`),
+  and with `ALLIN_EXPLOIT=1` becomes a range-vs-range TURN exploit. Still **unvalidated head-to-head**
+  (your personal-play test) and the turn gadget is **belief-anchored only** (ignores
+  `ALLIN_GADGET_ANCHOR` → robust-anchor work pending before public turn-solve). See
   [docs/DEPTH_LIMITED_SOLVER_PLAN.md](docs/DEPTH_LIMITED_SOLVER_PLAN.md) and
-  [docs/NN_LEAF_PLAN.md](docs/NN_LEAF_PLAN.md) (both on hold).
+  [docs/NN_LEAF_PLAN.md](docs/NN_LEAF_PLAN.md).
 - **Phase 5 — Safety + depth.** 5a ✅ **SHIPPED (2026-06-10)** / 5b ⬜ (multi-week; deferred).
   **5a — safe river re-solving gadget** (`subgame/blueprint_projection.blueprint_cfv` +
   `river_cfr.run_gadget` + `solve_control.solve_river_gadget`): the villain gets a per-hand opt-out
@@ -321,6 +385,20 @@ as input, so the range tracker has to exist before the solver.
   5b needs. See [docs/SAFE_RIVER_SOLVING_PLAN.md](backend/bot/docs/SAFE_RIVER_SOLVING_PLAN.md).
   **5b** — continual-re-solving turn/flop depth-limited solving with **blueprint counterfactual values
   as the leaf value function** — the revival path for the shelved turn solver.
+- **Phase 6 — Opponent EXPLOITATION** ⏳ built + SERVABLE behind flags (default OFF), validated locally,
+  not yet live. Swaps the range tracker's opponent model from the blueprint ("opponent = GTO") to a
+  fitted per-player/population HUMAN model (`src/exploitation/opponent_model.py`, hierarchical
+  empirical-Bayes backoff blueprint→strength×pos×street→+facing→full key) so turn/river solve
+  range-vs-range vs the human read and pre-river applies a bounded **value-aware tilt**
+  (`src/exploitation/tilt.py`, eq vs the calling subrange, TV≤δ scaled by pot). Pipeline:
+  `scripts/{export_hands,fit_opponent_models,build_opponent_model}.py` (DynamoDB recaps → per-(bucket,ctx)
+  freqs → `model_built_*.json`). The bot's OWN range stays on the blueprint (`hero_strategy_fn`, the C1
+  fix) so exploit doesn't corrupt the river solver. Served via `ALLIN_EXPLOIT=1` (needs the served
+  blueprint + models to share an abstraction — the guard self-disables on mismatch). Offline scoreboard
+  (`measure_exploit.py`): direction positive vs a known player, magnitude noisy; **live A/B is the EV
+  oracle** (net-new). NEXT (planned, 3-agent-reviewed): recency-weighted personal model + auto-refresh —
+  see [docs/EXPLOITATION_PLAN.md](backend/bot/docs/EXPLOITATION_PLAN.md) v2→v3 (lean on EB shrinkage +
+  live last-N over a hard gate + batch; resolve the 20/16→30/24 abstraction first).
 
 Dependency chain: **0 → 1 → 2 → 3 → 4 → 5** (1a and 1b are independent quick wins; 2 is
 high-leverage but technically optional before 3; 3 strictly gates 4).

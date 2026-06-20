@@ -10,6 +10,28 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-026 — Turn/river solver's frozenset-keyed `heroRangeUpdate` crashed the debug-overlay JSON response (500)
+
+| | |
+|---|---|
+| **Date** | 2026-06-19 |
+| **Area** | Serving (`game_session._record_bot_debug` → `public_view` → Flask `jsonify`) |
+| **Severity** | High (500s every bot-action) · **Status** | Fixed (uncommitted) |
+
+**Summary.** With `ALLIN_TURN_SOLVE=1` + the debug overlay on, the first turn-solve *deviation* 500'd `POST /api/game/bot-action` with `TypeError: keys must be str, int, float, bool or None, not frozenset`.
+
+**Root cause.** When a turn (or river) solve deviates, it stashes an INTERNAL `{frozenset(hand): prob}` map (`heroRangeUpdate`) on `bot_strategy.last_debug` — `advance_bot_turns` reads it off `last_debug` to chain the bot's own hero range (continual re-solving). `_record_bot_debug` copied the **entire** `last_debug` into `bot_debug` (`record['solver'] = solver`), which `public_view()` surfaces as `botDebug`. With the overlay on (dev default; off in prod), that field is NOT stripped, so `jsonify` tried to serialize a dict with **frozenset keys** → 500. Three conditions had to coincide: turn-solve served + overlay on + an actual deviation.
+
+**Fix.** `_record_bot_debug` now passes `last_debug` through `_json_safe()`, which drops any field whose value isn't JSON-serializable (keys coerced to str) — defensive, not just `heroRangeUpdate`-specific. `last_debug` itself is untouched, so the range-chaining still reads `heroRangeUpdate` directly. Regression test in `test_exploit_recent.py`.
+
+**Why not caught earlier.** The turn-solver smoke tests (`scripts/smoke_turn_exploit.py`) drive the solver and `decide()` directly and assert on stats — they never go through Flask's `public_view()` / `jsonify`, so the serialization boundary where the bug lives was never exercised. The river solver had the same latent field but prod runs `ALLIN_DEBUG_OVERLAY=0` (the field is popped), so it never surfaced live.
+
+**Retrain impact.** None (serving-only).
+
+**Lessons.** (1) A "smoke test" that stops short of the real serialization/transport boundary can pass while the live path 500s — exercise the actual response path (jsonify), not just the function. (2) Internal, non-serializable debug fields must be sanitized at the *view* boundary, not trusted to be stripped only when a flag is off. (3) A field added for an internal mechanism (range-chaining) leaked into a user-facing surface (the overlay) because they shared one dict (`last_debug`).
+
+---
+
 ## BUG-025 — Paired-AIVAT measurement: dead c2 control variate + in-sample β-fit inflated the turn-solver estimate
 
 | | |

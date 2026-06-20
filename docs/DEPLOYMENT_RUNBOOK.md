@@ -70,6 +70,31 @@ diagnosing CI failures, dev workflow) — that's in
   and half that, floored at 1). The solver is anytime CFR, so on a small instance
   raising the live cap to 2 lets two concurrent solves both finish (slower) instead
   of one queueing 30s into a 503 — usually the better trade for live play.
+- **Phase 6 exploitation + turn-solve (flag-gated, default OFF; the image bakes them off):**
+  - `ALLIN_EXPLOIT` — `1` swaps the range tracker's opponent model to the fitted human model
+    (`HumanModel`; `ALLIN_OPPONENT_MODEL_DIR`, `ALLIN_EXPLOIT_DELTA`=0.05 pre-river tilt budget,
+    `ALLIN_EXPLOIT_ALPHA`=10 / `ALLIN_EXPLOIT_ALPHA_POP`=160 shrinkage). **Requires the served
+    blueprint + the opponent models to share an abstraction** — on mismatch the guard raises, is
+    caught, and exploit self-disables (stays on the blueprint). Prod serves 20/16 today; the models
+    were fit on 30/24, so this is a no-op until the 30/24 blueprint is served (assets-v2).
+  - `ALLIN_EXPLOIT_RECENT_N` — `>0` enables LIVE LAST-N: refit the personal layer from the player's
+    most-recent N hands (read from the live recap store — in-memory dev / DynamoDB prod) at session
+    start, reflecting CURRENT play. `ALLIN_EXPLOIT_RECENT_REFRESH`=K re-fits every K completed hands
+    (the sliding window; 0=per-game); `ALLIN_EXPLOIT_RECENT_ALPHA` (default `ALLIN_EXPLOIT_ALPHA`;
+    tune lower for the smaller recent sample). 0 (default) = static lifetime profile.
+  - `ALLIN_SEED_HANDS_JSONL` / `ALLIN_DYNAMODB_ENDPOINT` — dev only: seed the in-memory hand store from
+    an export JSONL, or point all stores at a local DynamoDB (DynamoDB Local). See CLAUDE.md "Local
+    exploitation / stats testing" for the clone + bind-mount workflow. Not used in prod.
+  - `ALLIN_TURN_SOLVE` — `1` serves `TurnSubgameSolver` (experimental; `ALLIN_TURN_BUCKETS`=24,
+    `ALLIN_TURN_RIVERS`=4, `ALLIN_TURN_MAX_SPR`=10, `ALLIN_TURN_BUDGET`=16s). A turn solve holds a
+    solve permit up to the budget → revisit `ALLIN_SOLVE_PERMITS` vs the edge rate limit before
+    enabling publicly. The turn gadget is belief-anchored only (robust-anchor work pending).
+  - `ALLIN_GADGET_ANCHOR` — river safe-gadget anchor: `auto` (default, ≤blueprint) | `belief`
+    (max-exploit, **NO safety floor — never set in prod**) | `blueprint` | `confidence`. Invalid →
+    warns + `auto`. Surfaced in healthz `riverGadget`.
+  - `ALLIN_MMAP_POSTFLOP` — `1` extracts the baked `.npz` table members to `.npy` + memory-maps them
+    (dev/measurement RAM aid on a WRITABLE box). OFF in the image: the instance handles the full load
+    and its table dir is read-only (graceful full-load fallback). `.npz` members are NOT mmap-able directly.
 - `ALLIN_DEBUG` — dev server only: `1` (default) enables the Werkzeug debugger, `0` disables.
   Irrelevant under gunicorn/waitress (that code path never runs).
 - `ALLIN_DEV_HOST` / `ALLIN_DEV_PORT` — dev server bind (default `127.0.0.1:5000`).
