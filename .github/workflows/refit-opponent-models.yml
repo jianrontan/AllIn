@@ -1,0 +1,98 @@
+# Scheduled POPULATION opponent-model refit (Phase 6 / exploitation).
+#
+# Every 3 days: re-fit the POPULATION (shared, "average human") opponent model from the
+# latest prod hands and publish it, so the served exploiter's shared prior stays current.
+#
+# Per-PLAYER reads are derived LIVE at serve time from each player's recent DynamoDB hands
+# (the live last-N, ~250 ms / cached) -- there is NO per-player artifact to store or refit.
+# So this job intentionally refreshes ONLY the population model. New players are handled by
+# the population fallback and personalize as their hands accumulate. See
+# docs/private/ROADMAP.md "Exploitation at scale".
+#
+# Runs on the GH Actions runner, NOT the 0.25 vCPU serving box (the fit must not compete
+# with live river solves). AWS auth: OIDC, same pattern as backend-deploy.yml.
+#
+# PUBLISH TARGET -- DECIDE AT WIRE-UP (currently S3, but reconsider):
+#   Prod delivers artifacts (blueprint, postflop tables) via GitHub RELEASE ASSETS
+#   (assets-v1), NOT S3. So the cleaner option -- no new S3 bucket, no s3:PutObject IAM,
+#   matches the existing pipeline -- is to publish the population model to the assets-v2
+#   release instead: `gh release upload assets-v2 model_population.json --clobber` (uses
+#   GITHUB_TOKEN). The S3 path below is one option; the release-asset path avoids all the
+#   AWS-console S3 setup. Pick one when wiring the prod-side reload (gated on item 7).
+#
+# SETUP REQUIRED before this can run green (one-time, AWS console / repo settings):
+#   1. IAM (AWS console > IAM): the OIDC role below needs (beyond deploy perms)
+#      dynamodb:Scan/Query on allin-hands + allin-players, and -- ONLY if using the S3
+#      target -- s3:PutObject on the bucket. See docs/private/CICD_SETUP.md.
+#   2. If S3 target: create the bucket + set repo variable OPP_MODEL_S3_URI
+#      (Settings > Variables), e.g. s3://allin-artifacts/opponent_models/model_population.json.
+#      (S3 cost for one small JSON is negligible -- pennies/month.) Bucket is NOT hard-coded
+#      here on purpose -- it's a repo variable so infra isn't baked into the workflow.
+#
+# PENDING (gated on ROADMAP item 7 / assets-v2): prod must FETCH model_population.json from
+# S3 at startup (an ALLIN_OPPONENT_MODEL_SOURCE=s3 path mirroring the blueprint's S3 source)
+# and be restarted to reload it. Until that's wired, this job publishes the refreshed model
+# but prod won't auto-pick-it-up; the final "prod refresh" step is left commented below.
+
+name: Refit opponent models (population)
+
+on:
+  schedule:
+    - cron: '0 3 */3 * *'      # every 3 days, 03:00 UTC (off-peak)
+  workflow_dispatch:            # manual trigger
+
+permissions:
+  id-token: write               # OIDC role assumption
+  contents: read
+
+env:
+  AWS_REGION: ap-southeast-1
+  # S3 destination for the published population model. Set as a repo variable (see SETUP above).
+  OPP_MODEL_S3_URI: ${{ vars.OPP_MODEL_S3_URI }}
+
+jobs:
+  refit-population:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::361611338374:role/github-actions-allin-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Export prod hands
+        working-directory: backend/bot
+        run: python scripts/export_hands.py --out analysis/opponent_models/hands_export.jsonl
+
+      - name: Fit population model
+        working-directory: backend/bot
+        run: |
+          python scripts/fit_opponent_models.py \
+            --in analysis/opponent_models/hands_export.jsonl \
+            --out-dir analysis/opponent_models
+
+      - name: Publish population model to S3
+        working-directory: backend/bot
+        run: |
+          test -n "$OPP_MODEL_S3_URI" || { echo "::error::OPP_MODEL_S3_URI repo variable not set"; exit 1; }
+          aws s3 cp analysis/opponent_models/model_population.json "$OPP_MODEL_S3_URI"
+          echo "published $(wc -c < analysis/opponent_models/model_population.json) bytes -> $OPP_MODEL_S3_URI"
+
+      # PENDING (ROADMAP item 7): once prod fetches the population model from S3 at startup,
+      # trigger a refresh here so it reloads. Requires the prod-side S3-fetch wiring first.
+      # - name: Trigger prod refresh
+      #   env:
+      #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      #   run: gh workflow run backend-deploy.yml

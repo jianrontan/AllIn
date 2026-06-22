@@ -10,6 +10,30 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-027 — Blueprint stacks off 2nd pair in a 4-bet pot: the postflop key is SPR/pot-history-blind
+
+| | |
+|---|---|
+| **Date** | 2026-06-22 |
+| **Area** | Abstraction (`cfr/keys.make_info_set_key` postflop key + equity-vs-uniform postflop buckets) |
+| **Severity** | Medium (real EV leak in big pots) · **Status** | Open — abstraction limit; fix = SPR buckets (ROADMAP item 8) |
+
+**Summary.** In a 100BB **4-bet pot**, the bot held 9♥J♥ on a Q♠9♣3♣ flop (2nd pair) and **called a 75BB all-in 98%** (blueprint `call 98% / fold 2%`), stacking off ~75BB with ~15-20% equity. Vivid instance of the postflop key being blind to pot history / SPR.
+
+**Symptom.** Live hand #44: preflop went raise-3 / 3bet-8.5 / 4bet-21.5 / call → flop Q93, villain shoves 75BB, bot calls with middle pair and loses to top pair (QJ). Debug overlay: flop key `pf_6_25_ip_flop_a`, `chose call`, `exploit ON · read 0.046 < 0.2 → blueprint (retreated)`, blueprint `call 98%`.
+
+**Root cause (two compounding abstraction blind-spots).** (1) **SPR/pot-history blindness:** the postflop key resets the betting pattern each street, so `pf_6_25_ip_flop_a` encodes *nothing* about this being a 4-bet pot — it is identical whether the pot arrived via a 4-bet war (narrow, value-heavy shove range, low SPR) or a limped/single-raised pot (wide range). The blueprint plays the *blend*; in a wide pot calling middle pair + a J kicker off a shove is fine, so the average leans call. (2) **Equity-vs-uniform bucketing:** the hand landed in strength **bucket 25/30** (high) because a pair of 9s beats most of a *uniform* range — but the actual 4-bet range (QQ+, AK, AQ) crushes it. Same class as BUG-023. Note the exploiter was NOT at fault: it retreated to the blueprint (read confidence 0.046 < the 0.2 gate).
+
+**Fix.** None yet — not guard-fixable without hacks. The principled fix is **ROADMAP item 8: turn/flop SPR buckets** (`<2 / 2-4 / 4-8 / >8`) added to the postflop key, so a 4-bet-pot flop is a *different* info set than a limped-pot flop and can learn the tighter calling range. (An interim heuristic guard — detect a 4-bet pot from full history and damp medium-strength stack-offs — is possible but papers over the abstraction; logged as the motivation for item 8, not a patch.)
+
+**Why not caught earlier.** Aggregate metrics (BR/LBR, EV) don't isolate it — it's a leak concentrated in *big, rare* lines (4-bet pots), exactly where averages wash out (cf. the rare-line-convergence memo). It only jumps out in a concrete hand with the overlay on.
+
+**Retrain impact.** The fix IS a retrain — SPR buckets are an abstraction change (invalidates the blueprint + opponent models → a v3 cutover, item 8). 
+
+**Lessons.** (1) Resetting the pattern per street throws away pot context the strategy genuinely needs — SPR is not a luxury in big pots. (2) Equity-vs-uniform buckets systematically overrate medium-made hands precisely when the real range is narrow (4-bet pots, big rivers) — the two blind-spots compound. (3) One vivid hand surfaced a leak that every aggregate metric had hidden — keep playing with the overlay on.
+
+---
+
 ## BUG-026 — Turn/river solver's frozenset-keyed `heroRangeUpdate` crashed the debug-overlay JSON response (500)
 
 | | |

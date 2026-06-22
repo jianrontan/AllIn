@@ -932,7 +932,7 @@ class RiverSubgameSolver(BlueprintStrategy):
         RangeTrackers (villain = bot's-cards-removed belief; hero = bot's blueprint
         reach). river_path: realized river actions before this decision, as labels
         ('check'/'call'/'fold'/'allin') or ('bet'|'raise', chips) for sized."""
-        ba = build_board_arrays(board, self._evaluator, self._cards)
+        ba = build_board_arrays(board, self._evaluator, self._cards, streets=(3,))  # river solve only uses strg[3]
         idx = hand_index_map(ba)
         tree = build_river_tree(pot_entry, stacks, menu=self.menu,
                                 max_aggressions=LIVE_RIVER_MAX_AGGRESSIONS)

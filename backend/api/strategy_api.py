@@ -128,34 +128,22 @@ if _GADGET_ANCHOR == 'belief':
 # (acts on a less-certain belief at a stack-off), so keep 0.2 in production.
 _GUARD_CONFIDENCE = float(os.environ.get('ALLIN_GUARD_CONFIDENCE', '0.2'))
 if BLUEPRINT_DB is not None:
-    # ALLIN_TURN_SOLVE=1 serves the depth-limited TURN solver (subclass of RiverSubgameSolver --
-    # adds the turn street, inherits river + the pre-river tilt). Experimental + slower (leaf
-    # build) so default OFF. With exploitation ON, the turn solve best-responds to the human
-    # range = a proper range-vs-range TURN exploit (no heuristic limits). Env-tunable.
-    # SAFETY NOTE: the turn gadget is hardcoded to the BELIEF anchor (solve_turn_for_action) and
-    # IGNORES _GADGET_ANCHOR -- the knob only governs the inherited RIVER path. So turn safety is
-    # "<= blueprint relative to the BELIEVED villain range" only, NOT the robust uniform-range
-    # guarantee test_safe_turn_gadget validates. Fine for a non-adversarial personal test; a wrong
-    # human fit on the turn forfeits the safety tail. Thread the anchor in before public exposure.
-    if os.environ.get('ALLIN_TURN_SOLVE', '0') == '1':
-        from bot.src.subgame.turn_subgame_solver import TurnSubgameSolver
-        BOT = TurnSubgameSolver(
-            # Defaults: a FINER leaf (24 buckets / 4 rivers -- 16/3 was too coarse to resolve the
-            # exploit) within a 12s budget, SPR gate 8 (fires on more turns than the river's 6). On a
-            # constrained PUBLIC box lower these (BUCKETS 16 / BUDGET 6) -- see the latency review.
-            BLUEPRINT_DB, n_buckets=int(os.environ.get('ALLIN_TURN_BUCKETS', '24')),
-            leaf_rivers=int(os.environ.get('ALLIN_TURN_RIVERS', '4')),
-            max_spr_turn=float(os.environ.get('ALLIN_TURN_MAX_SPR', '8')),
-            turn_time_budget=float(os.environ.get('ALLIN_TURN_BUDGET', '12')),
-            multivalued_leaf=False, max_iters=200, check_every=40, time_budget=10.0,
-            safe_gadget=True, gadget_anchor=_GADGET_ANCHOR, purify_threshold=0.01,
-            guard_confidence=_GUARD_CONFIDENCE)
-        _LOG.info("turn solver ENABLED: n_buckets=%d max_spr=%.0f budget=%.0fs",
-                  BOT.n_buckets, BOT.max_spr_turn, BOT.turn_time_budget)
-    else:
-        BOT = RiverSubgameSolver(BLUEPRINT_DB, max_iters=200, check_every=40,
-                                 time_budget=10.0, safe_gadget=True, gadget_anchor=_GADGET_ANCHOR,
-                                 purify_threshold=0.01, guard_confidence=_GUARD_CONFIDENCE)
+    # Served bot is RIVER-ONLY: blueprint everywhere, the river subgame solver on the river
+    # (validated, ~+207 mbb real) + the pre-river exploit tilt. Real-time TURN solving is SHELVED
+    # (dead end): an H2H over 48k hands lost -66 mbb/hand because the depth-limited turn leaf models
+    # the BLUEPRINT river while the bot plays the RIVER SOLVER -- an optimistic, self-inconsistent
+    # leaf the turn CFR overfits. Every cheap leaf (blueprint, multi-valued) loses; the only correct
+    # fix is a range-conditional CFV net (DeepStack-scale, $$$). The turn-solver code is kept as the
+    # recorded dead-end (TurnSubgameSolver / cfv.py); it is NO LONGER WIRED into serving. See
+    # docs/private/ROADMAP.md "Dead Ends" + backend/bot/docs/TURN_BAKE_VS_NN_SPEC.md.
+    # max_iters=275, time_budget=24s: RUN the river CFR to the full 275 iters (it converges, 1% gap, at
+    # ~280-640; 200 was under-converged). The budget is raised 10s -> 24s SO 275 ITERS ACTUALLY RUN on the
+    # 0.25 vCPU box (200 iters there ~12s, so 275 ~15-16s -- well under 24s) -- a DELIBERATE latency-for-
+    # convergence trade. 24s is the safety cap for pathological deep/high-SPR spots only. UX: the human
+    # waits ~15s (up to 24s worst case) for a river decision. (Convergence data: 2026-06-22.)
+    BOT = RiverSubgameSolver(BLUEPRINT_DB, max_iters=275, check_every=40,
+                             time_budget=24.0, safe_gadget=True, gadget_anchor=_GADGET_ANCHOR,
+                             purify_threshold=0.01, guard_confidence=_GUARD_CONFIDENCE)
     # A separate solver for the Strategy Explorer's on-demand river solve. It is
     # NOT latency-critical (an explicit "solve" click, not a live turn), so it
     # gets more iterations for a better-converged answer and a slightly larger

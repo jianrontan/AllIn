@@ -44,10 +44,13 @@ _NUM_CARDS = len(_FULL_DECK)  # 52
 _COMPATIBLE = 990
 
 
-def build_board_arrays(board, evaluator, cards):
+def build_board_arrays(board, evaluator, cards, streets=(1, 2, 3)):
     """
     Precompute, for one board, everything independent of the betting line or
-    which seat is hero:
+    which seat is hero. `streets` selects which postflop strength buckets to
+    compute (1=flop, 2=turn, 3=river); pass (3,) for a RIVER solve, which only
+    uses strg[3]/groups[3] -- skipping the unused flop/turn buckets saves ~half
+    the per-hand get_bucket work on every solve (the served river-solve hot path).
 
       hands : list of (cardA, cardB) for all H hands not using a board card
       raw   : showdown rank per hand  (lower = stronger)
@@ -68,18 +71,17 @@ def build_board_arrays(board, evaluator, cards):
     c1 = np.empty(H, dtype=np.int64)
     c2 = np.empty(H, dtype=np.int64)
     pf = [None] * H
-    s1 = [None] * H
-    s2 = [None] * H
-    s3 = [None] * H
+    want = [s for s in (1, 2, 3) if s in streets]           # streets to bucket (river-solve -> just [3])
+    _street_board = {1: board[:3], 2: board[:4], 3: board[:5]}
+    sbuf = {s: [None] * H for s in want}
     for i, (a, b) in enumerate(hands):
         hl = [a, b]
         raw[i] = evaluator.get_raw_hand_value(hl, board)
         c1[i] = _CARD_ID[a]
         c2[i] = _CARD_ID[b]
-        pf[i] = cards.get_bucket(hl, None)
-        s1[i] = cards.get_bucket(hl, board[:3])
-        s2[i] = cards.get_bucket(hl, board[:4])
-        s3[i] = cards.get_bucket(hl, board[:5])
+        pf[i] = cards.get_bucket(hl, None)                  # always needed (coarse class in every key)
+        for s in want:
+            sbuf[s][i] = cards.get_bucket(hl, _street_board[s])
 
     # Dense strength groups: ascending raw -> group 0 is the strongest.
     uniq = np.unique(raw)
@@ -87,9 +89,7 @@ def build_board_arrays(board, evaluator, cards):
     G = len(uniq)
 
     pf = np.array(pf, dtype=object)
-    strg = {1: np.array(s1, dtype=object),
-            2: np.array(s2, dtype=object),
-            3: np.array(s3, dtype=object)}
+    strg = {s: np.array(sbuf[s], dtype=object) for s in want}
 
     # Villain hands sharing the same blueprint key share a strategy row. The
     # grouping (preflop bucket, or (preflop, strength) postflop) is independent
@@ -103,7 +103,7 @@ def build_board_arrays(board, evaluator, cards):
         return out
 
     groups = {0: build_groups(pf)}
-    for s in (1, 2, 3):
+    for s in want:
         labels = np.array([f"{pf[i]}|{strg[s][i]}" for i in range(H)], dtype=object)
         groups[s] = build_groups(labels)
 

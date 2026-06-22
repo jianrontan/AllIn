@@ -303,9 +303,12 @@ The full, authoritative list is in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) ("En
     startup so live last-N has history without DynamoDB. No-op unless set AND the store is in-memory.
   - `ALLIN_DYNAMODB_ENDPOINT` — point all stores at a local/alt DynamoDB (e.g. `http://localhost:8000`
     for DynamoDB Local; see the dev-workflow command above). Honored by all four stores.
-  - `ALLIN_TURN_SOLVE` — `1` serves `TurnSubgameSolver` (turn + river; experimental). `ALLIN_TURN_BUCKETS`
-    (24) / `ALLIN_TURN_RIVERS` (4) / `ALLIN_TURN_MAX_SPR` (10) / `ALLIN_TURN_BUDGET` (16s). NOTE: the turn
-    gadget is belief-anchored only (ignores the anchor below) — robust-anchor work pending before public use.
+  - `ALLIN_TURN_SOLVE` — **REMOVED/dead (2026-06-22).** Real-time turn solving is SHELVED — it lost −66
+    mbb/hand H2H (optimistic, self-inconsistent depth-limited leaf: the leaf models the blueprint river but
+    the bot plays the river solver). Serving is RIVER-ONLY; `strategy_api` no longer reads this flag. The
+    `TurnSubgameSolver`/`cfv.py` code is kept as the recorded dead-end. See `docs/private/ROADMAP.md` "Dead
+    Ends" + `backend/bot/docs/TURN_BAKE_VS_NN_SPEC.md`. (SPR-aware turn play, if wanted, comes from SPR
+    buckets in the blueprint — ROADMAP item 8 — NOT a solve.)
   - `ALLIN_GADGET_ANCHOR` — safe-gadget anchor for the river solve: `auto` (default, ≤blueprint) |
     `belief` (max exploit, NO safety floor — local testing only) | `blueprint` | `confidence`. Invalid →
     warns + falls back to `auto`. Surfaced in healthz `riverGadget`.
@@ -363,16 +366,15 @@ as input, so the range tracker has to exist before the solver.
   (`subgame/river_subgame_solver.py`, unsafe v1, no gadget) builds the small river tree, takes both
   ranges from Phase 3, runs vectorized CFR+, reads off the bot's action, and is **served live**
   (EV-gated; falls back to the blueprint pre-river). The bot's hole cards flow through `decide()`'s
-  public state. The depth-limited **turn/flop** solver (`subgame/turn_*.py`, `cfv.py`) was built and
-  lab-validated (M0–M2, ~98.6% less exploitable in-abstraction); the N0 GTO real-game gate failed
-  (lower exploitability did not beat the blueprint head-to-head — a cross-street consistency break).
-  As of 2026-06-19 it is **SERVABLE behind `ALLIN_TURN_SOLVE=1`** (`TurnSubgameSolver`,
-  smoke-validated to RUN ~1.3-1.4s/solve + the turn-dev→river clamp; `scripts/smoke_turn_exploit.py`),
-  and with `ALLIN_EXPLOIT=1` becomes a range-vs-range TURN exploit. Still **unvalidated head-to-head**
-  (your personal-play test) and the turn gadget is **belief-anchored only** (ignores
-  `ALLIN_GADGET_ANCHOR` → robust-anchor work pending before public turn-solve). See
-  [docs/DEPTH_LIMITED_SOLVER_PLAN.md](docs/DEPTH_LIMITED_SOLVER_PLAN.md) and
-  [docs/NN_LEAF_PLAN.md](docs/NN_LEAF_PLAN.md).
+  public state. The depth-limited **turn** solver (`subgame/turn_*.py`, `cfv.py`) is **SHELVED — DEAD END
+  (2026-06-22), UNWIRED from serving.** Definitive H2H over 48k hands: **−66 mbb/hand (|t|=4.16)**, every
+  cheap leaf loses. Root cause: the depth-limited leaf models the **blueprint** river but the bot plays the
+  **river solver** — an optimistic, self-inconsistent leaf the turn CFR overfits (Brown–Sandholm frozen-
+  continuation trap). A *correct* fast turn solve is a trilemma with no cheap corner (cheap+fast = wrong
+  leaf / correct+fast = range-conditional CFV net, DeepStack-scale $$$ / correct+cheap = solve-to-showdown
+  ~76 s). SPR-aware turn play, if wanted, comes from **SPR buckets in the blueprint** (ROADMAP item 8), NOT
+  a solve. Full analysis: `backend/bot/docs/TURN_BAKE_VS_NN_SPEC.md`, `TURN_NN_EXECUTION_PLAN.md`,
+  `docs/private/ROADMAP.md` "Dead Ends".
 - **Phase 5 — Safety + depth.** 5a ✅ **SHIPPED (2026-06-10)** / 5b ⬜ (multi-week; deferred).
   **5a — safe river re-solving gadget** (`subgame/blueprint_projection.blueprint_cfv` +
   `river_cfr.run_gadget` + `solve_control.solve_river_gadget`): the villain gets a per-hand opt-out
@@ -383,8 +385,10 @@ as input, so the range tracker has to exist before the solver.
   on every spot incl. a deliberately-wrong belief (`tests/test_safe_river_gadget.py`); off/A/B compared
   live (`tests/compare_gadget_policies.py`). The blueprint CFV machinery is also the leaf-value piece
   5b needs. See [docs/SAFE_RIVER_SOLVING_PLAN.md](backend/bot/docs/SAFE_RIVER_SOLVING_PLAN.md).
-  **5b** — continual-re-solving turn/flop depth-limited solving with **blueprint counterfactual values
-  as the leaf value function** — the revival path for the shelved turn solver.
+  **5b** — the ONLY viable turn-solver revival: a **range-conditional CFV net** (DeepStack-style) that
+  predicts the *river solver's* continuation values as the leaf — NOT the blueprint leaf (proven dead, see
+  Phase 4). Expensive (GPU-scale data + training); deferred. The blueprint-CFV machinery still serves the
+  river safe-gadget opt-out (5a), just not as a turn leaf.
 - **Phase 6 — Opponent EXPLOITATION** ⏳ built + SERVABLE behind flags (default OFF), validated locally,
   not yet live. Swaps the range tracker's opponent model from the blueprint ("opponent = GTO") to a
   fitted per-player/population HUMAN model (`src/exploitation/opponent_model.py`, hierarchical
