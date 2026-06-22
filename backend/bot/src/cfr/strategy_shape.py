@@ -54,14 +54,20 @@ def _mean(xs):
     return sum(xs) / len(xs) if xs else None
 
 
-def strategy_shape_report(strat_fn, num_preflop_buckets=30):
+def strategy_shape_report(strat_fn, num_preflop_buckets=None):
     """Compute the preflop strategy-shape health report.
 
     strat_fn(key) -> {action: prob/mass} | None  (mass is renormalized here).
     Returns a dict with the metrics and a 'verdict' (OK / WARN / COLLAPSE), plus
     'reasons' (list of strings) when not OK. Missing keys are skipped, so this works
     on an early/partial run; 'n_open'/'n_bbx' report how many probe keys were found.
+
+    num_preflop_buckets defaults to the live count (lossless 169) -- a stale literal would
+    under-scan and mis-anchor "strong"; the live caller passes it explicitly regardless.
     """
+    if num_preflop_buckets is None:
+        from ..abstractions.card_abstractions import NUM_PREFLOP_BUCKETS
+        num_preflop_buckets = NUM_PREFLOP_BUCKETS
     strong = num_preflop_buckets - 1
 
     # --- Open node: pf_<n>_ip_ (SB first-in, empty pattern) ---

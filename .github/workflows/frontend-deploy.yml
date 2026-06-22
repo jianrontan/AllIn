@@ -34,7 +34,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm install
+        run: npm ci          # reproducible install from package-lock.json (no lockfile drift)
 
       # VITE_* values for the production build are in frontend/.env.production
       # (committed to git -- they're public, ship in every visitor's JS bundle).

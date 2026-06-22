@@ -84,6 +84,27 @@ def recap_from_session(session, *, blueprint_name=None, ts_ms=None):
     session_id = d.get('session_id')
     hand_number = int(d.get('hand_number') or 0)
 
+    # AIVAT measurement inputs (c1 preflop-equity + c3 all-in-runout variance reduction; consumed
+    # OFFLINE by scripts/analyze_ab.py to resolve the exploit A/B with far less noise). Mirrors
+    # tests/compare_gadget_policies._play_and_record: the TOTAL committed per seat needs the final
+    # street's bets, which live in `history` (not yet folded into p*_invested) -- via the engine's
+    # own accounting, else an all-in is understated. Best-effort: any failure leaves the fields null
+    # and NEVER breaks the recap (the critical write).
+    invested = allin_street = None
+    try:
+        g = session.game
+        st = min(int(d['street']), 3)
+        p0_tot = d['p0_invested'] + g.get_player_contribution_this_round(
+            d['history'], st, d['starting_pot'], 0, d['p0_invested'], d['p1_invested'])
+        p1_tot = d['p1_invested'] + g.get_player_contribution_this_round(
+            d['history'], st, d['starting_pot'], 1, d['p0_invested'], d['p1_invested'])
+        invested = [round(float(p0_tot), 2), round(float(p1_tot), 2)]
+        both_allin = (float(d.get('p0_stack') or 0) <= 1e-6 and float(d.get('p1_stack') or 0) <= 1e-6)
+        if result.get('reason') == 'showdown' and both_allin:
+            allin_street = d.get('last_action_street')   # 0=pf / 1=flop / 2=turn all-in showdown
+    except Exception:
+        invested = allin_street = None
+
     return {
         'playerId': d.get('player_id'),
         'sessionId': session_id,
@@ -102,6 +123,10 @@ def recap_from_session(session, *, blueprint_name=None, ts_ms=None):
         'menuMode': getattr(session, 'menu_mode', None),
         'blueprint': blueprint_name,
         'exploitArm': d.get('ab_arm'),               # 'on'|'off'|None -- the live exploitation A/B arm
+        # AIVAT inputs (variance reduction for the exploit A/B; consumed by scripts/analyze_ab.py).
+        'invested': invested,                        # [seat0_total, seat1_total] chips committed (c3)
+        'allinStreet': allin_street,                 # all-in-showdown street (0/1/2), else None (c3)
+        'folder': d.get('folder_seat'),              # seat that folded this hand, or None
     }
 
 

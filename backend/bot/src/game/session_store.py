@@ -158,17 +158,21 @@ class DynamoDBSessionStore(SessionStore):
     """
 
     def __init__(self, table_name, region=None, endpoint_url=None,
-                 ttl_seconds=3600, lock_lease_seconds=60,
+                 ttl_seconds=3600, lock_lease_seconds=None,
                  lock_acquire_timeout=10.0, lock_poll_seconds=0.05):
         import boto3                       # lazy: only when this store is selected
         from botocore.exceptions import ClientError
         from botocore.config import Config
         self._ClientError = ClientError
         self._ttl = ttl_seconds
-        # 60s lease (was 30s): a long-running river solve takes the session lock
-        # for the duration of the solve (up to time_budget). With a 30s lease the
-        # lock could expire mid-solve and a second request could grab it, breaking
-        # the contract. 60s comfortably exceeds the solver timeout.
+        # The session lock is held for a whole bot turn: up to _SOLVE_WAIT_SECONDS (30s) waiting
+        # for a solve permit + up to the river solve's time_budget (24s, capped by the shared
+        # deadline even on the auto double-solve). If the lease expires mid-hold a second worker
+        # could grab the lock and race the load-modify-put (lost update). So the lease MUST exceed
+        # wait + budget + slack. Default 90s (env ALLIN_LOCK_LEASE_SECONDS); raise both together if
+        # the solve budget grows. (Was 60s, which left only ~6s slack once the budget hit 24s.)
+        if lock_lease_seconds is None:
+            lock_lease_seconds = float(os.environ.get('ALLIN_LOCK_LEASE_SECONDS', '90'))
         self._lease = lock_lease_seconds
         self._acquire_timeout = lock_acquire_timeout
         self._poll = lock_poll_seconds

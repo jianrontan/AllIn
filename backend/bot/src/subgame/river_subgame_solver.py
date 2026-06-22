@@ -1012,11 +1012,16 @@ class RiverSubgameSolver(BlueprintStrategy):
 
         Latency note: 'auto' runs TWO solves (unsafe + gadget) ONLY on the rare spot where
         the read is untrusted AND the self-check trips; the pre-filter avoids the double
-        solve in the common (trusted) case, and 'belief'/'blueprint' always run one."""
+        solve in the common (trusted) case, and 'belief'/'blueprint' always run one. A SHARED
+        wall-clock deadline (= self.time_budget) caps the double-solve at ONE budget total, so
+        the worst case is ~time_budget (+ a 2s gadget floor), not 2x -- this bounds the session-
+        lock hold time (the served bot holds the DynamoDB session lease while solving)."""
+        import time
         from .blueprint_projection import blueprint_cfv, blueprint_strategy_on_tree
         anchor = anchor or self.gadget_anchor       # 1b may force 'belief' (turn-promise clamp)
         villain_seat = 1 - bot_seat
         raw = self.db.get_average_strategy if self.db else (lambda k: None)
+        _deadline = time.time() + self.time_budget   # shared cap across unsafe + gadget solves
         # Uniform card-removal villain range -- the robust ('blueprint') anchor + the
         # range the self-check measures exploitability over.
         uniform_villain = (project_tracker(villain_tracker, ba, idx) > 0).astype(float)
@@ -1027,10 +1032,11 @@ class RiverSubgameSolver(BlueprintStrategy):
                 # Opt-out CFVs must be on the SAME reaches the gadget weights with.
                 optout = blueprint_cfv(tree, ba, raw, g0, g1, villain_seat,
                                        self._postflop_menu)
+            budget = max(2.0, _deadline - time.time())   # remaining of the shared budget (2s floor)
             return solve_river_gadget(
                 tree, ba, hero, anchor_villain, optout, villain_seat,
                 max_iters=self.max_iters, check_every=self.check_every,
-                time_budget=self.time_budget)
+                time_budget=budget)
 
         if anchor == 'belief':
             cfr, info = gadget(villain)

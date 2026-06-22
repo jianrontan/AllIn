@@ -37,9 +37,14 @@
 name: Refit opponent models (population)
 
 on:
-  schedule:
-    - cron: '0 3 */3 * *'      # every 3 days, 03:00 UTC (off-peak)
-  workflow_dispatch:            # manual trigger
+  # SCHEDULE INTENTIONALLY DISABLED until the consumer exists. Re-enable the 3-day cron ONLY after:
+  #   (1) the assets-v2 / 30-24 blueprint cutover (else exploit self-disables on abstraction mismatch),
+  #   (2) prod fetches model_population.json from the publish target at startup + reloads, AND
+  #   (3) a least-privilege OIDC role is in place (see header). Until then a schedule would Scan prod
+  #   every 3 days to produce an artifact nothing reads. Manual runs are fine for testing the pipeline.
+  #   schedule:
+  #     - cron: '0 3 */3 * *'   # every 3 days, 03:00 UTC (off-peak)
+  workflow_dispatch:            # manual trigger only (for now)
 
 permissions:
   id-token: write               # OIDC role assumption

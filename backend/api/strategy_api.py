@@ -149,7 +149,11 @@ if BLUEPRINT_DB is not None:
     # gets more iterations for a better-converged answer and a slightly larger
     # time budget; the smaller check_every bounds a deep-stack/small-pot (high-
     # SPR) solve closer to the budget. Shares the same read-only blueprint DB.
-    EXPLORER_BOT = RiverSubgameSolver(BLUEPRINT_DB, max_iters=2000, check_every=25,
+    # check_every=10 (not 25): the explorer is UNGATED on SPR (it solves arbitrary user spots, incl.
+    # deep-stack/high-SPR ones with a big tree), and the time budget is only enforced at each block
+    # boundary -- a coarser check_every let one deep solve overrun ~8s and pin the single explorer
+    # permit (starving concurrent solves -> 503). A tighter check honors the 8s budget sooner.
+    EXPLORER_BOT = RiverSubgameSolver(BLUEPRINT_DB, max_iters=2000, check_every=10,
                                       time_budget=8.0)
 else:
     BOT = EXPLORER_BOT = None
@@ -1354,11 +1358,21 @@ def _rate_limited(route, key, *, limit, window_seconds):
 
 
 def _client_ip():
-    """The originating client IP. Honors X-Forwarded-For (Cloudflare/Lightsail
-    populate it) but only the LEFTMOST entry, which is the original caller."""
-    xff = request.headers.get('X-Forwarded-For') or ''
-    if xff:
-        return xff.split(',')[0].strip() or (request.remote_addr or 'unknown')
+    """The originating client IP, used to key the per-IP rate limits.
+
+    X-Forwarded-For is CLIENT-CONTROLLED unless the request provably came through a
+    trusted proxy: on the raw Lightsail origin a caller can spoof the leftmost XFF
+    entry and mint a fresh rate-limit bucket per request (defeating the CPU-DoS /
+    row-spam fences). So XFF is trusted ONLY when ALLIN_TRUST_XFF=1 -- set that in
+    prod *after* locking the origin to Cloudflare (security group / CF-injected
+    shared-secret header) so XFF can't reach the container except via the edge.
+    Default (unset) keys on remote_addr, which is unspoofable but coarse (collapses
+    all Cloudflare-fronted traffic to the edge IP -- acceptable as a floor; the
+    Cloudflare WAF rate rule is the real per-client limiter)."""
+    if os.environ.get('ALLIN_TRUST_XFF') == '1':
+        xff = request.headers.get('X-Forwarded-For') or ''
+        if xff:
+            return xff.split(',')[0].strip() or (request.remote_addr or 'unknown')
     return request.remote_addr or 'unknown'
 
 

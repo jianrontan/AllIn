@@ -198,6 +198,10 @@ class GameSession:
         d['bot_debug'] = []          # per-hand bot decision trace (debug overlay)
         d['result'] = None
         d['revealed_board'] = 0
+        d['last_action_street'] = 0   # street (0=pf..3=river) of the most recent betting action; the
+                                      # all-in runout adds no actions, so the LAST one is the all-in
+                                      # street (AIVAT c3). See recap_from_session / aivat.py.
+        d['folder_seat'] = None       # seat that folded this hand, or None (AIVAT recap input)
         # Idempotency anchor for the leaderboard hand-end hook. Set to True
         # AFTER the hook records this hand; we must reset it here so the NEXT
         # hand isn't skipped (bug: without this reset, only hand 1 of a session
@@ -519,6 +523,9 @@ class GameSession:
         # (pure list / arithmetic ops). The range writebacks come last so that
         # an earlier raise leaves session.data exactly as it was.
         d['history'].append(action)
+        d['last_action_street'] = min(d['street'], 3)   # AIVAT: betting street of this action
+        if action == 'fold':
+            d['folder_seat'] = player
         d['bet_pattern'] += char
         if player == 0:
             d['p0_stack'] -= cost
@@ -738,9 +745,9 @@ class GameSession:
         # turn path. d['starting_pot'] / d['p0_invested'] are turn-entry values (this
         # street's bets live in d['history'], folded into invested only at the next
         # street), so they are the turn-ENTRY pot/stacks, not the mid-turn ones.
-        # NOTE: LIVE when the turn solver is served (ALLIN_TURN_SOLVE=1 -> TurnSubgameSolver);
-        # inert under the default river-only bot. The turn snapshot above (d['turn_entry_*'])
-        # exists to feed this; kept wired whether or not the turn solver is enabled.
+        # NOTE: INERT on the served path -- the turn solver is shelved/removed (river-only serving,
+        # 2026-06-22). This turn-entry snapshot (d['turn_entry_*']) is kept wired only so a future
+        # turn-solver revival (ROADMAP 5b, range-conditional CFV net) wouldn't need re-plumbing.
         if street == 2 and d.get('turn_entry_bot') is not None:
             state['botSeat'] = actor
             state['turnEntryPot'] = d['starting_pot']

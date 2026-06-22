@@ -272,7 +272,7 @@ Health: `GET /api/test` (alias `GET /api/healthz`) — returns 200 with `{status
 
 ### Environment Variables
 
-The full, authoritative list is in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) ("Environment variables"). The essentials:
+The full, authoritative list is in [docs/DEPLOYMENT_RUNBOOK.md](docs/DEPLOYMENT_RUNBOOK.md) ("Environment variables"). The essentials:
 - `ALLIN_BLUEPRINT_DB` — explicit path to the blueprint DB (overrides auto-resolution).
 - `ALLIN_BLUEPRINT_SOURCE` — `local` (default) | `s3`; `ALLIN_BLUEPRINT_S3_URI` paired with the latter.
 - `ALLIN_CORS_ORIGINS` — comma-separated allowed CORS origins (defaults to `localhost:5173`/`5174`).

@@ -57,7 +57,8 @@ blueprint already guaranteed → the resulting strategy is no-more-exploitable t
 - It SUPERSEDES the L2/#2 heuristic (which I deliberately did not ship because no cheap
   heuristic addresses the narrow-wrong case — the gadget is the real fix).
 
-## Status (2026-06-10) — built + validated, default OFF pending the flip decision
+## Status — SHIPPED. Served `safe_gadget=True, gadget_anchor='auto'` (policy B) since 2026-06-10; the
+## "default OFF" notes below predate the flip and are historical. `ALLIN_GADGET_ANCHOR` defaults to 'auto'.
 
 All four pieces are implemented and tested:
 - **Piece 1 (CFVs):** `blueprint_projection.blueprint_cfv` — per-villain-hand opt-out CFV

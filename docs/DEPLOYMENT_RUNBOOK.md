@@ -85,10 +85,19 @@ diagnosing CI failures, dev workflow) — that's in
   - `ALLIN_SEED_HANDS_JSONL` / `ALLIN_DYNAMODB_ENDPOINT` — dev only: seed the in-memory hand store from
     an export JSONL, or point all stores at a local DynamoDB (DynamoDB Local). See CLAUDE.md "Local
     exploitation / stats testing" for the clone + bind-mount workflow. Not used in prod.
-  - `ALLIN_TURN_SOLVE` — `1` serves `TurnSubgameSolver` (experimental; `ALLIN_TURN_BUCKETS`=24,
-    `ALLIN_TURN_RIVERS`=4, `ALLIN_TURN_MAX_SPR`=10, `ALLIN_TURN_BUDGET`=16s). A turn solve holds a
-    solve permit up to the budget → revisit `ALLIN_SOLVE_PERMITS` vs the edge rate limit before
-    enabling publicly. The turn gadget is belief-anchored only (robust-anchor work pending).
+  - `ALLIN_TURN_SOLVE` — **REMOVED / dead (2026-06-22).** Real-time turn solving is shelved (lost −66
+    mbb/hand H2H); `strategy_api` no longer reads this flag and serving is river-only. Listed only so an
+    operator who finds it in an old config knows it does nothing. (SPR-aware turn play → SPR buckets in
+    the blueprint, ROADMAP item 8 — not a solve.)
+  - `ALLIN_SOLVE_PERMITS` / `ALLIN_EXPLORER_PERMITS` — concurrent river-solve cap. **Set both to `1` in
+    prod** (the image does): the code default is `cpu_count()-1`, but Lightsail reports the HOST cores,
+    not the ~0.25 vCPU allocation, so the auto-default over-subscribes against 24s solves.
+  - `ALLIN_LOCK_LEASE_SECONDS` (90) — DynamoDB session-lock lease. MUST exceed `ALLIN_SOLVE_WAIT_SECONDS`
+    (30) + the river `time_budget` (24) + slack, or a long solve can outlive the lease → lost-update race.
+  - `ALLIN_TRUST_XFF` — `1` trusts the leftmost `X-Forwarded-For` for per-IP rate limits. Leave UNSET
+    (keys on `remote_addr`) until the origin is locked to Cloudflare; XFF is client-spoofable on the raw
+    Lightsail URL otherwise. `ALLIN_AB_ARM` (`on`/`off`/`random`) — live exploitation A/B arm per session.
+    `ALLIN_GUARD_CONFIDENCE` (0.2) — exploit/all-in confidence gate.
   - `ALLIN_GADGET_ANCHOR` — river safe-gadget anchor: `auto` (default, ≤blueprint) | `belief`
     (max-exploit, **NO safety floor — never set in prod**) | `blueprint` | `confidence`. Invalid →
     warns + `auto`. Surfaced in healthz `riverGadget`.

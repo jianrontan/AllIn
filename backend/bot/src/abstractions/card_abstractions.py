@@ -4,7 +4,7 @@ from .postflop_v2 import PostflopV2
 
 # Precomputed via scripts/compute_preflop_equity.py
 # 10,000 Monte Carlo simulations vs random opponent, seed=42. This is the raw equity
-# table; the fine (30) and coarse (10) bucket MAPS are derived from it below by
+# table; the fine (169, lossless) and coarse (10) bucket MAPS are derived from it below by
 # _quantile_buckets (no pasted bucket literal).
 _PREFLOP_EQUITY = {
     '22': 0.5088,
@@ -214,7 +214,7 @@ def _quantile_buckets(equity_map, n_buckets):
             for i, (hand, _eq) in enumerate(ranked)}
 
 
-_FINE_IDX = _quantile_buckets(_PREFLOP_EQUITY, NUM_PREFLOP_BUCKETS)      # hand -> 0..29
+_FINE_IDX = _quantile_buckets(_PREFLOP_EQUITY, NUM_PREFLOP_BUCKETS)      # hand -> 0..168 (lossless)
 _COARSE_IDX = _quantile_buckets(_PREFLOP_EQUITY, NUM_PREFLOP_COARSE)     # hand -> 0..9
 _PREFLOP_BUCKET_MAP = {h: f"pf_{b}" for h, b in _FINE_IDX.items()}      # hand -> 'pf_<n>'
 

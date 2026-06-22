@@ -1,0 +1,5 @@
+# Cloudflare Pages SPA fallback: serve index.html for all non-asset paths so client-side
+# routes (/ai-game, /strategy-lookup) and the OAuth callback (/auth/callback?...#id_token=...)
+# resolve on deep-link / refresh instead of 404ing. Pages serves real static assets first;
+# this only catches paths with no matching file. (200 = rewrite, not a 301/302 redirect.)
+/*    /index.html    200
