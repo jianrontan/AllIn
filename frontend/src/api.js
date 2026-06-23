@@ -166,8 +166,14 @@ export const getMe = () =>
 // entirely when the backend has the overlay redacted. Cached after the first
 // successful call.
 export const getHealth = () => request('/api/healthz');
-export const getLeaderboard = ({ n = 10, minHands = 50, accountsOnly = false } = {}) =>
-    request(`/api/leaderboard?n=${n}&min_hands=${minHands}`
+// Returns { players, total }. n = page size, offset = rows to skip (pagination).
+// `you` is the caller's OWN playerId so the backend can flag their row (isYou) -- used
+// to highlight "you" on the board (incl. anonymous players, who are otherwise identical).
+export const getLeaderboard = ({ n = 20, minHands = 50, accountsOnly = false, offset = 0,
+                                 version = 'all' } = {}) =>
+    request(`/api/leaderboard?n=${n}&min_hands=${minHands}&offset=${offset}`
+        + `&version=${encodeURIComponent(version)}`
+        + `&you=${encodeURIComponent(getPlayerId())}`
         + (accountsOnly ? '&accounts_only=true' : ''));
 // Set the caller's unique username (signed-in players, on sign-in or rename).
 // Throws on 400 (invalid) / 409 (taken) with the server's message.

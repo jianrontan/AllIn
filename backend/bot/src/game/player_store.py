@@ -138,9 +138,11 @@ class PlayerStore(ABC):
         (resetting it if expired). Atomic."""
 
     @abstractmethod
-    def top(self, n=10, min_hands=50, accounts_only=False):
+    def top(self, n=10, min_hands=50, accounts_only=False, include_id=False):
         """Players with >= min_hands, ranked by bb/100 desc, redacted for public
-        display. accounts_only restricts to linked accounts (the ranked board)."""
+        display. accounts_only restricts to linked accounts (the ranked board).
+        include_id=True adds an internal '_pid' per row for caller-row marking (the
+        leaderboard endpoint strips it before responding)."""
 
     @abstractmethod
     def link_account(self, player_id, *, email, auth_provider, provider_sub):
@@ -154,6 +156,13 @@ class PlayerStore(ABC):
         bound to a different account. Does NOT set a username -- the player picks
         a unique one next. The returned row's playerId is the canonical id the
         client should adopt."""
+
+    @abstractmethod
+    def all_rows(self):
+        """ALL player rows as {playerId: row}, INCLUDING merged ones, in ONE shot. Lets a caller
+        resolve merge chains / pull handles locally instead of N per-pid get()s (the version
+        leaderboard would otherwise do one DynamoDB GetItem per player -> ~seconds). Launch volumes
+        only (one Scan); add a projection/GSI if the player table ever gets large."""
 
     # -- concrete helpers (store-agnostic, built on get()) --------------------
     def hand_cap_status(self, player_id):
@@ -173,15 +182,21 @@ class PlayerStore(ABC):
         return True, 0
 
     @staticmethod
-    def public_row(row):
-        """Redact a row for public display (drop playerId / email / provider sub)."""
-        return {
+    def public_row(row, include_id=False):
+        """Redact a row for public display (drop playerId / email / provider sub).
+        include_id=True keeps the playerId in an INTERNAL '_pid' field -- the leaderboard
+        endpoint uses it to mark the CALLER's own row 'isYou', then strips it before the
+        response (never sent to a client; only ever used to match the caller to themselves)."""
+        out = {
             'handle': row.get('handle') or 'Anonymous',
             'hands': int(row.get('hands') or 0),
             'netBB': round(float(row.get('netBB') or 0.0), 2),
             'bbPer100': round(_bb_per_100(row), 2),
             'isRegistered': bool(row.get('isRegistered')),
         }
+        if include_id:
+            out['_pid'] = row.get('playerId')
+        return out
 
 
 class InMemoryPlayerStore(PlayerStore):
@@ -202,6 +217,10 @@ class InMemoryPlayerStore(PlayerStore):
                 return False
             self._rows[player_id] = _new_row(player_id)
             return True
+
+    def all_rows(self):
+        with self._lock:
+            return {pid: dict(r) for pid, r in self._rows.items()}
 
     def upsert_handle(self, player_id, handle):
         handle = validate_handle(handle)
@@ -231,14 +250,14 @@ class InMemoryPlayerStore(PlayerStore):
             r['netBB'] = (r.get('netBB') or 0.0) + float(bb_delta)
             r['lastSeen'] = now
 
-    def top(self, n=10, min_hands=50, accounts_only=False):
+    def top(self, n=10, min_hands=50, accounts_only=False, include_id=False):
         with self._lock:
             rows = [dict(r) for r in self._rows.values()
                     if (r.get('hands') or 0) >= min_hands
                     and not r.get('merged_into')
                     and (not accounts_only or r.get('isRegistered'))]
         rows.sort(key=_bb_per_100, reverse=True)
-        return [self.public_row(r) for r in rows[:n]]
+        return [self.public_row(r, include_id) for r in rows[:n]]
 
     def link_account(self, player_id, *, email, auth_provider, provider_sub):
         with self._lock:
@@ -262,6 +281,7 @@ class InMemoryPlayerStore(PlayerStore):
                 # Only `hands` and `netBB` move; window_start / hands_in_window
                 # (the rolling 500/hr cap) stay with the canonical row's current
                 # state -- they're rate-limit accounting, not lifetime stats.
+                merged_this_call = False
                 if player_id != canonical_id:
                     anon = self._rows.get(player_id)
                     if (anon
@@ -273,7 +293,13 @@ class InMemoryPlayerStore(PlayerStore):
                             (c.get('netBB') or 0) + (anon.get('netBB') or 0), 2)
                         anon['merged_into'] = canonical_id
                         anon['mergedAt']    = _now()
-                return dict(c)
+                        merged_this_call = True
+                out = dict(c)
+                # Transient flag (NOT persisted): True ONLY on the call that actually merged, so the
+                # caller decrements totalPlayers exactly once. A retried/replayed sign-in re-enters here
+                # with the anon already merged -> the merge block is skipped -> flag False -> no decrement.
+                out['_mergedThisCall'] = merged_this_call
+                return out
             # First sign-in for this account: bind THIS device's row, so it absorbs
             # the device's anonymous history. Refuse if the row is already bound to a
             # different account (don't clobber it).
@@ -349,6 +375,24 @@ class DynamoDBPlayerStore(PlayerStore):
                                     ExclusiveStartKey=resp['LastEvaluatedKey'])
             items.extend(resp.get('Items', []))
         return items
+
+    def all_rows(self):
+        # ONE unfiltered Scan (reservation items keyed `handle#...` come along but carry no
+        # playerId UUID a caller would look up -- harmless). Projected to the fields the version
+        # board needs (merge resolution + display), to keep the payload small.
+        kwargs = {'ProjectionExpression': 'playerId, merged_into, handle, isRegistered'}
+        items, resp = [], self._table.scan(**kwargs)
+        items.extend(resp.get('Items', []))
+        while 'LastEvaluatedKey' in resp:
+            resp = self._table.scan(ExclusiveStartKey=resp['LastEvaluatedKey'], **kwargs)
+            items.extend(resp.get('Items', []))
+        out = {}
+        for it in items:
+            r = self._clean(it)
+            pid = r.get('playerId')
+            if pid:
+                out[pid] = r
+        return out
 
     def upsert_handle(self, player_id, handle):
         handle = validate_handle(handle)
@@ -426,7 +470,7 @@ class DynamoDBPlayerStore(PlayerStore):
             ExpressionAttributeValues={
                 ':one': 1, ':delta': Decimal(str(bb_delta)), ':now': now})
 
-    def top(self, n=10, min_hands=50, accounts_only=False):
+    def top(self, n=10, min_hands=50, accounts_only=False, include_id=False):
         # Scan + filter (launch volumes only; add a GSI on a bb/100 attribute later).
         flt = self._Attr('hands').gte(min_hands) & self._Attr('merged_into').not_exists()
         if accounts_only:
@@ -439,7 +483,7 @@ class DynamoDBPlayerStore(PlayerStore):
             items.extend(resp.get('Items', []))
         rows = [self._clean(it) for it in items]
         rows.sort(key=_bb_per_100, reverse=True)
-        return [self.public_row(r) for r in rows[:n]]
+        return [self.public_row(r, include_id) for r in rows[:n]]
 
     def link_account(self, player_id, *, email, auth_provider, provider_sub):
         from decimal import Decimal
@@ -452,6 +496,7 @@ class DynamoDBPlayerStore(PlayerStore):
             & self._Attr('merged_into').not_exists())]
         if canon:
             c = canon[0]                          # one canonical per sub by construction
+            merged_this_call = False              # True only if THIS call performs the merge
             self._table.update_item(
                 Key={'playerId': c['playerId']},
                 UpdateExpression='SET email = :e, lastSeen = :now',
@@ -518,13 +563,20 @@ class DynamoDBPlayerStore(PlayerStore):
                                 }
                             },
                         ])
+                        merged_this_call = True     # the merge actually applied this call
                     except self._ClientError as e:
                         code = e.response.get('Error', {}).get('Code', '')
                         if code != 'TransactionCanceledException':
                             raise
                         # Conditional failed in the first update -- already
                         # merged or already bound. A duplicate call; skip.
-            return self.get(c['playerId'])
+            out = self.get(c['playerId'])
+            # Transient flag (NOT persisted): True ONLY on the call that actually merged, so the
+            # caller decrements totalPlayers exactly once (a retried sign-in -> condition fails ->
+            # TransactionCanceled -> merged_this_call stays False -> no double-decrement).
+            if out is not None:
+                out['_mergedThisCall'] = merged_this_call
+            return out
         # First sign-in: bind THIS device's row (absorbs its anon stats). Refuse if
         # it's already bound to a different account.
         cur = self.get(player_id)

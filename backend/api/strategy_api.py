@@ -1570,9 +1570,105 @@ _STATS_TTL_SECONDS = 5.0          # /api/stats is polled ~every 30s by every cli
 # min_hands is snapped to this menu (largest entry <= requested) BOTH so the
 # cache keyspace is bounded and so off-menu values can't bypass the cache and
 # turn into per-request table Scans.
-_LEADERBOARD_CACHE = {}           # params-tuple -> (ts, payload)
+_LEADERBOARD_CACHE = {}           # (version, min_hands, accounts_only) -> (ts, full_board)
 _LEADERBOARD_TTL_SECONDS = 10.0
+# The 'all' cold-start fallback (lifetime player-store board, used while the recap scan is empty) is
+# cached with THIS short TTL instead of the full one: short enough that 'all' self-corrects to the
+# recap board within a few seconds of the scan landing, long enough that a poll storm during the cold
+# window can't turn the fallback into a Scan-per-request.
+_LEADERBOARD_FALLBACK_TTL = 3.0
 _MIN_HANDS_MENU = (0, 10, 50, 100, 500, 1000)
+# The cached board holds up to this many rows; pagination slices it (so page/offset
+# never multiply the cache keyspace). 200 = 10 pages of 20 -- nobody scrolls a
+# leaderboard past that, and it bounds the per-entry payload.
+_LEADERBOARD_MAX = 200
+
+# Per-bot-version breakdown for /api/stats. version_totals() is a FULL hand-table scan (~25s on a
+# big local table) -- FAR too slow to run on the hottest endpoint's request path. So it lives in a
+# BACKGROUND-refreshed cache: /api/stats returns the last-known value instantly (never blocks) and a
+# daemon thread re-scans at most every _VERSION_TTL. {} until the first scan finishes. (The proper
+# fix at scale is version-keyed counters; this keeps the hot path fast meanwhile.)
+_VERSION_CACHE = {'data': {}, 'ts': 0.0}
+_VERSION_TTL_SECONDS = 120.0
+_VERSION_LOCK = threading.Lock()
+_VERSION_REFRESHING = {'v': False}
+
+
+def _refresh_version_cache():
+    try:
+        _VERSION_CACHE['data'] = HANDS.version_aggregates()   # {'totals': {...}, 'byPlayer': {...}}
+    except Exception:
+        _LOG.warning("version aggregates refresh failed", exc_info=True)
+    finally:
+        _VERSION_CACHE['ts'] = time.time()
+        with _VERSION_LOCK:
+            _VERSION_REFRESHING['v'] = False
+
+
+def _version_data():
+    """Last-known version aggregates {'totals':..., 'byPlayer':...}; kicks a background re-scan when
+    stale. NEVER blocks (the scan is ~slow). Empty until the first scan finishes."""
+    if time.time() - _VERSION_CACHE['ts'] > _VERSION_TTL_SECONDS:
+        with _VERSION_LOCK:
+            if not _VERSION_REFRESHING['v']:
+                _VERSION_REFRESHING['v'] = True
+                threading.Thread(target=_refresh_version_cache, daemon=True).start()
+    return _VERSION_CACHE['data']
+
+
+def _version_totals():
+    """Per-version {hands, humanNetBB} for the +EV counter, rounded for display."""
+    return {v: {'hands': d['hands'], 'humanNetBB': round(d['humanNetBB'], 2)}
+            for v, d in (_version_data().get('totals') or {}).items()}
+
+
+def _version_board(version, min_hands, accounts_only):
+    """Rank players for ONE bot version from the cached recap aggregates (joined with player_store
+    for handle/isRegistered). Operates on the cached aggregate, not a scan; the per-(version,cut)
+    result is itself cached by the leaderboard endpoint. Rows match PlayerStore.top(include_id=True)
+    so the endpoint shares the pagination/isYou/yourRank logic."""
+    by_player_all = _version_data().get('byPlayer') or {}
+    if version is None or version == 'all':
+        # 'all' = sum across EVERY version, so the board reconciles with v1+v2+... (one source of
+        # truth: the recap rows). Merge each version's per-player counts before resolving merges.
+        by_player = {}
+        for vmap in by_player_all.values():
+            for pid, d in vmap.items():
+                a = by_player.setdefault(pid, {'hands': 0, 'humanNetBB': 0.0})
+                a['hands'] += d['hands']
+                a['humanNetBB'] += d['humanNetBB']
+    else:
+        by_player = by_player_all.get(version, {})
+    # Resolve each recap pid through its merge chain so a signed-in user's pre-merge (anon) hands
+    # attribute to their CANONICAL account -- matching the lifetime board (which already moves them)
+    # and so isYou/yourRank work for the caller's canonical id. Combine entries that resolve together;
+    # apply min_hands AFTER combining (so split anon+canonical hands count as one).
+    # Pull ALL player rows in ONE scan (not a GetItem per player -- that was ~1 DynamoDB round-trip
+    # per player, i.e. seconds on a full board) and resolve merges locally.
+    prows = PLAYERS.all_rows()
+    resolved = {}
+    for pid, d in by_player.items():
+        prow = prows.get(pid) or {}
+        cid = prow.get('merged_into') or pid
+        crow = (prows.get(cid) or {}) if prow.get('merged_into') else prow
+        agg = resolved.setdefault(cid, {'hands': 0, 'humanNetBB': 0.0, 'row': crow})
+        agg['hands'] += d['hands']
+        agg['humanNetBB'] += d['humanNetBB']
+    rows = []
+    for cid, agg in resolved.items():
+        crow = agg['row']
+        if agg['hands'] < min_hands or crow.get('merged_into') \
+                or (accounts_only and not crow.get('isRegistered')):
+            continue
+        net = round(agg['humanNetBB'], 2)
+        rows.append({'handle': crow.get('handle') or 'Anonymous', 'hands': agg['hands'], 'netBB': net,
+                     'bbPer100': round(net / agg['hands'] * 100.0, 2) if agg['hands'] else 0.0,
+                     'isRegistered': bool(crow.get('isRegistered')), '_pid': cid})
+    rows.sort(key=lambda r: r['bbPer100'], reverse=True)
+    return rows[:_LEADERBOARD_MAX]
+
+
+_version_data()   # pre-warm: start the first scan at import so the breakdown is ready ~asap
 
 
 def _player_public_self(row):
@@ -1616,44 +1712,99 @@ def stats():
                 c['data'] = {'totalHands': 0, 'totalNetBB': 0.0, 'totalPlayers': 0,
                              'blueprint': _BLUEPRINT_PATH.name,
                              'iterations': BLUEPRINT_DB.get_metadata('total_iterations', 0)}
-    return jsonify(c['data'])
+    # byVersion comes from its OWN background-refreshed cache so this hot endpoint never blocks on
+    # the slow scan; merge it in at serve time (always the freshest available, {} until first scan).
+    return jsonify({**c['data'], 'byVersion': _version_totals()})
 
 
 @app.route('/api/leaderboard', methods=['GET'])
 def leaderboard():
-    """Ranked by bb/100 over >= min_hands. accounts_only=true is the ranked board;
-    omit it for a 'most active' cut that includes anonymous players. Rows are
-    redacted (no playerId/email)."""
+    """Ranked by bb/100 over >= min_hands. accounts_only=true is the ranked board
+    (signed-in accounts); omit it for an 'all players' cut that includes anonymous
+    players. Paginated: n = page size, offset = rows to skip. Returns
+    {players, total}. Rows are redacted (no playerId/email)."""
+    if _rate_limited('leaderboard', _client_ip(), limit=60, window_seconds=60):
+        return jsonify({"error": "rate limit"}), 429
     def _int(name, default, lo, hi):
         try:
             return max(lo, min(hi, int(request.args.get(name, default))))
         except (TypeError, ValueError):
             return default
-    n = _int('n', 10, 1, 100)
-    # Snap min_hands to a small menu. Functionally the board only ever renders a
-    # handful of cuts; mechanically this bounds the cache keyspace -- an
-    # unconstrained integer (0..1e9) would let a curl loop mint a fresh cache
-    # entry per request and grow _LEADERBOARD_CACHE without limit (each entry
-    # holds a full top-N payload). 200 keys max with the menu (100 n x 6 x 2...
-    # n is also part of the key, so 100*6*2 = 1200 entries worst case, ~1 MB).
+    n = _int('n', 20, 1, 100)                              # page size
+    offset = _int('offset', 0, 0, _LEADERBOARD_MAX)
+    # Snap min_hands to a small menu so off-menu values can't bypass the cache and
+    # turn into per-request table Scans (and so the cache keyspace stays bounded).
     raw_min_hands = _int('min_hands', 50, 0, 10 ** 9)
     min_hands = max((m for m in _MIN_HANDS_MENU if m <= raw_min_hands), default=0)
     accounts_only = request.args.get('accounts_only', '').lower() in ('1', 'true', 'yes')
-    ck = (n, min_hands, accounts_only)
+    you = request.args.get('you') or None        # the caller's OWN playerId, to mark their row
+    version = request.args.get('version') or None
+    # VALIDATE version against the KNOWN set before it ever keys the cache -- an arbitrary client
+    # string would otherwise mint unbounded _LEADERBOARD_CACHE entries (memory-exhaustion DoS).
+    # Unknown -> treat as 'all'. (Empty known-set early on -> everything is 'all', harmless.)
+    if version and version != 'all' and version not in (_version_data().get('totals') or {}):
+        version = None
+    if version == 'all':
+        version = None                           # None -> the recap board summed across all versions
+    # Cache the FULL board (with an internal '_pid' for caller-row matching) per
+    # (version, min_hands, accounts_only); pagination + the per-caller 'isYou' are applied AFTER the
+    # cache, so page/offset and 'you' don't multiply cache keys. EVERY cut (incl. 'all') ranks from
+    # the recap aggregate (_version_board) so the version dropdown is internally consistent: the 'all'
+    # row always equals that player's v1+v2+... rows summed (one source of truth, not the separate
+    # lifetime counter which can drift from the recap rows).
+    ck = (version, min_hands, accounts_only)
     now = time.time()
-    hit = _LEADERBOARD_CACHE.get(ck)
-    if hit is None or now - hit[0] > _LEADERBOARD_TTL_SECONDS:
+    # 'all' (version is None) can fall back to the durable lifetime player-store board when the recap
+    # aggregate is cold/empty. PlayerStore.top(include_id=True) rows are shaped EXACTLY like
+    # _version_board rows (handle/hands/netBB/bbPer100/isRegistered/_pid, sorted by bb/100), so
+    # pagination/yourRank/isYou work identically. In prod the lifetime board ~= the recap board; they
+    # only diverge on seeded dev data.
+    def _lifetime_board():
+        return PLAYERS.top(n=_LEADERBOARD_MAX, min_hands=min_hands,
+                           accounts_only=accounts_only, include_id=True)
+    cached = _LEADERBOARD_CACHE.get(ck)
+    if cached is not None and now - cached[0] <= _LEADERBOARD_TTL_SECONDS:
+        full = cached[1]
+    else:
         try:
-            hit = (now, {'players': PLAYERS.top(n=n, min_hands=min_hands,
-                                                accounts_only=accounts_only)})
-            _LEADERBOARD_CACHE[ck] = hit
+            full = _version_board(version, min_hands, accounts_only)
+            store_ts = now
+            if not full and version is None:
+                # COLD-START / SCAN-FAILED FALLBACK: the version board comes from the background
+                # hand-scan, which is empty until the first scan lands, after every worker restart,
+                # and forever if that scan persistently fails. Don't render a blank 'all' board while
+                # the card shows a number -- serve the lifetime store. CACHE it (so a poll storm in the
+                # cold window can't Scan-per-request), but with a SHORT effective TTL (backdated ts) so
+                # 'all' self-corrects to the recap board within seconds of the scan landing. Per-version
+                # cuts have no lifetime equivalent -> they just populate once the scan completes.
+                full = _lifetime_board()
+                store_ts = now - _LEADERBOARD_TTL_SECONDS + _LEADERBOARD_FALLBACK_TTL
+            if len(_LEADERBOARD_CACHE) > 256:        # defensive backstop; version is validated so the
+                _LEADERBOARD_CACHE.clear()           # keyspace is already bounded
+            _LEADERBOARD_CACHE[ck] = (store_ts, full)
         except Exception:
-            # A store fault (missing table / throttle / expired key) must NOT 500 a public endpoint.
-            # Serve the cached board if we have one (even stale), else an empty board.
-            _LOG.warning("leaderboard: PLAYERS.top failed; serving stale/empty", exc_info=True)
-            if hit is None:
-                hit = (now, {'players': []})
-    return jsonify(hit[1])
+            # A store fault (missing table / throttle) must NOT 500 a public endpoint. Prefer a stale
+            # cached board; else 'all' can still serve the lifetime store (never blank); else empty.
+            _LOG.warning("leaderboard: board build failed; serving stale/empty", exc_info=True)
+            if cached is not None:
+                full = cached[1]
+            else:
+                try:
+                    full = _lifetime_board() if version is None else []
+                except Exception:
+                    full = []
+    # The caller's 1-based rank in the FULL board (page-independent) so the client can open the
+    # page that contains them; None if they're off the board (sub-min-hands, or beyond the cap).
+    your_rank = next((i + 1 for i, r in enumerate(full) if you and r.get('_pid') == you), None)
+    # Strip the internal '_pid' and mark ONLY the caller's own row (never expose another id).
+    out = []
+    for r in full[offset:offset + n]:
+        row = {k: v for k, v in r.items() if k != '_pid'}
+        if you and r.get('_pid') == you:
+            row['isYou'] = True
+        out.append(row)
+    return jsonify({'players': out, 'total': len(full), 'yourRank': your_rank,
+                    'versions': sorted((_version_data().get('totals') or {}).keys())})
 
 
 @app.route('/api/me', methods=['GET'])
@@ -1763,6 +1914,15 @@ def auth_google():
     except AccountConflict:
         return jsonify({"error": "this browser is already signed in to another "
                                  "account; sign out first"}), 403
+    # If THIS call merged the device's anon row into an existing account, that anon was counted at
+    # /game/new but is no longer a distinct player -> decrement once. `_mergedThisCall` is set ONLY on
+    # the actual merge transition (not the permanent merged_into), so a retried/replayed sign-in with
+    # the same anon id can't double-decrement totalPlayers (the "67 vs 66" fix, made idempotent).
+    if isinstance(row, dict) and row.pop('_mergedThisCall', False):
+        try:
+            GLOBAL.record_merged_player()
+        except Exception:
+            _LOG.warning("merge-count adjustment failed for player=%s", player_id, exc_info=True)
     out = _player_public_self(row)
     out['suggestedHandle'] = sanitize_display_name(
         claims.get('name') or (email.split('@')[0] if email else ''))

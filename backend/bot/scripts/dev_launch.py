@@ -72,6 +72,9 @@ def main():
     ap.add_argument('--gate', default='0.2',
                     help="exploit/all-in confidence gate. DEFAULT 0.2 = PROD. Lower (e.g. 0.1) only to "
                          "FORCE the exploit to engage on weaker reads for mechanism testing.")
+    ap.add_argument('--bot-version', dest='bot_version', default='v2',
+                    help="ALLIN_BOT_VERSION tag for hands played this session (the bot-version filter on "
+                         "the stats; default v2 = the 30/24 bot). Bump when the bot meaningfully changes.")
     ap.add_argument('--refresh', action='store_true',
                     help="first PULL the latest prod data into the local DynamoDB "
                          "(runs clone_dynamo_to_local.py) so you test against ron's CURRENT history. Needs "
@@ -112,6 +115,7 @@ def main():
         'ALLIN_GUARD_CONFIDENCE': args.gate,       # prod 0.2; lower only to force-engage for testing
         'ALLIN_DEV_FORCE_PLAYER': pid,             # backend: every session is this player -> exploit them
         'VITE_DEV_PLAYER_ID': pid,                 # frontend: vite exposes this -> auto-sign-in as them
+        'ALLIN_BOT_VERSION': args.bot_version,     # tag dev hands like prod (default v2 = the 30/24 bot)
         'ALLIN_DEBUG_OVERLAY': '1',                # watch the bot's read of you mid-hand
     })
     # Feature banner so it's never a guessing game what's actually ENABLED for this run.

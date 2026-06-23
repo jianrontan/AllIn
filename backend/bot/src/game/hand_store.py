@@ -35,6 +35,49 @@ from .cards import to_display_list
 _LOG = logging.getLogger(__name__)
 _STREETS = ('preflop', 'flop', 'turn', 'river')
 
+# Bot-version labels. The bot version is its OWN dimension (set via ALLIN_BOT_VERSION) -- the
+# SAME blueprint can ship different bot behaviour (exploitation on/off, solver changes) under a
+# new version, and vice-versa. So we key on the explicit `botVersion` tag; for recaps that
+# predate it we DERIVE a label from the blueprint name so old hands still bucket. Extend the map
+# as blueprints ship. Order matters: longer/more-specific stems first (substring match).
+_BLUEPRINT_VERSION_MAP = {
+    'blueprint_final_v2': 'v2',     # the planned assets-v2 (30/24) prod blueprint
+    'snap_52500000': 'v2',          # the 30/24 snapshot used in dev (== v2 behaviour)
+    'blueprint_final': 'v1',        # the current prod blueprint (20/16)
+}
+
+
+def recap_version(recap):
+    """The bot-version label for a recap: the explicit `botVersion` (ALLIN_BOT_VERSION) if set,
+    else derived from the `blueprint` name via _BLUEPRINT_VERSION_MAP (so pre-tag recaps still
+    bucket), else 'unknown'."""
+    bv = recap.get('botVersion')
+    if bv:
+        return str(bv)
+    bp = str(recap.get('blueprint') or '')
+    for stem, label in _BLUEPRINT_VERSION_MAP.items():
+        if stem in bp:
+            return label
+    return 'unknown'
+
+
+def _aggregate_versions(recaps):
+    """recaps -> {'totals': {v: {hands, humanNetBB}}, 'byPlayer': {v: {pid: {hands, humanNetBB}}}}.
+    Shared by both HandStore impls. humanNetBB in BB (= chips/2); the bot's net is its negation."""
+    totals, by_player = {}, {}
+    for r in recaps:
+        v = recap_version(r)
+        hd = float((r.get('result') or {}).get('humanDelta') or 0.0) / 2.0
+        t = totals.setdefault(v, {'hands': 0, 'humanNetBB': 0.0})
+        t['hands'] += 1
+        t['humanNetBB'] += hd
+        pid = r.get('playerId')
+        if pid:
+            p = by_player.setdefault(v, {}).setdefault(pid, {'hands': 0, 'humanNetBB': 0.0})
+            p['hands'] += 1
+            p['humanNetBB'] += hd
+    return {'totals': totals, 'byPlayer': by_player}
+
 
 def _now_ms():
     """Epoch milliseconds. Higher resolution than seconds so two hands dealt
@@ -155,6 +198,15 @@ class HandStore(ABC):
     def get(self, player_id, hand_key):
         """Fetch one recap by its compound key, or None."""
 
+    @abstractmethod
+    def version_aggregates(self):
+        """Aggregate ALL recaps by bot version (recap_version) in ONE scan ->
+            {'totals':  {version: {'hands': int, 'humanNetBB': float}},      # the +EV counter
+             'byPlayer':{version: {playerId: {'hands': int, 'humanNetBB': float}}}}  # the leaderboard
+        humanNetBB is in BB (= chips/2); the bot's net is its negation. FULL scan (O(all hands)) --
+        callers MUST cache it. Version-keyed counters replace it at scale; until then this works at
+        launch volumes from the recaps that already exist."""
+
 
 class InMemoryHandStore(HandStore):
     """Process-local recap rows (dev + tests). NOT shared across workers."""
@@ -187,6 +239,11 @@ class InMemoryHandStore(HandStore):
         with self._lock:
             r = self._rows.get((player_id, hand_key))
             return dict(r) if r else None
+
+    def version_aggregates(self):
+        with self._lock:
+            recaps = list(self._rows.values())
+        return _aggregate_versions(recaps)
 
 
 class DynamoDBHandStore(HandStore):
@@ -259,6 +316,20 @@ class DynamoDBHandStore(HandStore):
         item = self._table.get_item(
             Key={'playerId': player_id, 'handKey': hand_key}).get('Item')
         return self._from_ddb(item)
+
+    def version_aggregates(self):
+        # Full table scan, projected to just the version-relevant attributes. Alias ALL names --
+        # 'result' is a DynamoDB reserved word, and aliasing the rest is cheap insurance against a
+        # silent scan failure (-> empty breakdown). playerId (the PK) isn't reserved. Cache by caller.
+        kwargs = {'ProjectionExpression': '#res, #bp, #bv, playerId',
+                  'ExpressionAttributeNames': {'#res': 'result', '#bp': 'blueprint',
+                                               '#bv': 'botVersion'}}
+        resp = self._table.scan(**kwargs)
+        items = list(resp.get('Items', []))
+        while 'LastEvaluatedKey' in resp:
+            resp = self._table.scan(ExclusiveStartKey=resp['LastEvaluatedKey'], **kwargs)
+            items += resp.get('Items', [])
+        return _aggregate_versions([self._from_ddb(it) for it in items])
 
     @staticmethod
     def create_table_if_missing(table_name, region=None, endpoint_url=None):

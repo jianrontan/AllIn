@@ -32,6 +32,12 @@ class GlobalStatsStore:
         /api/game/new). Kept separate so the hand-end hook never double-counts."""
         raise NotImplementedError
 
+    def record_merged_player(self):
+        """Decrement totalPlayers when one player row is MERGED into another (sign-in on a
+        new device): the merged anon was counted at /game/new but is no longer a distinct
+        player, so undo that one count (otherwise totalPlayers over-counts vs the board)."""
+        raise NotImplementedError
+
 
 class InMemoryGlobalStatsStore(GlobalStatsStore):
     def __init__(self):
@@ -52,6 +58,10 @@ class InMemoryGlobalStatsStore(GlobalStatsStore):
     def record_new_player(self):
         with self._lock:
             self._d['totalPlayers'] += 1
+
+    def record_merged_player(self):
+        with self._lock:
+            self._d['totalPlayers'] = max(0, self._d['totalPlayers'] - 1)
 
 
 class DynamoDBGlobalStatsStore(GlobalStatsStore):
@@ -94,6 +104,13 @@ class DynamoDBGlobalStatsStore(GlobalStatsStore):
             Key={'statId': _SINGLETON_ID},
             UpdateExpression='ADD totalPlayers :one',
             ExpressionAttributeValues={':one': 1})
+
+    def record_merged_player(self):
+        # ADD -1 (atomic). Paired with record_new_player so it won't drive the count negative.
+        self._table.update_item(
+            Key={'statId': _SINGLETON_ID},
+            UpdateExpression='ADD totalPlayers :neg',
+            ExpressionAttributeValues={':neg': -1})
 
     @staticmethod
     def create_table_if_missing(table_name, region=None, endpoint_url=None):

@@ -12,6 +12,9 @@ function Home() {
 	// a signed-in user never sees the "Sign in with Google" button flash for a
 	// frame before the effect fires (localStorage reads are cheap + sync).
 	const [account, setAccount] = useState(() => getAccount());
+	// One bot-version filter for the whole page: the dropdown on the bot-stats card drives BOTH
+	// the +EV counter and the leaderboard, so they always show the same version in sync.
+	const [version, setVersion] = useState('all');
 
 	useEffect(() => {
 		getPlayerId();                       // ensure the anonymous id exists
@@ -42,7 +45,7 @@ function Home() {
 			</p>
 
 			<div className="w-full max-w-md mb-6">
-				<EvCounter />
+				<EvCounter version={version} onVersionChange={setVersion} />
 			</div>
 
 			<div className="flex flex-col sm:flex-row gap-4 mb-6">
@@ -66,8 +69,7 @@ function Home() {
 			</p>
 
 			<div className="w-full max-w-2xl">
-				<Leaderboard title="Leaderboard" accountsOnly minHands={50}
-					note="Signed-in players with 50+ hands, ranked by BB/hand." />
+				<Leaderboard title="Leaderboard" minHands={50} pageSize={20} version={version} />
 			</div>
 		</div>
 	);
