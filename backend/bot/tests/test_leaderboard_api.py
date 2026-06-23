@@ -138,5 +138,78 @@ def test_hand_cap_returns_429(monkeypatch):
     assert 'retryAfter' in v
 
 
+def _seed_recaps(pid, version, delta_chips, n):
+    """Put n recaps for (pid, version), each humanDelta=delta_chips. Distinct handKeys
+    per version so the (playerId, handKey) idempotency doesn't collapse them."""
+    for i in range(n):
+        s.HANDS.put({'playerId': pid, 'sessionId': f'sess-{version}', 'handNumber': i,
+                     'handKey': f'{i:013d}#sess-{version}#{i}',
+                     'botVersion': version, 'result': {'humanDelta': float(delta_chips)}})
+
+
+def test_leaderboard_version_and_me_recap():
+    """/api/me and the version-filtered leaderboard both read the RECAP aggregate and
+    reconcile: all == v1 + v2, _pid is never leaked, yourRank/versions are returned."""
+    pid = 'ZZ-recap'
+    _seed_recaps(pid, 'v1', 10.0, 60)        # 60 hands, +5 BB each -> +300 BB
+    _seed_recaps(pid, 'v2', 6.0, 40)         # 40 hands, +3 BB each -> +120 BB
+    s.PLAYERS.create_if_absent(pid)
+    s._PLAYER_ROWS_CACHE['data'] = None      # bust the cached players-scan
+    s._LEADERBOARD_CACHE.clear()             # bust any board cached before this seed
+    s._refresh_version_cache()               # populate byVersion synchronously
+
+    # /api/me: recap-based lifetime = 100 hands, +420 BB
+    code, _, me = call('GET', '/api/me', query=f'playerId={pid}')
+    assert code == 200, (code, me)
+    assert me['hands'] == 100, me
+    assert abs(me['netBB'] - 420.0) < 0.01, me
+
+    # leaderboard 'all': the player's row matches /api/me; shape has total/yourRank/versions
+    code, _, lb = call('GET', '/api/leaderboard', query=f'version=all&min_hands=0&you={pid}')
+    assert code == 200
+    assert 'total' in lb and 'yourRank' in lb and 'versions' in lb
+    assert all('_pid' not in row for row in lb['players'])     # internal id never leaked
+    me_row = next((r for r in lb['players'] if r.get('isYou')), None)
+    assert me_row and me_row['hands'] == 100, me_row
+
+    # version=v1 cut: only the 60 v1 hands
+    code, _, lb1 = call('GET', '/api/leaderboard', query=f'version=v1&min_hands=0&you={pid}')
+    v1_row = next((r for r in lb1['players'] if r.get('isYou')), None)
+    assert v1_row and v1_row['hands'] == 60, v1_row
+
+
+def test_me_recap_never_500s_on_store_fault(monkeypatch):
+    """A store fault in the recap path degrades to the counter, never 500s."""
+    pid = 'ZZ-fault'
+    s.PLAYERS.create_if_absent(pid)
+    s._PLAYER_ROWS_CACHE['data'] = None
+    monkeypatch.setattr(s.PLAYERS, 'all_rows', lambda: (_ for _ in ()).throw(RuntimeError('ddb')))
+    code, _, me = call('GET', '/api/me', query=f'playerId={pid}')
+    assert code == 200, (code, me)           # fell back to the PlayerStore counter, no 500
+
+
+def test_merge_decrements_total_players_once(monkeypatch):
+    """The '67 vs 66' fix: a cross-device merge decrements totalPlayers exactly once,
+    and a replayed sign-in does not double-decrement."""
+    import auth
+    monkeypatch.setattr(auth, 'is_configured', lambda: True)
+    claims = {'sub': 'g-merge', 'email': 'm@x.com', 'email_verified': True, 'name': 'M'}
+    monkeypatch.setattr(auth, 'verify_cognito_id_token', lambda tok, **k: dict(claims))
+
+    # Device M-A signs in first -> canonical account, counted as a new player.
+    call('POST', '/api/auth/google', {'idToken': 't', 'playerId': 'M-A'})
+    # Device M-B plays + finishes a hand (so it has hands > 0 and is counted), then signs in.
+    code, _, nv = call('POST', '/api/game/new', {'playerId': 'M-B'})
+    call('POST', '/api/game/action', {'id': nv['sessionId'], 'playerId': 'M-B', 'action': 'fold'})
+    g_before = s.GLOBAL.get()['totalPlayers']
+    code, _, v = call('POST', '/api/auth/google', {'idToken': 't', 'playerId': 'M-B'})
+    assert code == 200 and v['playerId'] == 'M-A'              # adopted the canonical account
+    assert s.GLOBAL.get()['totalPlayers'] == g_before - 1      # M-B merged -> one fewer player
+
+    # Replay the same sign-in: already merged -> NO second decrement.
+    call('POST', '/api/auth/google', {'idToken': 't', 'playerId': 'M-B'})
+    assert s.GLOBAL.get()['totalPlayers'] == g_before - 1      # idempotent
+
+
 if __name__ == '__main__':
     sys.exit(pytest.main([__file__, '-q']))

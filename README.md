@@ -29,7 +29,7 @@ through a **Flask** API, and exposes it in an interactive **React** platform.
   **lossless 169-fine / 10-coarse equity-based preflop buckets** (one fine bucket per
   canonical hand — perfect preflop resolution) **+ distribution-aware (potential-aware)
   postflop buckets** clustered by Earth Mover's Distance over equity distributions
-  (20 flop / 16 turn / 10 river in the served snapshot; a finer **30 / 24** retrain is underway).
+  (prod v1 = 20 flop / 16 turn / 10 river; v2 = **30 / 24 / 10**, dev-served with the assets-v2 prod cutover pending).
 
 ### 📊 Trained Blueprint (active model)
 ```
@@ -103,7 +103,7 @@ SQLite checkpoint → automatic active-blueprint selection → API inference
 
 ### 🤖 Strategy Engine
 - **Fast inference**: direct blueprint lookup from SQLite, no per-decision search.
-- **Distribution-aware abstractions**: lossless 169-fine/10-coarse decoupled preflop + 20/16/10 (→ 30/24 in the in-flight retrain) potential-aware postflop buckets (EMD-clustered equity distributions).
+- **Distribution-aware abstractions**: lossless 169-fine/10-coarse decoupled preflop + potential-aware postflop buckets (prod v1 = 20/16/10, v2 = 30/24/10 dev-served; EMD-clustered equity distributions).
 - **Mixed-strategy output**: probability distributions over fold / call / bet /
   raise / all-in, sampled at play time.
 - **Honest "unknown" handling**: situations never reached in training report

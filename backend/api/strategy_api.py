@@ -1178,9 +1178,12 @@ def _record_hand_end(session, pre_status, pre_net):
         _LOG.warning("could not persist hand-end anchor for session %s; deferring",
                      sid, exc_info=True)
         return
-    # Split the leaderboard updates into separate try/excepts so a per-store
-    # failure (e.g. throttle on one table) doesn't strand the other. Each store
-    # call is independently idempotent on retry via the result_recorded anchor.
+    # Split the leaderboard updates into separate try/excepts so a per-store failure (e.g. throttle
+    # on one table) doesn't strand the other. NOTE: unlike the recap (keyed on handKey, an idempotent
+    # overwrite), the PlayerStore/GlobalStats counters are blind ADD increments with NO per-hand dedup
+    # key. They are safe from double-counting ONLY because the result_recorded anchor is persisted
+    # under the session lock BEFORE these writes, so _record_hand_end runs at most once per hand. Do
+    # NOT move these above the anchor put, or weaken the lock, without first keying them by handKey.
     try:
         PLAYERS.record_hand_result(player_id, delta_bb)
     except Exception:
@@ -1643,9 +1646,9 @@ def _version_board(version, min_hands, accounts_only):
     # attribute to their CANONICAL account -- matching the lifetime board (which already moves them)
     # and so isYou/yourRank work for the caller's canonical id. Combine entries that resolve together;
     # apply min_hands AFTER combining (so split anon+canonical hands count as one).
-    # Pull ALL player rows in ONE scan (not a GetItem per player -- that was ~1 DynamoDB round-trip
-    # per player, i.e. seconds on a full board) and resolve merges locally.
-    prows = PLAYERS.all_rows()
+    # Pull ALL player rows in ONE (cached) scan -- not a GetItem per player (that was ~1 DynamoDB
+    # round-trip per player, i.e. seconds on a full board) -- and resolve merges locally.
+    prows = _player_rows_cached()
     resolved = {}
     for pid, d in by_player.items():
         prow = prows.get(pid) or {}
@@ -1687,6 +1690,51 @@ def _player_public_self(row):
     }
 
 
+# Cache the players-table scan (all_rows) briefly. It's the merge-resolution map needed by BOTH the
+# leaderboard board build and /api/me -- and /api/me is polled per hand. Without this cache, /api/me
+# would run a full O(table) Scan PER request (a cost/latency/DoS regression). Short TTL so a new or
+# newly-merged player still shows up within seconds.
+_PLAYER_ROWS_CACHE = {'data': None, 'ts': 0.0}
+_PLAYER_ROWS_TTL_SECONDS = 10.0
+_PLAYER_ROWS_LOCK = threading.Lock()
+
+
+def _player_rows_cached():
+    now = time.time()
+    c = _PLAYER_ROWS_CACHE
+    if c['data'] is None or now - c['ts'] > _PLAYER_ROWS_TTL_SECONDS:
+        with _PLAYER_ROWS_LOCK:
+            if c['data'] is None or now - c['ts'] > _PLAYER_ROWS_TTL_SECONDS:
+                c['data'] = PLAYERS.all_rows()
+                c['ts'] = now
+    return c['data']
+
+
+def _player_recap_stats(player_id):
+    """Recap-based lifetime {hands, netBB} for ONE player, resolving its merge chain so the AiGame
+    'You' header matches that player's leaderboard 'all' row. The per-hand recap table is the source
+    of truth; the durable PlayerStore counter can drift from it (e.g. cloned/seeded dev data). Returns
+    None when the recap scan hasn't run yet OR on any store fault -- caller then falls back to the
+    PlayerStore counter (so /api/me never 500s on a DynamoDB throttle)."""
+    try:
+        by_player_all = _version_data().get('byPlayer')
+        if not by_player_all:
+            return None
+        prows = _player_rows_cached()
+        cid = (prows.get(player_id) or {}).get('merged_into') or player_id
+        hands, net, found = 0, 0.0, False
+        for vmap in by_player_all.values():
+            for p, d in vmap.items():
+                if ((prows.get(p) or {}).get('merged_into') or p) == cid:   # this pid resolves to cid
+                    hands += d['hands']
+                    net += d['humanNetBB']
+                    found = True
+        return {'hands': hands, 'netBB': round(net, 2)} if found else None
+    except Exception:
+        _LOG.warning("player recap stats failed; falling back to counter", exc_info=True)
+        return None
+
+
 @app.route('/api/stats', methods=['GET'])
 def stats():
     """The +EV counter source: global totals + the served blueprint. Cached a few
@@ -1721,8 +1769,10 @@ def stats():
 def leaderboard():
     """Ranked by bb/100 over >= min_hands. accounts_only=true is the ranked board
     (signed-in accounts); omit it for an 'all players' cut that includes anonymous
-    players. Paginated: n = page size, offset = rows to skip. Returns
-    {players, total}. Rows are redacted (no playerId/email)."""
+    players. `version` selects a bot-version cut (v1/v2/...) from the recap aggregate,
+    'all' (default) sums across versions; `you` marks the caller's own row. Paginated:
+    n = page size, offset = rows to skip. Returns {players, total, yourRank, versions}.
+    Rows are redacted (no playerId/email)."""
     if _rate_limited('leaderboard', _client_ip(), limit=60, window_seconds=60):
         return jsonify({"error": "rate limit"}), 429
     def _int(name, default, lo, hi):
@@ -1819,10 +1869,31 @@ def me():
     if not player_id or not _valid_player_id(player_id):
         return jsonify({"playerId": None, "handle": None, "hands": 0,
                         "netBB": 0.0, "bbPer100": 0.0, "isRegistered": False})
-    row = PLAYERS.get(player_id)
-    if not row:
+    try:
+        row = PLAYERS.get(player_id)
+    except Exception:
+        _LOG.warning("me: PLAYERS.get failed; serving recap/0-state", exc_info=True)
+        row = None
+    # Follow the merge chain so a pre-merge (anon) id returns the CANONICAL identity (which the client
+    # should adopt) -- matching _player_recap_stats, which already sums to the canonical's totals.
+    if row and row.get('merged_into'):
+        try:
+            canon = PLAYERS.get(row['merged_into'])
+            if canon:
+                row = canon
+        except Exception:
+            pass
+    recap = _player_recap_stats(player_id)
+    if not row and not recap:
         return jsonify({"playerId": player_id, "handle": None, "hands": 0,
                         "netBB": 0.0, "bbPer100": 0.0, "isRegistered": False})
+    # Lifetime hands/netBB come from the per-hand recap aggregate (so the "You" header matches the
+    # leaderboard); fall back to the PlayerStore counter only until the background scan is ready.
+    # handle/isRegistered always come from the player row.
+    row = dict(row or {'playerId': player_id})
+    if recap:
+        row['hands'] = recap['hands']
+        row['netBB'] = recap['netBB']
     return jsonify(_player_public_self(row))
 
 

@@ -10,6 +10,30 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-028 — DynamoDB session lock wrote a float `expiry` → every `/api/game/*` 500'd against real DynamoDB
+
+| | |
+|---|---|
+| **Date** | 2026-06-23 |
+| **Area** | Session store (`game/session_store.py` DynamoDB lock + put) |
+| **Severity** | High (prod-only; breaks all gameplay) · **Status** | Fixed |
+
+**Summary.** `DynamoDBSessionStore.lock()` wrote `Item={'expiry': now + self._lease}` where `_lease = float(os.environ.get('ALLIN_LOCK_LEASE_SECONDS', '90'))`, so the expiry was a Python `float`. boto3's DynamoDB resource layer rejects bare floats (`TypeError: Float types are not supported. Use Decimal types instead.`), so every `/api/game/new` and `/api/game/state` (which acquire the session lock) returned 500. The session-data `put` had the same latent risk (`int(time.time()) + self._ttl` with a float `_ttl`).
+
+**Symptom.** Running dev against DynamoDB: opening "Play with AI" 500'd on `/api/game/state`/`/api/game/new`; traceback ended in `boto3/dynamodb/types.py … raise TypeError("Float types are not supported")` from `session_store.py` `put_item`.
+
+**Root cause.** The lock-lease env was parsed as `float`, and the lease/TTL were added to an int timestamp and written directly (not via a Decimal/int coercion). DynamoDB's resource client serializes numbers and refuses `float`.
+
+**Fix.** Cast both expiry writes to int: `'expiry': int(now + self._lease)` (lock) and `int(time.time() + self._ttl)` (put). Lock expiries are whole seconds, so int is exact.
+
+**Why not caught earlier.** The in-memory dev store and the moto-backed CI tests both accept Python floats — only **real** DynamoDB rejects them (same class as the earlier `result` reserved-word bug). A subsequent 6-agent sweep confirmed this was the *only* unwrapped float-to-DynamoDB write across all four stores; every other numeric write already uses `int`/`Decimal(str(...))`/`_to_ddb`.
+
+**Retrain impact.** None (serving infra only).
+
+**Lessons.** (1) moto ≠ DynamoDB — it validates neither float types nor reserved words, so a green CI on the DynamoDB store path does not prove prod-safety; the highest-value test is `DynamoDBSessionStore.lock()` exercised under moto with a float lease (it would still catch the float). (2) An env var parsed as `float` that feeds a DynamoDB write is a latent prod-only crash; coerce at the write boundary. (3) Consider porting `hand_store._to_ddb` (recursive float→Decimal) to the other stores so this class is structurally impossible.
+
+---
+
 ## BUG-027 — Blueprint stacks off 2nd pair in a 4-bet pot: the postflop key is SPR/pot-history-blind
 
 | | |

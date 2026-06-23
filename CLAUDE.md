@@ -167,7 +167,7 @@ Earlier versions used a handful of named buckets (`premium_pair`, `monster`, etc
   - **Fine (169, LOSSLESS)** — `pf_0` (weakest) … `pf_168` (strongest), **one fine bucket per canonical preflop hand** (perfect preflop resolution — preflop is only 169 hands, so sharp play is cheap). Used in **preflop keys only**. `preflop_bucket()` returns this; `NUM_PREFLOP_BUCKETS = 169`. (Was 30 before the lossless-preflop change.)
   - **Coarse (10)** — class `0` … `9`. The preflop-hand summary carried into **postflop keys** as `startBucket`. `preflop_class()` returns it; `NUM_PREFLOP_COARSE = 10`. The fine→coarse collapse happens **inside `cfr/keys.make_info_set_key` for postflop streets** (via `card_abstractions.FINE_TO_COARSE`), so every caller just passes the fine bucket and a postflop key *cannot* carry a fine id. Because preflop is **lossless** (exactly one hand per fine bucket), each fine bucket's coarse class is a singleton, so the collapse is exact *by construction* — an assertion enforces it (and it no longer relies on the old 30 = 3×10 nesting).
   - **Why:** `startBucket` multiplies the entire postflop info-set count. Carrying coarse (10) instead of fine (40 in the prior scheme) cuts postflop card-space ~3.7× while letting the flop strength buckets get *finer* (see below). The blueprint stays coarse on the river because the Phase-4 solver refines it there anyway. (Replaced an earlier single-bucket scheme — 15 then 40 — where one bucket did both jobs.)
-- **Distribution-aware (potential-aware) postflop buckets** — **20 flop / 16 turn / 10 river** in the currently-served blueprint; the **in-flight cloud retrain re-fits to 30 / 24 / 10** (the per-street K is set by `scripts/compute_postflop_buckets.py --buckets` / `train_on_cloud.sh:FLOP_BUCKETS,TURN_BUCKETS`, baked into the centroids — a K change is an abstraction change → re-fit + re-bake + retrain) (`PostflopV2`). Each hand is described by the *distribution* of its equity-vs-uniform-range over board runouts (a histogram), and clustered by Earth Mover's Distance. This separates hands with equal current equity but different *trajectories* (a static made hand vs a polarized draw) — which the old single-axis scheme merged. Pipeline: `scripts/compute_postflop_buckets.py` fits centroids (`analysis/abstractions/postflop_centroids_*.npz`); `scripts/bake_postflop_table.py` bakes a canonical-situation→bucket lookup table (`analysis/abstractions/postflop_table_{flop,turn}.npz`) via suit isomorphism (`src/abstractions/canonical.py`); river is computed at runtime (1-D equity vs a uniform range → spike histogram → nearest river centroid). The expensive per-board equity pass (`board_winrates`, ranks all 1081 hands on a board) is memoized on the **canonical (suit-isomorphic) board** in a process-global LRU cache (`postflop_v2._RIVER_BOARD_CACHE`, `OrderedDict`; cap `ALLIN_RIVER_CACHE_BOARDS`, default 100k ≈ 0.26GB/proc) — only 134,459 canonical 5-card boards exist vs ~2.6M concrete (19.3×), so over a long run `board_winrates` runs ~134k times total (≈1.63× faster training; module-global so it survives across parallel worker rounds; a cap below 134,459 degrades gracefully via LRU instead of thrashing). Equity is stored as an exact `uint16` numerator, so the cache is bit-identical to the uncached path (no bucket drift). **This replaced the old 8-bucket `BoardTextureEvaluator` heuristic — blueprints must be (re)trained under it; v1 blueprints are incompatible.**
+- **Distribution-aware (potential-aware) postflop buckets** — the per-street K is whatever the loaded centroids define: **20 / 16 / 10** in the **prod v1** blueprint, **30 / 24 / 10** in **v2** (dev-served now; the assets-v2 prod cutover is pending) (the per-street K is set by `scripts/compute_postflop_buckets.py --buckets` / `train_on_cloud.sh:FLOP_BUCKETS,TURN_BUCKETS`, baked into the centroids — a K change is an abstraction change → re-fit + re-bake + retrain) (`PostflopV2`). Each hand is described by the *distribution* of its equity-vs-uniform-range over board runouts (a histogram), and clustered by Earth Mover's Distance. This separates hands with equal current equity but different *trajectories* (a static made hand vs a polarized draw) — which the old single-axis scheme merged. Pipeline: `scripts/compute_postflop_buckets.py` fits centroids (`analysis/abstractions/postflop_centroids_*.npz`); `scripts/bake_postflop_table.py` bakes a canonical-situation→bucket lookup table (`analysis/abstractions/postflop_table_{flop,turn}.npz`) via suit isomorphism (`src/abstractions/canonical.py`); river is computed at runtime (1-D equity vs a uniform range → spike histogram → nearest river centroid). The expensive per-board equity pass (`board_winrates`, ranks all 1081 hands on a board) is memoized on the **canonical (suit-isomorphic) board** in a process-global LRU cache (`postflop_v2._RIVER_BOARD_CACHE`, `OrderedDict`; cap `ALLIN_RIVER_CACHE_BOARDS`, default 100k ≈ 0.26GB/proc) — only 134,459 canonical 5-card boards exist vs ~2.6M concrete (19.3×), so over a long run `board_winrates` runs ~134k times total (≈1.63× faster training; module-global so it survives across parallel worker rounds; a cap below 134,459 degrades gracefully via LRU instead of thrashing). Equity is stored as an exact `uint16` numerator, so the cache is bit-identical to the uncached path (no bucket drift). **This replaced the old 8-bucket `BoardTextureEvaluator` heuristic — blueprints must be (re)trained under it; v1 blueprints are incompatible.**
   - **Committed vs regenerated:** the small **centroids** (`postflop_centroids_*.npz`) are the real inputs and are committed to git. The large **baked tables** (`postflop_table_*.npz` — turn is ~126MB) are **git-ignored** (`.gitignore`) and regenerated from the centroids by running `python scripts/bake_postflop_table.py --street {flop,turn}` from `backend/bot/`. A fresh clone must re-bake before training/inference, or `PostflopV2` falls back to slow per-situation lazy bucketing (it warns once). The **river table is intentionally not baked** (~90M canonical situations → impractical size); river always uses the cached runtime path.
   - **Stale-table guard:** each baked table is stamped with a hash of the centroids it was built from (+ K, bins) via `postflop_features.centroid_hash`; `PostflopV2._verify_stamp` checks it on load — a mismatch (centroids regenerated without re-baking) is a hard error, a legacy stamp-less table warns and proceeds. So you can't silently train/infer on a stale table.
 
@@ -239,7 +239,11 @@ Transport-agnostic engine for playing against the bot — **no Flask imports**, 
 ### Frontend (`frontend/src/`)
 
 - `api.js` — single API client module. Base URL is env-driven (`VITE_API_BASE`).
-- `pages/Home.jsx` — landing page.
+- `pages/Home.jsx` — landing page: the `EvCounter` "+EV" card + the `Leaderboard`, both driven by ONE shared bot-version dropdown (`VersionFilter`), so they always show the same All/v1/v2 cut.
+  - `components/EvCounter.jsx` — the "Bot vs humans" +EV card (All/v1/v2). One shared `/api/stats` poll across all mounted instances.
+  - `components/Leaderboard.jsx` — paginated ranked board (Signed-in / All players toggle, "Find me", own-row glow), version-filtered.
+  - `components/VersionFilter.jsx` — the shared bot-version dropdown.
+  - `components/Announcements.jsx` + `AnnouncementModal.jsx` + `announcements.jsx` — the "What's new" megaphone modal (provider mounted in `App.jsx`; auto-pops on Home for an unseen post, reopenable from the header button on every page). Post copy lives in `announcements.jsx` (newest-first).
 - `pages/StrategyLookup.jsx` — tab container for two independent tools:
   - `components/HandExplorer.jsx` — enter real cards + a betting line; `/api/strategy/from-hand` returns the key and strategy.
   - `components/KeyExplorer.jsx` — build an info-set key from abstraction dropdowns (or paste one); `/api/strategy` returns the strategy.
@@ -262,9 +266,9 @@ Game:
 - `POST /api/game/next-hand` — deal the next hand in a session.
 
 Leaderboard / accounts:
-- `GET /api/stats` — global +EV counter (5s in-process cache; polled by every browser ~60s).
-- `GET /api/leaderboard` — ranked board (10s in-process cache).
-- `GET /api/me?playerId=` — caller's own curated row (lifetime hands + netBB + bb/100); public-by-UUID by design, returns 0-state for unknown ids.
+- `GET /api/stats` — global +EV counter PLUS `byVersion` (per-bot-version recap breakdown: `{v: {hands, humanNetBB}}`). Counter cached 5s; `byVersion` from a background-refreshed scan (`{}` until the first scan); polled by the client adaptively (~8s until `byVersion` is ready, then 60s).
+- `GET /api/leaderboard?version=&min_hands=&accounts_only=&offset=&n=&you=` — paginated ranked board built from the per-hand RECAP aggregate. `version` = `all` (default; sums across versions) | `v1` | `v2`; `you` marks the caller's own row. Returns `{players, total, yourRank, versions}` (10s cache; 'all' falls back to the durable PlayerStore board until the scan lands).
+- `GET /api/me?playerId=` — caller's own curated row (lifetime hands + netBB + bb/100). Computed from the RECAP aggregate so it matches the leaderboard (PlayerStore-counter fallback until the scan is ready, and on any store fault — never 500s); public-by-UUID by design, returns 0-state for unknown ids.
 - `POST /api/player` — set the caller's unique username; rate-limited (10/min/player + 30/min/IP → 429).
 - `POST /api/auth/google` — verify a Cognito Google ID token, resolve the canonical account; rate-limited (20/min/IP → 429); generic 401 on bad token (reason logged server-side).
 
@@ -275,10 +279,12 @@ Health: `GET /api/test` (alias `GET /api/healthz`) — returns 200 with `{status
 The full, authoritative list is in [docs/DEPLOYMENT_RUNBOOK.md](docs/DEPLOYMENT_RUNBOOK.md) ("Environment variables"). The essentials:
 - `ALLIN_BLUEPRINT_DB` — explicit path to the blueprint DB (overrides auto-resolution).
 - `ALLIN_BLUEPRINT_SOURCE` — `local` (default) | `s3`; `ALLIN_BLUEPRINT_S3_URI` paired with the latter.
+- `ALLIN_BOT_VERSION` — explicit bot-version tag stamped on every hand recap (e.g. `v2`); drives the leaderboard/+EV-card All/v1/v2 filter. Falls back to `ALLIN_GIT_SHA`, then a blueprint-name-derived label. Set `v1`/`v2` per deploy so versions separate cleanly even when the same blueprint ships different behaviour.
 - `ALLIN_CORS_ORIGINS` — comma-separated allowed CORS origins (defaults to `localhost:5173`/`5174`).
 - `ALLIN_SESSION_STORE` / `ALLIN_STORE_BACKEND` — `memory` (default) | `dynamodb` for sessions / leaderboard stores. Entrypoint picks 1 worker if either is memory, 2 if both DynamoDB.
 - `ALLIN_DYNAMODB_TABLE` / `ALLIN_PLAYERS_TABLE` / `ALLIN_GLOBAL_TABLE` / `ALLIN_HANDS_TABLE` — table names.
 - `ALLIN_SESSION_TTL_SECONDS` (86400) / `ALLIN_HANDS_PER_WINDOW` (500) / `ALLIN_HAND_WINDOW_SECONDS` (3600).
+- `ALLIN_LOCK_LEASE_SECONDS` (90) — DynamoDB per-session-lock lease. MUST exceed the worst-case lock hold (solve-permit wait + river-solve `time_budget`); raise it together with the solve budget. (Parsed as a float but written to DynamoDB as an int — see BUG-028.)
 - `ALLIN_COGNITO_REGION` / `ALLIN_COGNITO_USER_POOL_ID` / `ALLIN_COGNITO_APP_CLIENT_ID` — Google-sign-in token validation (unset = `/api/auth/google` 503s, gameplay unaffected).
 - `ALLIN_DEBUG_OVERLAY` — `1` exposes the bot-bucket debug overlay. **Code default is `1` (ON for dev / local Docker); MUST set `0` in Lightsail env to hide the live bot's bucket mid-hand.**
 - `ALLIN_LOG_LEVEL` (INFO) / `ALLIN_GIT_SHA` (build commit, surfaced in healthz).
@@ -324,6 +330,28 @@ The full, authoritative list is in [docs/DEPLOYMENT_RUNBOOK.md](docs/DEPLOYMENT_
 
 Never add, commit, or push code in this repository, or any commands that is unsafe, read only commands are fine.
 
+## Change discipline (READ BEFORE EDITING — non-negotiable)
+
+These rules exist because a sweep of unrequested changes once duplicated an existing feature, deleted a
+file without removing its importer (a dangling import white-screens the ENTIRE frontend), and relabelled
+UI the user never asked to change. Do not repeat that.
+
+- **Find the existing thing first.** Before building any feature or UI element, search the repo AND git
+  history/branches for an existing implementation: `git grep`, `git log --all -S"<term>"`,
+  `git branch -a --contains <sha>`, `git merge-base --is-ancestor`. If it exists, EXTEND it — never build
+  a parallel duplicate. If the user names an element ("the announcements button"), locate that exact
+  file/component before touching anything.
+- **Check the branch.** A feature that looks "missing/broken" may simply not be on the current branch
+  (it lives on another branch or `main`). Verify with git before concluding it was removed — and never
+  assume you deleted something without confirming via `git status`/`git diff`.
+- **Minimal, scoped, requested-only.** Change only what was asked. Do NOT rename, relabel, restyle, move,
+  or remove anything the user did not explicitly request — even adjacent to your change.
+- **Never orphan an import.** Before deleting or renaming any file/component/export, find and update every
+  importer in the same edit. In this Vite SPA a single unresolved import crashes the whole app — every
+  page goes blank, which reads as "you removed all my buttons."
+- **Confirm scope for cross-cutting work.** If a change would touch multiple files/pages or create/delete
+  files, state the scope and get a go-ahead before sweeping.
+
 ## Key Constraints
 
 - The Flask API **must** be started from `backend/api/` — it uses `sys.path.insert(0, backend_dir)` so imports like `from bot.src.bot.game_adapter import GameAdapter` resolve correctly.
@@ -356,9 +384,9 @@ as input, so the range tracker has to exist before the solver.
   beside the size buttons). Result: LBR **3609 → 1670 mbb/hand** (~54% cut) on the v2 9.15M
   snapshot. Tests: `tests/test_custom_betting.py`.
 - **Phase 2 — Potential-aware postflop buckets** ✅ done. The distribution-aware abstraction:
-  decoupled preflop (now lossless 169-fine/10-coarse) + **20 flop / 16 turn / 10 river**
-  (the in-flight retrain re-fits to **30/24/10**) EMD-clustered postflop buckets (`PostflopV2`),
-  baked into the capped run. Replaced the old 8-bucket heuristic.
+  decoupled preflop (now lossless 169-fine/10-coarse) + EMD-clustered postflop buckets
+  (`PostflopV2`): **20/16/10** in prod v1, **30/24/10** in v2 (dev-served; assets-v2 cutover
+  pending). Replaced the old 8-bucket heuristic.
 - **Phase 3 — Hand-level Bayesian range tracker** ✅ done. Hand-level (not bucket-level) range
   (`game/range_tracker.py`), hooked into `GameSession` JSON state, with a confidence score that
   decays on off-tree actions. **Prerequisite for Phase 4.**
@@ -402,7 +430,7 @@ as input, so the range tracker has to exist before the solver.
   (`measure_exploit.py`): direction positive vs a known player, magnitude noisy; **live A/B is the EV
   oracle** (net-new). NEXT (planned, 3-agent-reviewed): recency-weighted personal model + auto-refresh —
   see [docs/EXPLOITATION_PLAN.md](backend/bot/docs/EXPLOITATION_PLAN.md) v2→v3 (lean on EB shrinkage +
-  live last-N over a hard gate + batch; resolve the 20/16→30/24 abstraction first).
+  live last-N over a hard gate + batch; the 20/16→30/24 abstraction is now resolved — v2 is fit + dev-served, pending the assets-v2 prod cutover).
 
 Dependency chain: **0 → 1 → 2 → 3 → 4 → 5** (1a and 1b are independent quick wins; 2 is
 high-leverage but technically optional before 3; 3 strictly gates 4).

@@ -1,7 +1,8 @@
 // frontend/src/components/EvCounter.jsx
 // The public "+EV counter": the bot's lifetime record vs the whole field.
-// Polls /api/stats every ~30s. The bot's net is the negation of the human field's
-// net (totalNetBB is the humans' aggregate P/L).
+// Polls /api/stats on ONE shared loop across all mounted instances (see subscribeStats):
+// adaptive 8s until the per-version breakdown is ready, then 60s. The bot's net is the
+// negation of the human field's net (totalNetBB is the humans' aggregate P/L).
 import React, { useEffect, useState } from 'react';
 import { getStats } from '../api';
 import VersionFilter from './VersionFilter';
@@ -11,8 +12,40 @@ const fmtSigned = (bb) => `${bb > 0 ? '+' : ''}${bb.toLocaleString(undefined, {
 })}`;
 const fmtRate = (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)}`;   // BB/hand, 2 dp
 
+// ONE shared /api/stats poll for ALL mounted EvCounter instances (e.g. AiGame renders a desktop
+// + a mobile copy). Instances subscribe; the loop runs only while >=1 is mounted, a late
+// subscriber gets the last cached value immediately, and the interval is adaptive: 8s until the
+// per-version breakdown (byVersion, filled by a server-side background scan) is ready, then 60s.
+let _stats = null;
+const _subs = new Set();
+let _timer = null;
+let _running = false;
+
+function _schedule(s) {
+    const ready = s?.byVersion && Object.keys(s.byVersion).length > 0;
+    _timer = setTimeout(_tick, ready ? 60000 : 8000);
+}
+function _tick() {
+    getStats()
+        .then((s) => { _stats = s; _subs.forEach((fn) => fn(s)); })
+        .catch(() => {})
+        .finally(() => { if (_running) _schedule(_stats); });
+}
+function subscribeStats(fn) {
+    _subs.add(fn);
+    if (_stats) fn(_stats);
+    if (!_running) { _running = true; _tick(); }   // first subscriber starts the loop
+    return () => {
+        _subs.delete(fn);
+        if (_subs.size === 0) {                     // last one out stops it
+            _running = false;
+            if (_timer !== null) { clearTimeout(_timer); _timer = null; }
+        }
+    };
+}
+
 function EvCounter({ compact = false, version: versionProp, onVersionChange }) {
-    const [stats, setStats] = useState(null);
+    const [stats, setStats] = useState(_stats);
     // version is CONTROLLED when the parent passes version + onVersionChange (so one dropdown can
     // drive both this card AND the leaderboard); otherwise it's local (standalone use, e.g. the
     // compact in-game counter, which doesn't render the dropdown anyway).
@@ -20,22 +53,8 @@ function EvCounter({ compact = false, version: versionProp, onVersionChange }) {
     const version = versionProp !== undefined ? versionProp : localVersion;
     const setVersion = onVersionChange || setLocalVersion;
 
-    useEffect(() => {
-        let alive = true;
-        let id;
-        // Adaptive poll. The card is a slow lifetime stat (60s is plenty), BUT the per-version
-        // breakdown is filled by a BACKGROUND scan server-side -- so until byVersion is ready we
-        // re-poll every 8s (the dropdown appears soon), then settle to 60s. Errors are swallowed:
-        // the card shows dashes and keeps retrying.
-        const tick = () => getStats().then((s) => {
-            if (!alive) return;
-            setStats(s);
-            const ready = s?.byVersion && Object.keys(s.byVersion).length > 0;
-            id = setTimeout(tick, ready ? 60000 : 8000);
-        }).catch(() => { if (alive) id = setTimeout(tick, 8000); });
-        tick();
-        return () => { alive = false; clearTimeout(id); };
-    }, []);
+    // Subscribe to the shared poll (module-level, above); unsubscribe on unmount.
+    useEffect(() => subscribeStats(setStats), []);
 
     // Render the card template even while the API is down: the numeric slots
     // show dashes (the same as the loading state) rather than the whole card

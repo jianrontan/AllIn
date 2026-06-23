@@ -87,7 +87,7 @@ function AuthCallback() {
             {state === 'done' && (
                 <>
                     <h1 className="text-2xl font-bold text-amber-300 mb-2">
-                        {row?.handle ? `Welcome back, ${row.handle}` : 'Signed in'}
+                        {row?.handle ? `You're in, ${row.handle}` : 'Signed in'}
                     </h1>
                     <p className="text-neutral-400 mb-6 tabular-nums">
                         You&rsquo;ve played {(row?.hands || 0).toLocaleString()} hands

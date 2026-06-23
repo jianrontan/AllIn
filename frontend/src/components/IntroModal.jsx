@@ -25,7 +25,7 @@ function IntroModal({ open, onClose }) {
             <div className="w-full max-w-md rounded-2xl border border-amber-600/40
                             bg-neutral-900 p-6 shadow-2xl"
                 onClick={(e) => e.stopPropagation()}>
-                <h2 className="text-xl font-bold text-amber-300 mb-4">Welcome to AllIn</h2>
+                <h2 className="text-xl font-bold text-amber-300 mb-4">Welcome to AllIn: Play with AI</h2>
                 <ul className="space-y-2.5 text-sm text-neutral-300">
                     {BULLETS.map((b, i) => (
                         <li key={i} className="flex gap-2">

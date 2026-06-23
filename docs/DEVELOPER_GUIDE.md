@@ -64,7 +64,7 @@ AllIn/
 │   │   ├── src/
 │   │   │   ├── config.py                     # resolve_blueprint_path() — picks the active DB
 │   │   │   ├── abstractions/
-│   │   │   │   ├── card_abstractions.py      # 169-fine(lossless)/10-coarse preflop + 20/16/10 postflop (delegates to PostflopV2)
+│   │   │   │   ├── card_abstractions.py      # 169-fine(lossless)/10-coarse preflop + potential-aware postflop, K per centroids (delegates to PostflopV2)
 │   │   │   │   ├── postflop_v2.py            # Distribution-aware postflop buckets (table lookup + river runtime)
 │   │   │   │   ├── postflop_features.py      # Shared: equity dist, EMD, rank7, board_winrates, centroid_hash
 │   │   │   │   ├── canonical.py              # Suit-isomorphism canonicalisation of (hole, board)
@@ -161,9 +161,9 @@ Finer, equity- and texture-driven buckets (the old hand-named buckets are gone):
   `card_abstractions.py`. The fine→coarse collapse happens in
   `cfr/keys.make_info_set_key` for postflop streets. See `CLAUDE.md` for the full
   fine/coarse key contract. (Was 30 fine before the lossless-preflop change.)
-- **Distribution-aware (potential-aware) postflop buckets** — integers, **20 flop /
-  16 turn / 10 river** in the served snapshot (the in-flight retrain re-fits to **30 / 24 /
-  10**) (`PostflopV2`). Each hand is described by the *distribution* of
+- **Distribution-aware (potential-aware) postflop buckets** — integers; prod v1 = **20 flop /
+  16 turn / 10 river**, v2 = **30 / 24 / 10** (dev-served; assets-v2 cutover pending)
+  (`PostflopV2`). Each hand is described by the *distribution* of
   its equity-vs-uniform-range over board runouts (a 30-bin histogram) and clustered by
   Earth Mover's Distance, so hands with equal current equity but different *trajectories*
   (a static made hand vs a polarized draw) get different buckets — which the old

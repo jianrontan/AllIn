@@ -5,6 +5,7 @@ import Logo from "./AllIn_Black_Centered.png";
 import EvCounter from "../components/EvCounter";
 import Leaderboard from "../components/Leaderboard";
 import GoogleSignInButton from "../components/GoogleSignInButton";
+import { AnnouncementsButton } from "../components/Announcements";
 import { getPlayerId, getAccount } from "../api";
 
 function Home() {
@@ -27,7 +28,8 @@ function Home() {
 			{/* Header: sign-in / account in the true top-right corner (full-bleed,
 			    like the Play-with-AI page). Players are anonymous until they sign in;
 			    signing in is what puts them on the leaderboard. */}
-			<div className="w-full flex justify-end mb-2">
+			<div className="w-full flex justify-end items-center gap-3 mb-2">
+				<AnnouncementsButton />
 				<GoogleSignInButton registered={account?.isRegistered} handle={account?.handle} />
 			</div>
 

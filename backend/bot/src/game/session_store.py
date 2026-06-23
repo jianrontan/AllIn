@@ -203,7 +203,7 @@ class DynamoDBSessionStore(SessionStore):
         self._table.put_item(Item={
             'session_id': session_id,
             'data': json.dumps(data),
-            'expiry': int(time.time()) + self._ttl,
+            'expiry': int(time.time() + self._ttl),   # int(): _ttl may be a float; DDB rejects floats
         })
 
     def delete(self, session_id):
@@ -251,8 +251,10 @@ class DynamoDBSessionStore(SessionStore):
             now = int(time.time())
             try:
                 self._table.put_item(
+                    # int(): DynamoDB rejects floats, and _lease is parsed as a float
+                    # (ALLIN_LOCK_LEASE_SECONDS) -> now + lease would be a float.
                     Item={'session_id': lock_key, 'owner': token,
-                          'expiry': now + self._lease},
+                          'expiry': int(now + self._lease)},
                     ConditionExpression='attribute_not_exists(session_id) OR #e < :now',
                     ExpressionAttributeNames={'#e': 'expiry'},
                     ExpressionAttributeValues={':now': now},

@@ -106,7 +106,7 @@ the cold grade alone can't fit its share of 12 s, "preserve buckets" is revisite
 ### Phase 2 — NN leaf (SOLVE) + fast independent GRADE — ~weeks
 - **NN leaf** regresses the range-independent `M0` (board → `[B,B]`; verified range-independent). Speeds
   the **solve** only. **VERSION-STAMPED to the blueprint** (`centroid_hash`-style) + **stale-NN fallback
-  to the exact build** (the 30/24 re-fit is in-flight → a blueprint swap invalidates `M0` targets).
+  to the exact build** (the 30/24 v2 re-fit is done + dev-served → a blueprint swap invalidates `M0` targets).
   Healthz exposes NN version + blueprint stamp; an `ALLIN_NN_LEAF` flag + kill-switch.
 - **Fast grade** = cache + parallel + sampled rivers (§2), never the NN. N0′ must validate **with the NN
   leaf backend served**, not the exact leaf.

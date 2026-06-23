@@ -570,7 +570,12 @@ class DynamoDBPlayerStore(PlayerStore):
                             raise
                         # Conditional failed in the first update -- already
                         # merged or already bound. A duplicate call; skip.
-            out = self.get(c['playerId'])
+            # ConsistentRead: we just ADDed to this row in the transaction above; DynamoDB's default
+            # eventually-consistent GetItem can return the PRE-merge totals (stale by ms), so the
+            # sign-in response would under-report the just-merged hands/netBB. (moto always reads
+            # strongly-consistent, so this only bites on real DynamoDB.)
+            out = self._clean(self._table.get_item(
+                Key={'playerId': c['playerId']}, ConsistentRead=True).get('Item'))
             # Transient flag (NOT persisted): True ONLY on the call that actually merged, so the
             # caller decrements totalPlayers exactly once (a retried sign-in -> condition fails ->
             # TransactionCanceled -> merged_this_call stays False -> no double-decrement).

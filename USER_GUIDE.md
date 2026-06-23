@@ -233,8 +233,8 @@ cd backend/bot
 #    so you normally never touch it. Prints a table to paste into card_abstractions.py.
 python scripts/compute_preflop_equity.py
 
-# 2) Fit the postflop cluster centroids (served scheme: 20 flop / 16 turn / 10 river;
-#    the in-flight retrain re-fits to 30 / 24 / 10 — set --buckets accordingly).
+# 2) Fit the postflop cluster centroids (prod v1 = 20 flop / 16 turn / 10 river; v2 = 30 / 24 / 10,
+#    dev-served + the assets-v2 prod target — set --buckets accordingly).
 #    Writes analysis/abstractions/postflop_centroids_<street>.npz (commit these).
 python scripts/compute_postflop_buckets.py --street flop  --buckets 20 --situations 3000
 python scripts/compute_postflop_buckets.py --street turn  --buckets 16 --situations 3000

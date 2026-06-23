@@ -180,12 +180,12 @@ _PREFLOP_EQUITY = {
 
 # --- Preflop bucketing: DECOUPLED fine (preflop) vs coarse (postflop) ------------
 # Two independent equal-frequency quantilings of the SAME equity table above:
-#   * FINE  (30): identifies the hand for PREFLOP keys -- sharp preflop play. Preflop
-#                 is only 169 distinct hands, so fine resolution is cheap.
+#   * FINE  (169, lossless): identifies the hand for PREFLOP keys -- one bucket per
+#                 canonical preflop hand (preflop is only 169 distinct hands).
 #   * COARSE (10): the preflop-hand summary carried into POSTFLOP keys as `startBucket`
 #                 -- imperfect recall (Libratus/Pluribus structure). The postflop key
 #                 still knows roughly which range you came in with; it just doesn't
-#                 distinguish all 30 fine buckets, which collapses the postflop
+#                 distinguish all 169 fine buckets, which collapses the postflop
 #                 info-set count (startBucket x strength) far below carrying the fine id.
 # The fine->coarse collapse happens in cfr/keys.make_info_set_key for postflop streets
 # (FINE_TO_COARSE below), so callers keep passing the fine bucket and the contract
@@ -254,8 +254,9 @@ class CardAbstraction:
     (0..9) for the postflop `startBucket` (imperfect recall; see _build_fine_to_coarse). The
     collapse lives in cfr/keys.make_info_set_key, so preflop_bucket() always returns
     the fine id and callers never choose.
-    Postflop: distribution-aware (potential-aware) buckets via PostflopV2 --
-    20 flop / 16 turn / 10 river, from precomputed equity-distribution centroids
+    Postflop: distribution-aware (potential-aware) buckets via PostflopV2 -- the per-street
+    K is whatever the loaded centroids define (v2 = 30 flop / 24 turn / 10 river; the prod
+    v1 blueprint is 20 / 16 / 10), from precomputed equity-distribution centroids
     + baked lookup tables (see scripts/compute_postflop_buckets.py and
     scripts/bake_postflop_table.py). This replaced the old 8-bucket
     BoardTextureEvaluator heuristic; blueprints must be (re)trained under it.
@@ -306,8 +307,8 @@ class CardAbstraction:
         return cls if cls is not None else NUM_PREFLOP_COARSE // 2
 
     def postflop_bucket(self, hole_cards, community_cards):
-        """Distribution-aware postflop bucket (20 flop / 16 turn / 10 river; the
-        per-street K is whatever the loaded centroids define)."""
+        """Distribution-aware postflop bucket (per-street K = whatever the loaded centroids
+        define; v2 = 30 flop / 24 turn / 10 river, prod v1 = 20 / 16 / 10)."""
         return self.postflop.bucket(list(hole_cards), list(community_cards))
 
     def cards_to_string(self, hole_cards):

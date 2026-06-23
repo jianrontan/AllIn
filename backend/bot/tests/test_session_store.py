@@ -92,10 +92,60 @@ def test_dynamo_iter_active_partial_on_scan_error():
     _passed("dynamo iter_active returns partial on a transient scan error")
 
 
+class _LockFakeTable:
+    """Captures put_item Items; succeeds unconditionally (no boto3/moto). Used to assert
+    the lock/put writes coerce numeric attributes to int (boto3's DynamoDB resource rejects
+    bare floats)."""
+    def __init__(self):
+        self.put_items = []
+    def put_item(self, **kwargs):
+        self.put_items.append(kwargs['Item'])
+        return {}
+    def delete_item(self, **kwargs):
+        return {}
+
+
+def _lock_store(lease, ttl):
+    store = DynamoDBSessionStore.__new__(DynamoDBSessionStore)
+    store._ClientError = _FakeClientError
+    store._table = _LockFakeTable()
+    store._lease = lease                 # prod parses this as float(ALLIN_LOCK_LEASE_SECONDS)
+    store._ttl = ttl
+    store._acquire_timeout = 10.0
+    store._poll = 0.05
+    return store
+
+
+def test_dynamo_lock_writes_int_expiry():
+    """BUG-028 guard: the lock `expiry` MUST be an int. The lease is parsed as a float
+    (ALLIN_LOCK_LEASE_SECONDS); `now + float` is a float, and boto3's DynamoDB resource
+    rejects bare floats -> every /api/game/* 500'd on real DynamoDB. The fix casts to int."""
+    store = _lock_store(lease=90.0, ttl=3600)        # float lease, like prod
+    with store.lock('sess-x'):
+        pass
+    assert store._table.put_items, "lock should write a lock item"
+    expiry = store._table.put_items[0]['expiry']
+    assert isinstance(expiry, int) and not isinstance(expiry, bool), \
+        f"lock expiry must be int (DynamoDB rejects float), got {type(expiry).__name__}"
+    _passed("dynamo lock writes an int expiry (BUG-028 regression guard)")
+
+
+def test_dynamo_put_writes_int_expiry():
+    """The session-data put expiry must also be int even if _ttl is a float."""
+    store = _lock_store(lease=90.0, ttl=3600.0)      # float ttl
+    store.put('s1', {'a': 1})
+    expiry = store._table.put_items[-1]['expiry']
+    assert isinstance(expiry, int) and not isinstance(expiry, bool), \
+        f"put expiry must be int, got {type(expiry).__name__}"
+    _passed("dynamo put writes an int expiry")
+
+
 if __name__ == "__main__":
     tests = [
         test_dynamo_iter_active_filters_and_paginates,
         test_dynamo_iter_active_partial_on_scan_error,
+        test_dynamo_lock_writes_int_expiry,
+        test_dynamo_put_writes_int_expiry,
     ]
     print("Running SessionStore tests...\n")
     for t in tests:

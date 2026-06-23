@@ -73,13 +73,13 @@ function KeyExplorer() {
             ? `${b}_${pos}_${pat}`
             : `${b}_${st}_${pos}_${s}_${pat}`;
 
-    // Postflop bucket count is per-street (20 flop / 16 turn / 10 river, served by
-    // /api/abstractions from the live centroids), so a bucket valid on the flop may
-    // be out of range on the river - clamp it.
+    // Postflop bucket count is per-street (e.g. 30 flop / 24 turn / 10 river for v2, served by
+    // /api/abstractions from the live centroids -- the literal K is whatever they define), so a
+    // bucket valid on the flop may be out of range on the river - clamp it.
     const bucketsForStreet = (s) =>
         (s === 'preflop' ? [] : (abstractions?.postflopBuckets?.[s] || []));
 
-    // Start-bucket vocabulary per street: FINE (pf_0..29) preflop, COARSE (pf_0..9)
+    // Start-bucket vocabulary per street: FINE (pf_0..168, lossless) preflop, COARSE (pf_0..9)
     // postflop. Used to clamp the selected bucket on a street switch (BUG-017).
     const startBucketsForStreet = (s) =>
         s === 'preflop'

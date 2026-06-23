@@ -36,8 +36,8 @@ keys.make_info_set_key(street, position, preflop_bucket, strength, pattern)
 │     └── PostflopV2: distribution-aware (potential-aware) bucket —
 │         canonicalise (hole,board) → O(log n) lookup in the pre-baked
 │         centroid table (flop/turn); river = exact equity → spike → nearest
-│         river centroid. 20 flop / 16 turn / 10 river (served; → 30/24/10 in the
-│         in-flight retrain — see the Abstraction note below). Computed once per hand
+│         river centroid. Prod v1 = 20 flop / 16 turn / 10 river; v2 = 30/24/10 (dev-served;
+│         see the Abstraction note below). Computed once per hand
 │         (memoized), lazily on first use of each street.
 ├── position = 'ip' (P0) | 'oop' (P1)
 ├── pattern  = current-street betting only (resets each street)  e.g. "k"
@@ -112,10 +112,10 @@ BlueprintDB.save_batch(...) every `checkpoint_every` iterations
   and calls phevaluator's internal evaluator directly (skips per-call string parsing);
   river equity is computed via the vectorized `board_winrates` shared across both
   players on a board. Together these made training ~1.87× faster.
-- **Abstraction (note for the in-flight retrain):** preflop is now **lossless — 169 fine
+- **Abstraction (v2):** preflop is now **lossless — 169 fine
   buckets** (`NUM_PREFLOP_BUCKETS`), one per canonical hand, collapsed to coarse-10 for postflop
   keys. The postflop bucket count K is **defined by the committed centroids** (`postflop_centroids_*.npz`);
-  the served blueprint is 20 flop / 16 turn / 10 river, and the cloud retrain re-fits to **30 / 24 / 10**
+  prod v1 is 20 flop / 16 turn / 10 river, and v2 is **30 / 24 / 10** (dev-served; assets-v2 cutover pending)
   (set by `train_on_cloud.sh:FLOP_BUCKETS/TURN_BUCKETS`). Changing K is an abstraction change → re-fit +
   re-bake + retrain; the stamp guard (`PostflopV2._verify_stamp`) hard-errors on a centroid↔table mismatch.
 

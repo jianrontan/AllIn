@@ -85,7 +85,7 @@ generates M0 via the standalone 12-river generator.)
 conceptually simple.
 **Cons:** **17.7 GB artifact** (slow ship/store); **requires migrating serving off Lightsail Containers**
 to a disk-backed instance; ~23 h one-time gen; re-bake (+23 h, +18 GB) on every blueprint/abstraction
-change (incl. the in-flight 30/24 retrain).
+change (incl. the 30/24 v2 re-fit, dev-served).
 
 ---
 

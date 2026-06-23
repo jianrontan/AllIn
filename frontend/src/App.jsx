@@ -1,10 +1,22 @@
-// C:\Ron\AllIn\frontend\src\App.jsx
-import { createBrowserRouter, RouterProvider } from 'react-router-dom';
+// frontend/src/App.jsx
+import { createBrowserRouter, RouterProvider, Outlet } from 'react-router-dom';
 import Home from './pages/Home';
 import AiGame from './pages/AiGame';
 import StrategyLookup from './pages/StrategyLookup';
 import AuthCallback from './pages/AuthCallback';
 import NotFound from './pages/NotFound';
+import { AnnouncementsProvider } from './components/Announcements';
+
+// Root layout: wraps every route in the announcements provider (which owns the
+// modal + auto-open + "seen" state). The trigger button lives in each page's
+// own top-right header, next to the account control (AnnouncementsButton).
+function RootLayout() {
+  return (
+    <AnnouncementsProvider>
+      <Outlet />
+    </AnnouncementsProvider>
+  );
+}
 
 // Data router (createBrowserRouter) rather than the declarative <BrowserRouter>,
 // so AiGame can use `useBlocker` to intercept in-app navigation away from a live
@@ -18,6 +30,7 @@ import NotFound from './pages/NotFound';
 const router = createBrowserRouter([
   {
     path: '/',
+    element: <RootLayout />,
     errorElement: <NotFound />,
     children: [
       { index: true, element: <Home /> },
