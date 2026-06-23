@@ -41,11 +41,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.config import resolve_blueprint_path
 from src.storage.blueprint_db import BlueprintDB
 from src.abstractions.sizing import db_menu_mode
+from src.abstractions.card_abstractions import NUM_PREFLOP_BUCKETS
 from src.game.game_session import GameSession, advance_bot_turns
 from src.subgame.river_subgame_solver import RiverSubgameSolver
 from src.cfr.poker_game import make_custom_action
 
-PREMIUM_BUCKET = 27          # top-3 fine preflop buckets (~QQ+/AK) on the 30-bucket scheme
+# Top ~10% of fine preflop buckets (~the strong-premium range). Derived from the LIVE count
+# (lossless 169) so it can't drift: the old literal 27 was "top-3 of 30", but on the 169-fine
+# scheme >=27 is ~84% of hands -- so the leak detector flagged correctly-folded trash (78o, Q4o)
+# as "premium folds". Now >=~152.
+PREMIUM_BUCKET = int(NUM_PREFLOP_BUCKETS * 0.9)
 
 
 def _bot_stack(ps):

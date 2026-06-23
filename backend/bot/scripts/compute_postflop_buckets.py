@@ -108,7 +108,11 @@ def main():
     ap.add_argument('--runout-samples', type=int, default=60,
                     help="Sampled runouts per flop situation (turn/river enumerate).")
     ap.add_argument('--opp-samples', type=int, default=200,
-                    help="Sampled opponent hands per board (0 = full range).")
+                    help="Sampled opponent hands per board (0 = full range). NOTE: bake_postflop_table "
+                         "buckets situations against the FULL exact range, so for a clean re-fit pass "
+                         "0 here -- fitting centroids on sampled-200 opponents while baking on the full "
+                         "range leaves a small fit-vs-bake boundary mismatch (a few situations bucket "
+                         "differently). Match them for any abstraction re-fit (e.g. the SPR-bucket v3).")
     ap.add_argument('--kmeans-iters', type=int, default=25)
     ap.add_argument('--seed', type=int, default=42)
     args = ap.parse_args()

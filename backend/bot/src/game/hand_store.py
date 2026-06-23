@@ -23,6 +23,7 @@ The recap dict itself is built by `recap_from_session(session)` from
 `GameSession.data` at the `hand_over` transition. Card formats are display
 (`Ah`), not engine (`HA`). See `recap_from_session` for the field list.
 """
+import logging
 import os
 import threading
 import time
@@ -31,6 +32,7 @@ from abc import ABC, abstractmethod
 from .cards import to_display_list
 
 
+_LOG = logging.getLogger(__name__)
 _STREETS = ('preflop', 'flop', 'turn', 'river')
 
 
@@ -103,7 +105,10 @@ def recap_from_session(session, *, blueprint_name=None, ts_ms=None):
         if result.get('reason') == 'showdown' and both_allin:
             allin_street = d.get('last_action_street')   # 0=pf / 1=flop / 2=turn all-in showdown
     except Exception:
+        # A persistent failure here would silently disable AIVAT for every hand (c1-only fallback);
+        # log at debug so it's diagnosable without spamming prod (debug is off in the image).
         invested = allin_street = None
+        _LOG.debug("recap AIVAT inputs failed; falling back to c1-only", exc_info=True)
 
     return {
         'playerId': d.get('player_id'),
@@ -122,6 +127,12 @@ def recap_from_session(session, *, blueprint_name=None, ts_ms=None):
         'humanNetAfter': round(human_net_after, 2),
         'menuMode': getattr(session, 'menu_mode', None),
         'blueprint': blueprint_name,
+        # Bot build tag, so v1 (20/16, no exploit) vs v2 (30/24 + exploit + solver) hands are
+        # cleanly separable. Set ALLIN_BOT_VERSION='v2' in the v2 deploy env; falls back to the
+        # build SHA (ALLIN_GIT_SHA, already surfaced in healthz). NB a sequential v1->v2 split is a
+        # TEMPORAL before/after (confounded by player-mix drift), NOT a randomized A/B -- the clean
+        # within-v2 measurement is the exploit on/off arm (exploitArm) below.
+        'botVersion': os.environ.get('ALLIN_BOT_VERSION') or os.environ.get('ALLIN_GIT_SHA') or None,
         'exploitArm': d.get('ab_arm'),               # 'on'|'off'|None -- the live exploitation A/B arm
         # AIVAT inputs (variance reduction for the exploit A/B; consumed by scripts/analyze_ab.py).
         'invested': invested,                        # [seat0_total, seat1_total] chips committed (c3)

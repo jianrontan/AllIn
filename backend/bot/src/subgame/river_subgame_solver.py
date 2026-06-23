@@ -1023,8 +1023,10 @@ class RiverSubgameSolver(BlueprintStrategy):
         raw = self.db.get_average_strategy if self.db else (lambda k: None)
         _deadline = time.time() + self.time_budget   # shared cap across unsafe + gadget solves
         # Uniform card-removal villain range -- the robust ('blueprint') anchor + the
-        # range the self-check measures exploitability over.
-        uniform_villain = (project_tracker(villain_tracker, ba, idx) > 0).astype(float)
+        # range the self-check measures exploitability over. PRESENCE mask (uniform=True),
+        # NOT the belief support: an observe()-driven hard zero must not drop a card-possible
+        # hand from the <=blueprint guarantee (the "robust to ANY villain hand" property).
+        uniform_villain = project_tracker(villain_tracker, ba, idx, uniform=True)
 
         def gadget(anchor_villain, optout=None):
             g0, g1 = (hero, anchor_villain) if bot_seat == 0 else (anchor_villain, hero)

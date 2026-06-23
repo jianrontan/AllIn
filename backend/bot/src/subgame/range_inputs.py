@@ -37,22 +37,30 @@ def hand_index_map(ba):
     return {frozenset(h): i for i, h in enumerate(ba['hands'])}
 
 
-def project_tracker(tracker, ba, idx=None):
+def project_tracker(tracker, ba, idx=None, uniform=False):
     """Project a RangeTracker's weight vector onto the ba H-hand board basis.
 
     A tracker hand maps to its row by card identity (order-independent). Hands the
     tracker doesn't carry -- those using its removed hole cards, or board-colliding
     ones it has already zeroed -- get weight 0, which is correct: the opponent
     cannot hold the bot's cards or a board card.
+
+    uniform=True returns a PRESENCE mask (1.0 for every card-possible tracked hand,
+    ignoring the belief weights) -- i.e. the true board+hero card-removal UNIFORM range.
+    This is what the safe-gadget's robust ('blueprint') anchor and the auto self-check
+    must measure exploitability over: a belief-weighted (or >0-support) range would drop
+    a hand that observe() drove to a hard zero, weakening the "<= blueprint vs ANY villain
+    hand" guarantee. (Any over-inclusion is harmless -- the showdown kernel removes
+    hero-card collisions per matchup anyway.)
     """
     idx = idx if idx is not None else hand_index_map(ba)
     out = np.zeros(ba['H'])
     for h, w in zip(tracker.hands, tracker.w):
-        if w <= 0.0:
+        if not uniform and w <= 0.0:
             continue
         row = idx.get(frozenset(h))
         if row is not None:
-            out[row] = float(w)
+            out[row] = 1.0 if uniform else float(w)
     return out
 
 

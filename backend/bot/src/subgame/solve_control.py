@@ -109,6 +109,13 @@ def solve_river_gadget(tree, ba, hero_reach, villain_reach, optout, villain_seat
         done += step
         if time_budget is not None and (time.time() - t0) >= time_budget:
             break
+    # NOTE: 'converged' here is a BUDGET PROXY (hit max_iters), NOT a Nash-gap check -- the gadget
+    # reshapes the villain range each iteration, so there is no cheap per-iteration subgame gap to
+    # measure (unlike solve_river). The <=blueprint SAFETY GUARANTEE is strongest when the gadget
+    # actually converges, so the time_budget must be generous enough to hit max_iters on served spots
+    # (it is: 275 iters fit well inside 24s). A time-truncated gadget (converged=False) is bounded only
+    # by the EV gate's margin -- which guards EV trustworthiness, NOT exploitability -- so don't rely on
+    # it for safety; keep the budget ample. (Review note 2026-06-22.)
     return cfr, {'iters': done, 'gap': None, 'seconds': time.time() - t0,
                  'converged': bool(done >= max_iters)}
 

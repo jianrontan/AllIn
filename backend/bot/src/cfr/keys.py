@@ -35,7 +35,7 @@ _FINE_TO_COARSE = None
 # Memo: fine bucket id ('pf_<n>') -> coarse class id ('pf_<m>'). _coarse_class is a
 # PURE function of its string arg but was a measured BR hotspot -- profiled at 122M
 # calls / ~116s in a 2-sample best-response walk, each redoing split('_') + an int()
-# + an f-string. There are only NUM_PREFLOP_BUCKETS (30) distinct inputs, so a dict
+# + an f-string. There are only NUM_PREFLOP_BUCKETS (169, lossless) distinct inputs, so a dict
 # memo collapses it to ~free. Bit-identical (same output, just cached).
 _COARSE_CACHE = {}
 

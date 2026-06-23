@@ -24,11 +24,12 @@ SIMULATIONS = 10000
 RANDOM_SEED = 42
 # Decoupled preflop scheme: FINE buckets identify the hand for preflop keys; COARSE
 # classes are the postflop startBucket (imperfect recall). card_abstractions.py DERIVES
-# both maps from the committed _PREFLOP_EQUITY table via the same assign_buckets formula,
-# so this script is the equity GENERATOR; these counts must match
-# card_abstractions.NUM_PREFLOP_BUCKETS / NUM_PREFLOP_COARSE.
-NUM_BUCKETS = 30          # fine
-NUM_COARSE = 10           # coarse
+# both maps from the committed _PREFLOP_EQUITY table at import (NOT from these counts), so
+# this script is ONLY the equity GENERATOR. NUM_BUCKETS/NUM_COARSE below are DIAGNOSTIC-ONLY
+# (they drive this script's own printout, not the live abstraction). The live scheme is
+# lossless 169 fine / 10 coarse (card_abstractions.NUM_PREFLOP_BUCKETS / NUM_PREFLOP_COARSE).
+NUM_BUCKETS = 169         # fine (diagnostic only; lossless = one bucket per canonical hand)
+NUM_COARSE = 10           # coarse (diagnostic only)
 
 
 def to_phev(card):

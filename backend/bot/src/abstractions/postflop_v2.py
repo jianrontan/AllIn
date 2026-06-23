@@ -133,8 +133,15 @@ class PostflopV2:
         d = np.load(npz_path)                       # NpzFile: lazy -- stamp reads only small members
         self._verify_stamp(street, d)               # propagate a stale-table hard error
         try:
-            if not (os.path.exists(ids_npy) and os.path.exists(bkt_npy)):
-                np.save(ids_npy, d['ids'])          # one-time full load of the big members, then freed
+            # Re-extract if the .npz was re-baked AFTER the cached .npy were written. The .npy carry
+            # NO centroid stamp, so a stale extract from a prior bake (e.g. the 20/16->30/24 re-fit)
+            # would be mmap'd and served while _verify_stamp(d) passed on the fresh .npz -- silently
+            # bypassing the stale-table guard. mtime(npz) > mtime(npy) => source is newer => re-extract.
+            fresh = (os.path.exists(ids_npy) and os.path.exists(bkt_npy)
+                     and os.path.getmtime(ids_npy) >= os.path.getmtime(npz_path)
+                     and os.path.getmtime(bkt_npy) >= os.path.getmtime(npz_path))
+            if not fresh:
+                np.save(ids_npy, d['ids'])          # (re)extract: one-time full load, then freed
                 np.save(bkt_npy, d['buckets'])
             return (np.load(ids_npy, mmap_mode='r'), np.load(bkt_npy, mmap_mode='r'))
         except OSError:
