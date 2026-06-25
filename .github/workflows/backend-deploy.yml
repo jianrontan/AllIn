@@ -39,7 +39,7 @@ env:
   LIGHTSAIL_SERVICE: allin
   # GitHub Release tag that holds the baked postflop tables as assets. Update
   # when re-baking (centroid changes). Tag must already exist.
-  POSTFLOP_TABLES_RELEASE: assets-v1
+  POSTFLOP_TABLES_RELEASE: assets-v2
 
 jobs:
   build-test-deploy:
@@ -56,10 +56,10 @@ jobs:
       # turn, ~5MB flop) and the trained blueprint DB (~37MB). CI pulls all
       # three from the release named by POSTFLOP_TABLES_RELEASE above (the
       # assets release, NOT the project version tag). Upload replacements with:
-      #   gh release upload assets-v1 \
+      #   gh release upload assets-v2 \
       #     backend/bot/analysis/abstractions/postflop_table_flop.npz \
       #     backend/bot/analysis/abstractions/postflop_table_turn.npz \
-      #     backend/bot/analysis/blueprints/blueprint_final.db --clobber
+      #     backend/bot/analysis/blueprints/blueprint_final_v2.db --clobber
       - name: Fetch baked postflop tables + blueprint from release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -69,11 +69,11 @@ jobs:
           gh release download "$POSTFLOP_TABLES_RELEASE" \
             -p "postflop_table_flop.npz" \
             -p "postflop_table_turn.npz" \
-            -p "blueprint_final.db" \
+            -p "blueprint_final_v2.db" \
             -D /tmp/release-assets/
           mv /tmp/release-assets/postflop_table_*.npz \
             backend/bot/analysis/abstractions/
-          mv /tmp/release-assets/blueprint_final.db \
+          mv /tmp/release-assets/blueprint_final_v2.db \
             backend/bot/analysis/blueprints/
           # gh release download creates files with restrictive perms (0600).
           # The Dockerfile's `USER allin` runs gunicorn as UID 10001, which
@@ -81,9 +81,9 @@ jobs:
           # so the non-root container user can load them. (The local docker
           # build doesn't hit this because the file's local perms are 0644.)
           chmod a+r backend/bot/analysis/abstractions/postflop_table_*.npz \
-                    backend/bot/analysis/blueprints/blueprint_final.db
+                    backend/bot/analysis/blueprints/blueprint_final_v2.db
           ls -lh backend/bot/analysis/abstractions/postflop_table_*.npz \
-                 backend/bot/analysis/blueprints/blueprint_final.db
+                 backend/bot/analysis/blueprints/blueprint_final_v2.db
 
       - name: Derive short SHA
         id: meta
@@ -127,7 +127,7 @@ jobs:
             allin:test \
             -c '
           import sqlite3, os, sys
-          path = "analysis/blueprints/blueprint_final.db"
+          path = "analysis/blueprints/blueprint_final_v2.db"
           print("=== filesystem checks ===", file=sys.stderr)
           print(f"exists: {os.path.exists(path)}", file=sys.stderr)
           if not os.path.exists(path):
