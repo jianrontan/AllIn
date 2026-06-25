@@ -235,12 +235,27 @@ def test_hand_cap_window(monkeypatch):
 
 def test_global_stats():
     g = InMemoryGlobalStatsStore()
-    assert g.get() == {'totalHands': 0, 'totalNetBB': 0.0, 'totalPlayers': 0}
+    assert g.get() == {'totalHands': 0, 'totalNetBB': 0.0, 'totalPlayers': 0, 'byVersion': {}}
     g.record_new_player()
     g.record_hand_result(2.5)
     g.record_hand_result(-1.0)
     d = g.get()
     assert d['totalHands'] == 2 and d['totalNetBB'] == 1.5 and d['totalPlayers'] == 1
+
+
+def test_global_stats_version_counters():
+    """Per-version running counters: live, no scan; sum reconciles with the totals."""
+    g = InMemoryGlobalStatsStore()
+    g.record_hand_result(5.0, version='v2')
+    g.record_hand_result(-3.0, version='v2')
+    g.record_hand_result(2.0, version='v1')
+    g.record_hand_result(1.0)                      # version-less still bumps the totals only
+    d = g.get()
+    assert d['totalHands'] == 4 and abs(d['totalNetBB'] - 5.0) < 1e-9
+    assert d['byVersion']['v2'] == {'hands': 2, 'netBB': 2.0}
+    assert d['byVersion']['v1'] == {'hands': 1, 'netBB': 2.0}
+    # sum across versions <= totals (a version-less hand isn't in any bucket)
+    assert sum(b['hands'] for b in d['byVersion'].values()) == 3
 
 
 def test_factories_default_memory():
@@ -291,6 +306,14 @@ def test_dynamodb_global(dynamo):
     g.record_hand_result(3.0)
     d = g.get()
     assert d['totalHands'] == 1 and d['totalNetBB'] == 3.0 and d['totalPlayers'] == 1
+    assert d['byVersion'] == {}
+    # Version-keyed counters on real DynamoDB (moto): the vh_<v>/vn_<v> ADD + the get()
+    # prefix-reassembly into byVersion -- the new, riskiest path (Decimal coercion, k[3:] split).
+    g.record_hand_result(5.0, version='v2')
+    g.record_hand_result(-1.0, version='v2')
+    d = g.get()
+    assert d['byVersion']['v2'] == {'hands': 2, 'netBB': 4.0}
+    assert d['totalHands'] == 3                       # totals still bump for versioned hands
 
 
 def test_dynamodb_link_account_merges_anon_stats(dynamo):

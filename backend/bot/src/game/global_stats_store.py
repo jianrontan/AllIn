@@ -20,11 +20,14 @@ _SINGLETON_ID = 'global'
 
 class GlobalStatsStore:
     def get(self):
-        """Return {totalHands, totalNetBB, totalPlayers}."""
+        """Return {totalHands, totalNetBB, totalPlayers, byVersion}, where byVersion is
+        {version: {hands, netBB}} -- LIVE per-bot-version running counters (no hand-table scan)."""
         raise NotImplementedError
 
-    def record_hand_result(self, bb_delta, is_new_player=False):
-        """Add one completed hand to the global totals (and a new player if flagged)."""
+    def record_hand_result(self, bb_delta, is_new_player=False, version=None):
+        """Add one completed hand to the global totals (and a new player if flagged). When `version`
+        (the bot-version label, e.g. 'v1'/'v2') is given, also bump that version's running counter --
+        this is what makes the +EV card's v1/v2 numbers live without scanning the hand table."""
         raise NotImplementedError
 
     def record_new_player(self):
@@ -42,18 +45,25 @@ class GlobalStatsStore:
 class InMemoryGlobalStatsStore(GlobalStatsStore):
     def __init__(self):
         self._d = {'totalHands': 0, 'totalNetBB': 0.0, 'totalPlayers': 0}
+        self._byv = {}                     # {version: {'hands': int, 'netBB': float}}
         self._lock = threading.Lock()
 
     def get(self):
         with self._lock:
-            return dict(self._d)
+            out = dict(self._d)
+            out['byVersion'] = {v: dict(d) for v, d in self._byv.items()}
+            return out
 
-    def record_hand_result(self, bb_delta, is_new_player=False):
+    def record_hand_result(self, bb_delta, is_new_player=False, version=None):
         with self._lock:
             self._d['totalHands'] += 1
             self._d['totalNetBB'] += float(bb_delta)
             if is_new_player:
                 self._d['totalPlayers'] += 1
+            if version:
+                bv = self._byv.setdefault(version, {'hands': 0, 'netBB': 0.0})
+                bv['hands'] += 1
+                bv['netBB'] += float(bb_delta)
 
     def record_new_player(self):
         with self._lock:
@@ -84,20 +94,42 @@ class DynamoDBGlobalStatsStore(GlobalStatsStore):
         def num(v):
             return (int(v) if isinstance(v, Decimal) and v % 1 == 0
                     else float(v) if isinstance(v, Decimal) else v)
+        # Per-version running counters live in flat `vh_<version>` (hands) / `vn_<version>` (net)
+        # attributes -- a flat prefix (not a nested map) so the per-hand `ADD` is trivial + can't
+        # collide with other attrs. Reassemble them into byVersion here.
+        by_version = {}
+        for k, v in item.items():
+            if k.startswith('vh_'):
+                by_version.setdefault(k[3:], {})['hands'] = num(v)
+            elif k.startswith('vn_'):
+                by_version.setdefault(k[3:], {})['netBB'] = num(v)
+        by_version = {ver: {'hands': d.get('hands', 0), 'netBB': d.get('netBB', 0.0)}
+                      for ver, d in by_version.items()}
         return {
             'totalHands': num(item.get('totalHands', 0)),
             'totalNetBB': num(item.get('totalNetBB', 0.0)),
             'totalPlayers': num(item.get('totalPlayers', 0)),
+            'byVersion': by_version,
         }
 
-    def record_hand_result(self, bb_delta, is_new_player=False):
+    def record_hand_result(self, bb_delta, is_new_player=False, version=None):
         from decimal import Decimal
+        delta = Decimal(str(bb_delta))
         expr = 'ADD totalHands :one, totalNetBB :delta'
-        vals = {':one': 1, ':delta': Decimal(str(bb_delta))}
+        vals = {':one': 1, ':delta': delta}
+        names = {}
         if is_new_player:
             expr += ', totalPlayers :one'
-        self._table.update_item(Key={'statId': _SINGLETON_ID},
-                                UpdateExpression=expr, ExpressionAttributeValues=vals)
+        if version:
+            # Bump this version's running counters in the SAME atomic update. Names are aliased
+            # (#vh/#vn) because the attribute name embeds the version string.
+            expr += ', #vh :one, #vn :delta'
+            names = {'#vh': f'vh_{version}', '#vn': f'vn_{version}'}
+        kwargs = {'Key': {'statId': _SINGLETON_ID}, 'UpdateExpression': expr,
+                  'ExpressionAttributeValues': vals}
+        if names:
+            kwargs['ExpressionAttributeNames'] = names
+        self._table.update_item(**kwargs)
 
     def record_new_player(self):
         self._table.update_item(

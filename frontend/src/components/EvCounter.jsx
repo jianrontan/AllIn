@@ -18,30 +18,27 @@ const fmtRate = (v) => `${v > 0 ? '+' : ''}${v.toFixed(2)}`;   // BB/hand, 2 dp
 // per-version breakdown (byVersion, filled by a server-side background scan) is ready, then 60s.
 let _stats = null;
 const _subs = new Set();
-let _timer = null;
-let _running = false;
+let _started = false;
 
-function _schedule(s) {
-    const ready = s?.byVersion && Object.keys(s.byVersion).length > 0;
-    _timer = setTimeout(_tick, ready ? 60000 : 8000);
-}
 function _tick() {
     getStats()
         .then((s) => { _stats = s; _subs.forEach((fn) => fn(s)); })
         .catch(() => {})
-        .finally(() => { if (_running) _schedule(_stats); });
+        .finally(() => {
+            // Adaptive: poll fast (8s) until the per-version breakdown lands, then settle to 60s.
+            const ready = _stats?.byVersion && Object.keys(_stats.byVersion).length > 0;
+            setTimeout(_tick, ready ? 60000 : 8000);
+        });
 }
 function subscribeStats(fn) {
     _subs.add(fn);
-    if (_stats) fn(_stats);
-    if (!_running) { _running = true; _tick(); }   // first subscriber starts the loop
-    return () => {
-        _subs.delete(fn);
-        if (_subs.size === 0) {                     // last one out stops it
-            _running = false;
-            if (_timer !== null) { clearTimeout(_timer); _timer = null; }
-        }
-    };
+    if (_stats) fn(_stats);                          // a late subscriber gets the cached value at once
+    // Start exactly ONE loop for the app's lifetime. We deliberately do NOT stop it on the last
+    // unsubscribe and do NOT restart it on re-subscribe: tying the loop to mount/unmount let a
+    // re-render churn (e.g. the 400ms "thinking" animation re-mounting this card) restart the loop
+    // every tick and spam /api/stats. A single 8s→60s loop is negligible and immune to that.
+    if (!_started) { _started = true; _tick(); }
+    return () => { _subs.delete(fn); };
 }
 
 function EvCounter({ compact = false, version: versionProp, onVersionChange }) {

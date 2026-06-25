@@ -560,6 +560,17 @@ function AiGame() {
             ok = true;
         } catch (e) {
             setError(e.message);
+            // The action may have been rejected because the hand already ended (e.g. the
+            // inactivity sweeper folded an abandoned idle hand). Re-sync authoritative state so
+            // the UI shows hand_over + "Next hand" instead of stranding on a 409, and drop the
+            // banner when the hand simply ended.
+            if (view?.sessionId) {
+                try {
+                    const fresh = await getGameState(view.sessionId);
+                    setView(fresh);
+                    if (fresh.status === 'hand_over') setError(null);
+                } catch { /* re-sync failed -- keep the original error */ }
+            }
         } finally {
             setThinking(false);
             setBusy(false);

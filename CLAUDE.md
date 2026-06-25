@@ -268,7 +268,7 @@ Game:
 Leaderboard / accounts:
 - `GET /api/stats` — global +EV counter PLUS `byVersion` (per-bot-version recap breakdown: `{v: {hands, humanNetBB}}`). Counter cached 5s; `byVersion` from a background-refreshed scan (`{}` until the first scan); polled by the client adaptively (~8s until `byVersion` is ready, then 60s).
 - `GET /api/leaderboard?version=&min_hands=&accounts_only=&offset=&n=&you=` — paginated ranked board built from the per-hand RECAP aggregate. `version` = `all` (default; sums across versions) | `v1` | `v2`; `you` marks the caller's own row. Returns `{players, total, yourRank, versions}` (10s cache; 'all' falls back to the durable PlayerStore board until the scan lands).
-- `GET /api/me?playerId=` — caller's own curated row (lifetime hands + netBB + bb/100). Computed from the RECAP aggregate so it matches the leaderboard (PlayerStore-counter fallback until the scan is ready, and on any store fault — never 500s); public-by-UUID by design, returns 0-state for unknown ids.
+- `GET /api/me?playerId=` — caller's own curated row (lifetime hands + netBB + bb/100) from the durable PlayerStore counter, so the "You" header updates LIVE per hand (in prod the counter == the recap leaderboard; the board lags ~120s behind your live total). Never 500s on a store fault; public-by-UUID by design, returns 0-state for unknown ids.
 - `POST /api/player` — set the caller's unique username; rate-limited (10/min/player + 30/min/IP → 429).
 - `POST /api/auth/google` — verify a Cognito Google ID token, resolve the canonical account; rate-limited (20/min/IP → 429); generic 401 on bad token (reason logged server-side).
 
@@ -279,7 +279,7 @@ Health: `GET /api/test` (alias `GET /api/healthz`) — returns 200 with `{status
 The full, authoritative list is in [docs/DEPLOYMENT_RUNBOOK.md](docs/DEPLOYMENT_RUNBOOK.md) ("Environment variables"). The essentials:
 - `ALLIN_BLUEPRINT_DB` — explicit path to the blueprint DB (overrides auto-resolution).
 - `ALLIN_BLUEPRINT_SOURCE` — `local` (default) | `s3`; `ALLIN_BLUEPRINT_S3_URI` paired with the latter.
-- `ALLIN_BOT_VERSION` — explicit bot-version tag stamped on every hand recap (e.g. `v2`); drives the leaderboard/+EV-card All/v1/v2 filter. Falls back to `ALLIN_GIT_SHA`, then a blueprint-name-derived label. Set `v1`/`v2` per deploy so versions separate cleanly even when the same blueprint ships different behaviour.
+- `ALLIN_BOT_VERSION` — explicit bot-version tag (e.g. `v1`/`v2`) stamped on every hand recap AND keyed into the LIVE global per-version counters that drive the +EV card's v1/v2 numbers (`GlobalStats` `vh_<v>`/`vn_<v>`). **When unset, the version bucket is derived from the blueprint NAME (v1/v2) — never the build SHA** (a SHA would mint unbounded per-version counters on the global row → a 400KB-item leak, and mis-bucket the card). Set it coarse (`v1`/`v2`) per deploy. The build SHA stays in `ALLIN_GIT_SHA`/healthz for forensics.
 - `ALLIN_CORS_ORIGINS` — comma-separated allowed CORS origins (defaults to `localhost:5173`/`5174`).
 - `ALLIN_SESSION_STORE` / `ALLIN_STORE_BACKEND` — `memory` (default) | `dynamodb` for sessions / leaderboard stores. Entrypoint picks 1 worker if either is memory, 2 if both DynamoDB.
 - `ALLIN_DYNAMODB_TABLE` / `ALLIN_PLAYERS_TABLE` / `ALLIN_GLOBAL_TABLE` / `ALLIN_HANDS_TABLE` — table names.

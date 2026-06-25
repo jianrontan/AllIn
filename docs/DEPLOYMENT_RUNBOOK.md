@@ -52,6 +52,10 @@ diagnosing CI failures, dev workflow) — that's in
   one-off debugging.
 - `ALLIN_LOG_LEVEL` — log level (default `INFO`).
 - `ALLIN_GIT_SHA` — build commit, surfaced in `/api/healthz` (set by CI; absent in dev is fine).
+- `ALLIN_BOT_VERSION` — coarse bot-version tag (`v1`/`v2`) for the recap `botVersion` AND the live
+  global per-version counters that drive the +EV card's v1/v2 numbers. Set it per deploy. UNSET
+  degrades to the blueprint-NAME label (v1/v2) — never the build SHA (a SHA would mint unbounded
+  per-version attrs on the global row). Must stay coarse in prod; never a SHA.
 - `ALLIN_BLUEPRINT_CACHE_DIR` — only when `ALLIN_BLUEPRINT_SOURCE=s3`: local dir the
   blueprint is downloaded into and re-opened from. Default is `tempfile.gettempdir()`; in a
   container, set this to a stable mount (e.g. `/var/lib/allin/blueprints`) since `/tmp`

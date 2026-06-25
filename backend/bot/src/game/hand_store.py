@@ -170,12 +170,14 @@ def recap_from_session(session, *, blueprint_name=None, ts_ms=None):
         'humanNetAfter': round(human_net_after, 2),
         'menuMode': getattr(session, 'menu_mode', None),
         'blueprint': blueprint_name,
-        # Bot build tag, so v1 (20/16, no exploit) vs v2 (30/24 + exploit + solver) hands are
-        # cleanly separable. Set ALLIN_BOT_VERSION='v2' in the v2 deploy env; falls back to the
-        # build SHA (ALLIN_GIT_SHA, already surfaced in healthz). NB a sequential v1->v2 split is a
-        # TEMPORAL before/after (confounded by player-mix drift), NOT a randomized A/B -- the clean
-        # within-v2 measurement is the exploit on/off arm (exploitArm) below.
-        'botVersion': os.environ.get('ALLIN_BOT_VERSION') or os.environ.get('ALLIN_GIT_SHA') or None,
+        # Bot build tag, so v1 (20/16, no exploit) vs v2 (30/24 + exploit + solver) hands are cleanly
+        # separable. Set ALLIN_BOT_VERSION='v1'/'v2' per deploy. When unset, recap_version falls back
+        # to the blueprint-NAME-derived label (v1/v2) -- deliberately NOT the build SHA: a SHA would
+        # make every commit its own version bucket (unbounded per-version counters + a 400KB-row leak,
+        # and the card's v1/v2 filter would miss SHA-tagged hands). The build SHA stays in
+        # ALLIN_GIT_SHA / healthz for forensics. NB a sequential v1->v2 split is a TEMPORAL before/after
+        # (player-mix-confounded), NOT a randomized A/B -- the clean within-v2 measure is exploitArm.
+        'botVersion': os.environ.get('ALLIN_BOT_VERSION') or None,
         'exploitArm': d.get('ab_arm'),               # 'on'|'off'|None -- the live exploitation A/B arm
         # AIVAT inputs (variance reduction for the exploit A/B; consumed by scripts/analyze_ab.py).
         'invested': invested,                        # [seat0_total, seat1_total] chips committed (c3)

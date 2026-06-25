@@ -41,7 +41,8 @@ from bot.src.game.player_store import (
     make_player_store, InvalidHandle, HandleTaken, AccountConflict,
     sanitize_display_name)
 from bot.src.game.global_stats_store import make_global_stats_store
-from bot.src.game.hand_store import make_hand_store, recap_from_session, InMemoryHandStore
+from bot.src.game.hand_store import (make_hand_store, recap_from_session, recap_version,
+                                      InMemoryHandStore)
 from bot.src.game.game_session import GameSession, advance_bot_turns, GameError, BIG_BLIND
 from bot.src.game.cards import to_engine
 from bot.src.cfr.poker_game import make_custom_action, STARTING_STACK
@@ -85,6 +86,17 @@ except Exception as _bp_err:
 # grid, or a 1.75-2.0x bet clamps to 'o' (1.5x) and the explorer shows a different
 # line than the live bot (which translates against the same menu). See BUG-019.
 _POSTFLOP_GRID = translation.postflop_grid_for(BLUEPRINT_MENU_MODE)
+# The served bot's version label (e.g. 'v1'/'v2'), stamped on every hand's GLOBAL per-version
+# counter so the +EV card's v1/v2 numbers are LIVE (no hand-table scan). Constant per process --
+# the SAME derivation recap_version() applies to this process's recaps, so the live counter and the
+# recap history agree on which version a hand belongs to.
+_BOT_VERSION_LABEL = recap_version({
+    # NB: NO ALLIN_GIT_SHA fallback -- the version bucket must be COARSE (v1/v2), or a per-commit SHA
+    # would mint unbounded vh_<sha>/vn_<sha> attrs on the global row (400KB-item leak) and mis-bucket
+    # the card. Unset ALLIN_BOT_VERSION degrades to the blueprint-name-derived label (v1/v2).
+    'botVersion': os.environ.get('ALLIN_BOT_VERSION') or None,
+    'blueprint': _BLUEPRINT_PATH.name if _BLUEPRINT_PATH else '',
+})
 # Sentinel for the degraded-mode bail-out: every strategy/game endpoint short-
 # circuits with 503 + this message if the blueprint failed to load at import.
 def _blueprint_unavailable_503():
@@ -1190,7 +1202,7 @@ def _record_hand_end(session, pre_status, pre_net):
         _LOG.warning("PLAYERS.record_hand_result failed for player=%s session=%s",
                      player_id, sid, exc_info=True)
     try:
-        GLOBAL.record_hand_result(delta_bb, is_new_player=False)
+        GLOBAL.record_hand_result(delta_bb, is_new_player=False, version=_BOT_VERSION_LABEL)
     except Exception:
         _LOG.warning("GLOBAL.record_hand_result failed for player=%s session=%s",
                      player_id, sid, exc_info=True)
@@ -1619,12 +1631,6 @@ def _version_data():
     return _VERSION_CACHE['data']
 
 
-def _version_totals():
-    """Per-version {hands, humanNetBB} for the +EV counter, rounded for display."""
-    return {v: {'hands': d['hands'], 'humanNetBB': round(d['humanNetBB'], 2)}
-            for v, d in (_version_data().get('totals') or {}).items()}
-
-
 def _version_board(version, min_hands, accounts_only):
     """Rank players for ONE bot version from the cached recap aggregates (joined with player_store
     for handle/isRegistered). Operates on the cached aggregate, not a scan; the per-(version,cut)
@@ -1710,31 +1716,6 @@ def _player_rows_cached():
     return c['data']
 
 
-def _player_recap_stats(player_id):
-    """Recap-based lifetime {hands, netBB} for ONE player, resolving its merge chain so the AiGame
-    'You' header matches that player's leaderboard 'all' row. The per-hand recap table is the source
-    of truth; the durable PlayerStore counter can drift from it (e.g. cloned/seeded dev data). Returns
-    None when the recap scan hasn't run yet OR on any store fault -- caller then falls back to the
-    PlayerStore counter (so /api/me never 500s on a DynamoDB throttle)."""
-    try:
-        by_player_all = _version_data().get('byPlayer')
-        if not by_player_all:
-            return None
-        prows = _player_rows_cached()
-        cid = (prows.get(player_id) or {}).get('merged_into') or player_id
-        hands, net, found = 0, 0.0, False
-        for vmap in by_player_all.values():
-            for p, d in vmap.items():
-                if ((prows.get(p) or {}).get('merged_into') or p) == cid:   # this pid resolves to cid
-                    hands += d['hands']
-                    net += d['humanNetBB']
-                    found = True
-        return {'hands': hands, 'netBB': round(net, 2)} if found else None
-    except Exception:
-        _LOG.warning("player recap stats failed; falling back to counter", exc_info=True)
-        return None
-
-
 @app.route('/api/stats', methods=['GET'])
 def stats():
     """The +EV counter source: global totals + the served blueprint. Cached a few
@@ -1744,10 +1725,16 @@ def stats():
     if c['data'] is None or now - c['ts'] > _STATS_TTL_SECONDS:
         try:
             g = GLOBAL.get()
+            # byVersion is now LIVE per-version running counters on the global row (no hand-table
+            # scan) -- {version: {hands, humanNetBB}}. netBB is the human field's net (the card
+            # negates it for the bot's perspective), matching the version-blind totalNetBB.
+            by_version = {v: {'hands': d['hands'], 'humanNetBB': round(float(d['netBB']), 2)}
+                          for v, d in (g.get('byVersion') or {}).items()}
             c['data'] = {
                 'totalHands': g['totalHands'],
                 'totalNetBB': round(float(g['totalNetBB']), 2),
                 'totalPlayers': g['totalPlayers'],
+                'byVersion': by_version,
                 'blueprint': _BLUEPRINT_PATH.name,
                 'iterations': BLUEPRINT_DB.get_metadata('total_iterations', 0),
             }
@@ -1758,11 +1745,9 @@ def stats():
             _LOG.warning("stats: GLOBAL.get failed; serving stale/zero-state", exc_info=True)
             if c['data'] is None:
                 c['data'] = {'totalHands': 0, 'totalNetBB': 0.0, 'totalPlayers': 0,
-                             'blueprint': _BLUEPRINT_PATH.name,
+                             'byVersion': {}, 'blueprint': _BLUEPRINT_PATH.name,
                              'iterations': BLUEPRINT_DB.get_metadata('total_iterations', 0)}
-    # byVersion comes from its OWN background-refreshed cache so this hot endpoint never blocks on
-    # the slow scan; merge it in at serve time (always the freshest available, {} until first scan).
-    return jsonify({**c['data'], 'byVersion': _version_totals()})
+    return jsonify(c['data'])
 
 
 @app.route('/api/leaderboard', methods=['GET'])
@@ -1872,10 +1857,10 @@ def me():
     try:
         row = PLAYERS.get(player_id)
     except Exception:
-        _LOG.warning("me: PLAYERS.get failed; serving recap/0-state", exc_info=True)
+        _LOG.warning("me: PLAYERS.get failed; serving 0-state", exc_info=True)
         row = None
-    # Follow the merge chain so a pre-merge (anon) id returns the CANONICAL identity (which the client
-    # should adopt) -- matching _player_recap_stats, which already sums to the canonical's totals.
+    # Follow the merge chain so a pre-merge (anon) id returns the CANONICAL row (the client should
+    # adopt that id; the canonical row already holds the merged hands+netBB from link_account).
     if row and row.get('merged_into'):
         try:
             canon = PLAYERS.get(row['merged_into'])
@@ -1883,17 +1868,13 @@ def me():
                 row = canon
         except Exception:
             pass
-    recap = _player_recap_stats(player_id)
-    if not row and not recap:
+    if not row:
         return jsonify({"playerId": player_id, "handle": None, "hands": 0,
                         "netBB": 0.0, "bbPer100": 0.0, "isRegistered": False})
-    # Lifetime hands/netBB come from the per-hand recap aggregate (so the "You" header matches the
-    # leaderboard); fall back to the PlayerStore counter only until the background scan is ready.
-    # handle/isRegistered always come from the player row.
-    row = dict(row or {'playerId': player_id})
-    if recap:
-        row['hands'] = recap['hands']
-        row['netBB'] = recap['netBB']
+    # Lifetime stats come from the durable PlayerStore COUNTER (incremented on every hand_over), so
+    # the "You" header updates LIVE per hand. The recap-aggregate leaderboard is a ~120s background
+    # scan that would lag per-hand; in prod the counter == that aggregate (both written per hand), so
+    # this stays consistent with the board. (On seeded/cloned dev data the two can differ.)
     return jsonify(_player_public_self(row))
 
 

@@ -52,6 +52,21 @@ def test_stats_and_leaderboard_shapes():
     assert code == 200 and isinstance(v['players'], list)
 
 
+def test_stats_byversion_is_live():
+    """The card's byVersion now comes from LIVE global per-version counters: a completed hand
+    bumps it immediately, with no hand-table scan."""
+    code, _, before = call('GET', '/api/stats')
+    assert code == 200 and 'byVersion' in before
+    bv0 = sum(d['hands'] for d in (before.get('byVersion') or {}).values())
+    pid = 'ZZ-bv'
+    code, _, nv = call('POST', '/api/game/new', {'playerId': pid})
+    call('POST', '/api/game/action', {'id': nv['sessionId'], 'playerId': pid, 'action': 'fold'})
+    s._STATS_CACHE['data'] = None                   # bust the 5s cache so we read the fresh counter
+    code, _, after = call('GET', '/api/stats')
+    bv1 = sum(d['hands'] for d in (after.get('byVersion') or {}).values())
+    assert bv1 == bv0 + 1, (bv0, bv1)               # the just-played hand is in byVersion live
+
+
 def test_player_handle_validation():
     code, _, v = call('POST', '/api/player', {'playerId': 'pid-h', 'handle': 'Ron_1'})
     assert code == 200 and v['handle'] == 'Ron_1' and v['playerId'] == 'pid-h'
@@ -147,45 +162,47 @@ def _seed_recaps(pid, version, delta_chips, n):
                      'botVersion': version, 'result': {'humanDelta': float(delta_chips)}})
 
 
-def test_leaderboard_version_and_me_recap():
-    """/api/me and the version-filtered leaderboard both read the RECAP aggregate and
-    reconcile: all == v1 + v2, _pid is never leaked, yourRank/versions are returned."""
+def test_leaderboard_version_cuts():
+    """The version-filtered leaderboard reads the RECAP aggregate: 'all' == v1+v2, a version
+    cut isolates that version, yourRank/versions are returned, and _pid never leaks."""
     pid = 'ZZ-recap'
-    _seed_recaps(pid, 'v1', 10.0, 60)        # 60 hands, +5 BB each -> +300 BB
-    _seed_recaps(pid, 'v2', 6.0, 40)         # 40 hands, +3 BB each -> +120 BB
+    _seed_recaps(pid, 'v1', 10.0, 60)        # 60 hands
+    _seed_recaps(pid, 'v2', 6.0, 40)         # 40 hands
     s.PLAYERS.create_if_absent(pid)
     s._PLAYER_ROWS_CACHE['data'] = None      # bust the cached players-scan
     s._LEADERBOARD_CACHE.clear()             # bust any board cached before this seed
     s._refresh_version_cache()               # populate byVersion synchronously
 
-    # /api/me: recap-based lifetime = 100 hands, +420 BB
-    code, _, me = call('GET', '/api/me', query=f'playerId={pid}')
-    assert code == 200, (code, me)
-    assert me['hands'] == 100, me
-    assert abs(me['netBB'] - 420.0) < 0.01, me
-
-    # leaderboard 'all': the player's row matches /api/me; shape has total/yourRank/versions
     code, _, lb = call('GET', '/api/leaderboard', query=f'version=all&min_hands=0&you={pid}')
-    assert code == 200
-    assert 'total' in lb and 'yourRank' in lb and 'versions' in lb
-    assert all('_pid' not in row for row in lb['players'])     # internal id never leaked
+    assert code == 200 and 'total' in lb and 'yourRank' in lb and 'versions' in lb
+    assert all('_pid' not in row for row in lb['players'])      # internal id never leaked
     me_row = next((r for r in lb['players'] if r.get('isYou')), None)
-    assert me_row and me_row['hands'] == 100, me_row
+    assert me_row and me_row['hands'] == 100, me_row            # all = v1 + v2
 
-    # version=v1 cut: only the 60 v1 hands
     code, _, lb1 = call('GET', '/api/leaderboard', query=f'version=v1&min_hands=0&you={pid}')
     v1_row = next((r for r in lb1['players'] if r.get('isYou')), None)
-    assert v1_row and v1_row['hands'] == 60, v1_row
+    assert v1_row and v1_row['hands'] == 60, v1_row             # the v1 cut isolates
 
 
-def test_me_recap_never_500s_on_store_fault(monkeypatch):
-    """A store fault in the recap path degrades to the counter, never 500s."""
-    pid = 'ZZ-fault'
-    s.PLAYERS.create_if_absent(pid)
-    s._PLAYER_ROWS_CACHE['data'] = None
-    monkeypatch.setattr(s.PLAYERS, 'all_rows', lambda: (_ for _ in ()).throw(RuntimeError('ddb')))
-    code, _, me = call('GET', '/api/me', query=f'playerId={pid}')
-    assert code == 200, (code, me)           # fell back to the PlayerStore counter, no 500
+def test_me_is_counter_based_and_live():
+    """The 'You' header reads the live PlayerStore COUNTER (not the lagging recap scan), so it
+    ticks up the instant a hand completes -- no version-cache refresh in between."""
+    pid = 'ZZ-live'
+    before = call('GET', '/api/me', query=f'playerId={pid}')[2]['hands']    # 0 (unknown player)
+    code, _, nv = call('POST', '/api/game/new', {'playerId': pid})
+    assert code == 200
+    # human is in the BB facing the blinds -> fold ends the hand immediately
+    call('POST', '/api/game/action', {'id': nv['sessionId'], 'playerId': pid, 'action': 'fold'})
+    after = call('GET', '/api/me', query=f'playerId={pid}')[2]['hands']
+    assert after == before + 1, (before, after)                 # live, no scan needed
+
+
+def test_me_never_500s_on_store_fault(monkeypatch):
+    """/api/me degrades to 0-state on a store fault, never 500s."""
+    monkeypatch.setattr(s.PLAYERS, 'get',
+                        lambda p: (_ for _ in ()).throw(RuntimeError('ddb')))
+    code, _, me = call('GET', '/api/me', query='playerId=ZZ-fault')
+    assert code == 200, (code, me)
 
 
 def test_merge_decrements_total_players_once(monkeypatch):
