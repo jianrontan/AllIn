@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 env:
-  POSTFLOP_TABLES_RELEASE: assets-v1
+  POSTFLOP_TABLES_RELEASE: assets-v2
 
 jobs:
   full-test-suite:
@@ -41,14 +41,14 @@ jobs:
           gh release download "$POSTFLOP_TABLES_RELEASE" \
             -p "postflop_table_flop.npz" \
             -p "postflop_table_turn.npz" \
-            -p "blueprint_final.db" \
+            -p "blueprint_final_v2.db" \
             -D /tmp/release-assets/
           mv /tmp/release-assets/postflop_table_*.npz \
             backend/bot/analysis/abstractions/
-          mv /tmp/release-assets/blueprint_final.db \
+          mv /tmp/release-assets/blueprint_final_v2.db \
             backend/bot/analysis/blueprints/
           chmod a+r backend/bot/analysis/abstractions/postflop_table_*.npz \
-                    backend/bot/analysis/blueprints/blueprint_final.db
+                    backend/bot/analysis/blueprints/blueprint_final_v2.db
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
