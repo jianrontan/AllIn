@@ -66,24 +66,30 @@ jobs:
         run: |
           mkdir -p backend/bot/analysis/abstractions/
           mkdir -p backend/bot/analysis/blueprints/
+          mkdir -p backend/bot/analysis/opponent_models/
           gh release download "$POSTFLOP_TABLES_RELEASE" \
             -p "postflop_table_flop.npz" \
             -p "postflop_table_turn.npz" \
             -p "blueprint_final_v2.db" \
+            -p "model_population.json" \
             -D /tmp/release-assets/
           mv /tmp/release-assets/postflop_table_*.npz \
             backend/bot/analysis/abstractions/
           mv /tmp/release-assets/blueprint_final_v2.db \
             backend/bot/analysis/blueprints/
+          mv /tmp/release-assets/model_population.json \
+            backend/bot/analysis/opponent_models/
           # gh release download creates files with restrictive perms (0600).
           # The Dockerfile's `USER allin` runs gunicorn as UID 10001, which
           # can't open a root-only file COPY'd in. Make these world-readable
           # so the non-root container user can load them. (The local docker
           # build doesn't hit this because the file's local perms are 0644.)
           chmod a+r backend/bot/analysis/abstractions/postflop_table_*.npz \
-                    backend/bot/analysis/blueprints/blueprint_final_v2.db
+                    backend/bot/analysis/blueprints/blueprint_final_v2.db \
+                    backend/bot/analysis/opponent_models/model_population.json
           ls -lh backend/bot/analysis/abstractions/postflop_table_*.npz \
-                 backend/bot/analysis/blueprints/blueprint_final_v2.db
+                 backend/bot/analysis/blueprints/blueprint_final_v2.db \
+                 backend/bot/analysis/opponent_models/model_population.json
 
       - name: Derive short SHA
         id: meta
