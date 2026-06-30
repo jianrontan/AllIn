@@ -1598,37 +1598,80 @@ _MIN_HANDS_MENU = (0, 10, 50, 100, 500, 1000)
 # leaderboard past that, and it bounds the per-entry payload.
 _LEADERBOARD_MAX = 200
 
-# Per-bot-version breakdown for /api/stats. version_totals() is a FULL hand-table scan (~25s on a
-# big local table) -- FAR too slow to run on the hottest endpoint's request path. So it lives in a
-# BACKGROUND-refreshed cache: /api/stats returns the last-known value instantly (never blocks) and a
-# daemon thread re-scans at most every _VERSION_TTL. {} until the first scan finishes. (The proper
-# fix at scale is version-keyed counters; this keeps the hot path fast meanwhile.)
-_VERSION_CACHE = {'data': {}, 'ts': 0.0}
-_VERSION_TTL_SECONDS = 120.0
+# Per-bot-version per-PLAYER aggregate for the leaderboard rows. version_aggregates() is a FULL
+# hand-table scan (~25s) -- far too slow for a request path. It USED to be cached PER WORKER, so the 2
+# gunicorn workers scanned on independent clocks and served leaderboard snapshots up to 2 min apart
+# (the board "flickered" / "wasn't synced" between refreshes). Now the scan result is a SINGLE SHARED
+# snapshot in the global store (GLOBAL.{get,put}_version_snapshot): ONE worker per window wins
+# GLOBAL.try_acquire_version_refresh(), runs the scan in a background thread, and publishes it; every
+# worker reads the SAME blob, so the board is coherent across workers. A short in-process cache avoids
+# a GetItem on every leaderboard hit. (NB the +EV card's per-version totals come from the shared
+# global COUNTERS, not this scan; this snapshot is only the per-player ranking rows.)
+_VERSION_TTL_SECONDS = 90.0               # snapshot older than this -> trigger a re-scan
+_VERSION_READ_TTL = 5.0                   # in-process cache of the shared-snapshot READ
+_VERSION_CACHE = {'data': {}, 'computedAt': 0, 'read_ts': 0.0}
 _VERSION_LOCK = threading.Lock()
 _VERSION_REFRESHING = {'v': False}
 
 
-def _refresh_version_cache():
+def _do_version_refresh():
+    """Run the slow recap scan and publish it as the shared snapshot. Runs only on the worker that won
+    the cross-worker lease, in a background thread, so no request ever blocks on the scan."""
     try:
-        _VERSION_CACHE['data'] = HANDS.version_aggregates()   # {'totals': {...}, 'byPlayer': {...}}
+        data = HANDS.version_aggregates()                  # {'totals': {...}, 'byPlayer': {...}}
+        GLOBAL.put_version_snapshot(data, int(time.time()))
     except Exception:
-        _LOG.warning("version aggregates refresh failed", exc_info=True)
+        _LOG.warning("version snapshot refresh failed", exc_info=True)
     finally:
-        _VERSION_CACHE['ts'] = time.time()
         with _VERSION_LOCK:
             _VERSION_REFRESHING['v'] = False
 
 
 def _version_data():
-    """Last-known version aggregates {'totals':..., 'byPlayer':...}; kicks a background re-scan when
-    stale. NEVER blocks (the scan is ~slow). Empty until the first scan finishes."""
-    if time.time() - _VERSION_CACHE['ts'] > _VERSION_TTL_SECONDS:
+    """Last-known SHARED version aggregates {'totals':..., 'byPlayer':...}: reads the shared snapshot
+    (briefly cached in-process) and, when it's stale, lets ONE worker (cross-worker lease) kick a
+    background re-scan. NEVER blocks. {} until the first scan finishes."""
+    now = time.time()
+    c = _VERSION_CACHE
+    if now - c['read_ts'] > _VERSION_READ_TTL:
+        try:
+            snap = GLOBAL.get_version_snapshot()
+        except Exception:
+            snap = None
+            _LOG.warning("version snapshot read failed", exc_info=True)
+        if snap is not None:
+            c['data'] = snap.get('data') or {}
+            c['computedAt'] = int(snap.get('computedAt') or 0)
+        c['read_ts'] = now
+    if now - c['computedAt'] > _VERSION_TTL_SECONDS:       # stale (or never computed) -> refresh
         with _VERSION_LOCK:
             if not _VERSION_REFRESHING['v']:
-                _VERSION_REFRESHING['v'] = True
-                threading.Thread(target=_refresh_version_cache, daemon=True).start()
-    return _VERSION_CACHE['data']
+                try:
+                    won = GLOBAL.try_acquire_version_refresh(lease_seconds=int(_VERSION_TTL_SECONDS))
+                except Exception:
+                    won = False
+                if won:
+                    _VERSION_REFRESHING['v'] = True
+                    threading.Thread(target=_do_version_refresh, daemon=True).start()
+    return c['data']
+
+
+_KNOWN_VERSIONS_CACHE = {'v': [], 'ts': 0.0}
+
+
+def _known_versions():
+    """Bot-version labels from the SHARED global COUNTERS (instant + coherent across workers) -- used
+    to validate the ?version= filter and populate the dropdown, so a cold per-worker scan can't make
+    one worker forget a version exists. Briefly cached (the counters are themselves ~5s-cached)."""
+    now = time.time()
+    c = _KNOWN_VERSIONS_CACHE
+    if now - c['ts'] > 5.0:
+        try:
+            c['v'] = sorted((GLOBAL.get().get('byVersion') or {}).keys())
+        except Exception:
+            pass                                            # keep last-known on a store fault
+        c['ts'] = now
+    return c['v']
 
 
 def _version_board(version, min_hands, accounts_only):
@@ -1673,7 +1716,10 @@ def _version_board(version, min_hands, accounts_only):
         rows.append({'handle': crow.get('handle') or 'Anonymous', 'hands': agg['hands'], 'netBB': net,
                      'bbPer100': round(net / agg['hands'] * 100.0, 2) if agg['hands'] else 0.0,
                      'isRegistered': bool(crow.get('isRegistered')), '_pid': cid})
-    rows.sort(key=lambda r: r['bbPer100'], reverse=True)
+    # Rank by NET BB desc (ties: more hands first). bb/100 stays as a secondary display stat; ranking
+    # by rate made the Net BB column non-monotonic (a +20-over-2-hands row above +280-over-150), which
+    # read as "BB/hand not aligned with Net BB". min_hands still gates out tiny-sample noise.
+    rows.sort(key=lambda r: (r['netBB'], r['hands']), reverse=True)
     return rows[:_LEADERBOARD_MAX]
 
 
@@ -1774,13 +1820,21 @@ def leaderboard():
     accounts_only = request.args.get('accounts_only', '').lower() in ('1', 'true', 'yes')
     you = request.args.get('you') or None        # the caller's OWN playerId, to mark their row
     version = request.args.get('version') or None
-    # VALIDATE version against the KNOWN set before it ever keys the cache -- an arbitrary client
-    # string would otherwise mint unbounded _LEADERBOARD_CACHE entries (memory-exhaustion DoS).
-    # Unknown -> treat as 'all'. (Empty known-set early on -> everything is 'all', harmless.)
-    if version and version != 'all' and version not in (_version_data().get('totals') or {}):
-        version = None
+    # VALIDATE version against the KNOWN set (from the SHARED global counters -- instant + coherent,
+    # never the cold per-worker scan) before it keys the cache: an arbitrary client string would
+    # otherwise mint unbounded _LEADERBOARD_CACHE entries (memory-exhaustion DoS).
+    known = _known_versions()
     if version == 'all':
         version = None                           # None -> the recap board summed across all versions
+    elif version and version not in known:
+        version = None                           # unknown label -> 'all' (bounds the cache keyspace)
+    # A KNOWN per-version cut whose recap snapshot hasn't landed yet (cold start, or right after a new
+    # version's first hands while the ~90s shared scan catches up): report `pending` rather than
+    # SILENTLY downgrading to 'all' (which would show the wrong cut on the v2 tab). The client renders
+    # "updating…" until the snapshot lands. 'all' (version is None) keeps its lifetime cold-fallback.
+    if version is not None and version not in (_version_data().get('totals') or {}):
+        return jsonify({'players': [], 'total': 0, 'yourRank': None,
+                        'versions': known, 'pending': True})
     # Cache the FULL board (with an internal '_pid' for caller-row matching) per
     # (version, min_hands, accounts_only); pagination + the per-caller 'isYou' are applied AFTER the
     # cache, so page/offset and 'you' don't multiply cache keys. EVERY cut (incl. 'all') ranks from
@@ -1791,7 +1845,7 @@ def leaderboard():
     now = time.time()
     # 'all' (version is None) can fall back to the durable lifetime player-store board when the recap
     # aggregate is cold/empty. PlayerStore.top(include_id=True) rows are shaped EXACTLY like
-    # _version_board rows (handle/hands/netBB/bbPer100/isRegistered/_pid, sorted by bb/100), so
+    # _version_board rows (handle/hands/netBB/bbPer100/isRegistered/_pid, sorted by Net BB), so
     # pagination/yourRank/isYou work identically. In prod the lifetime board ~= the recap board; they
     # only diverge on seeded dev data.
     def _lifetime_board():
@@ -1828,6 +1882,29 @@ def leaderboard():
                     full = _lifetime_board() if version is None else []
                 except Exception:
                     full = []
+    # LIVE caller row: the board is the ~90s shared snapshot, so the caller's OWN row lags their latest
+    # hand -- while the "You" header and the +EV card update instantly off the live counters, which makes
+    # a stale own-row look broken. For the 'all' cut, overlay the caller's LIVE lifetime PlayerStore
+    # counter (version-blind = their all-versions total, the SAME source as /api/me) onto their row and
+    # re-rank, so YOUR row is always current even while everyone else's comes from the snapshot. Copy --
+    # never mutate the cached board. (Per-version cuts have no per-player live counter, so they still
+    # track the snapshot; only refresh an EXISTING row -- a brand-new/sub-min-hands player appears once
+    # the snapshot catches up.)
+    if you and version is None:
+        try:
+            live = PLAYERS.get(you)
+        except Exception:
+            live = None
+        if live and not live.get('merged_into') and any(r.get('_pid') == you for r in full):
+            h = int(live.get('hands') or 0)
+            net = round(float(live.get('netBB') or 0.0), 2)
+            full = [dict(r) for r in full]                       # copy; the cached list is shared
+            for r in full:
+                if r.get('_pid') == you:
+                    r['hands'], r['netBB'] = h, net
+                    r['bbPer100'] = round(net / h * 100.0, 2) if h else 0.0
+                    break
+            full.sort(key=lambda r: (r['netBB'], r['hands']), reverse=True)
     # The caller's 1-based rank in the FULL board (page-independent) so the client can open the
     # page that contains them; None if they're off the board (sub-min-hands, or beyond the cap).
     your_rank = next((i + 1 for i, r in enumerate(full) if you and r.get('_pid') == you), None)
@@ -1839,7 +1916,7 @@ def leaderboard():
             row['isYou'] = True
         out.append(row)
     return jsonify({'players': out, 'total': len(full), 'yourRank': your_rank,
-                    'versions': sorted((_version_data().get('totals') or {}).keys())})
+                    'versions': known})
 
 
 @app.route('/api/me', methods=['GET'])

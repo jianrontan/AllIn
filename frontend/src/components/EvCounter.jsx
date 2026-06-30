@@ -115,10 +115,6 @@ function EvCounter({ compact = false, version: versionProp, onVersionChange }) {
 
     return (
         <div className="relative rounded-2xl border border-neutral-800 bg-neutral-900/60 px-6 py-4 text-center">
-            {/* Dropdown pinned to the top-right corner so the centered title stays centered. */}
-            <div className="absolute top-3 right-3">
-                <VersionFilter value={version} onChange={setVersion} versions={versions} />
-            </div>
             <div className="mb-1">
                 <span className="text-xs uppercase tracking-[0.2em] text-neutral-500">Bot vs humans</span>
             </div>
@@ -133,6 +129,12 @@ function EvCounter({ compact = false, version: versionProp, onVersionChange }) {
                     ? <>over {DASH} hands · {DASH} players</>
                     : <>over {hands.toLocaleString()} hands{players != null
                         ? <> · {players.toLocaleString()} players</> : null}</>}
+            </div>
+            {/* Version dropdown: on mobile it sits in normal flow BELOW the stats (centered), so it never
+                crowds the centered header on the narrow card; on desktop (sm+) the wider card pins it to
+                the top-right corner (absolute, so its DOM order here doesn't affect the desktop position). */}
+            <div className="mt-3 flex justify-center sm:mt-0 sm:block sm:absolute sm:top-3 sm:right-3">
+                <VersionFilter value={version} onChange={setVersion} versions={versions} />
             </div>
         </div>
     );

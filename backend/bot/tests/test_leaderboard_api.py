@@ -169,19 +169,57 @@ def test_leaderboard_version_cuts():
     _seed_recaps(pid, 'v1', 10.0, 60)        # 60 hands
     _seed_recaps(pid, 'v2', 6.0, 40)         # 40 hands
     s.PLAYERS.create_if_absent(pid)
+    # The 'all' cut overlays the CALLER's own row with their LIVE PlayerStore counter (so a player's own
+    # row updates per-hand instead of lagging the ~90s snapshot). Seed that counter to match the recaps
+    # (100 hands) so the overlay is consistent -- mirrors prod, where both are written per hand.
+    for _ in range(60):
+        s.PLAYERS.record_hand_result(pid, 5.0)   # v1: 10 chips / 2 = 5 BB
+    for _ in range(40):
+        s.PLAYERS.record_hand_result(pid, 3.0)   # v2: 6 chips / 2 = 3 BB
     s._PLAYER_ROWS_CACHE['data'] = None      # bust the cached players-scan
     s._LEADERBOARD_CACHE.clear()             # bust any board cached before this seed
-    s._refresh_version_cache()               # populate byVersion synchronously
+    # v1/v2 are now "known" from the global COUNTERS (the version-validation source), not the recap
+    # scan -- so seed those, then publish the SHARED recap snapshot synchronously (replaces the old
+    # per-worker _refresh_version_cache). Bust both read caches so the endpoint sees it this turn.
+    s.GLOBAL.record_hand_result(0.0, version='v1')
+    s.GLOBAL.record_hand_result(0.0, version='v2')
+    s._KNOWN_VERSIONS_CACHE['ts'] = 0.0
+    s._do_version_refresh()                  # scan recaps -> shared snapshot
+    s._VERSION_CACHE['read_ts'] = 0.0        # force a re-read of the fresh snapshot
 
     code, _, lb = call('GET', '/api/leaderboard', query=f'version=all&min_hands=0&you={pid}')
     assert code == 200 and 'total' in lb and 'yourRank' in lb and 'versions' in lb
     assert all('_pid' not in row for row in lb['players'])      # internal id never leaked
     me_row = next((r for r in lb['players'] if r.get('isYou')), None)
-    assert me_row and me_row['hands'] == 100, me_row            # all = v1 + v2
+    assert me_row and me_row['hands'] == 100, me_row            # all = v1+v2 (live counter, overlaid)
 
     code, _, lb1 = call('GET', '/api/leaderboard', query=f'version=v1&min_hands=0&you={pid}')
     v1_row = next((r for r in lb1['players'] if r.get('isYou')), None)
     assert v1_row and v1_row['hands'] == 60, v1_row             # the v1 cut isolates
+
+
+def test_leaderboard_caller_row_is_live_overlay():
+    """The caller's OWN 'all' row reflects their LIVE PlayerStore counter, not the lagging ~90s shared
+    snapshot -- so a player's row updates per hand (like the +EV card / 'You' header) instead of waiting
+    for the next scan. (Per-version cuts have no per-player live counter, so they still track the snapshot.)"""
+    pid = 'LIVE-overlay'
+    _seed_recaps(pid, 'v2', 4.0, 80)         # snapshot will show 80 hands
+    s.PLAYERS.create_if_absent(pid)
+    for _ in range(80):                      # counter matches the snapshot to start
+        s.PLAYERS.record_hand_result(pid, 2.0)
+    s.GLOBAL.record_hand_result(0.0, version='v2')
+    s._PLAYER_ROWS_CACHE['data'] = None
+    s._LEADERBOARD_CACHE.clear()
+    s._KNOWN_VERSIONS_CACHE['ts'] = 0.0
+    s._do_version_refresh()                  # publish the 80-hand snapshot
+    s._VERSION_CACHE['read_ts'] = 0.0
+    # Play ONE more hand: the COUNTER bumps to 81, but the snapshot is NOT re-scanned (it lags ~90s).
+    s.PLAYERS.record_hand_result(pid, 9.0)
+    s._PLAYER_ROWS_CACHE['data'] = None
+    s._LEADERBOARD_CACHE.clear()
+    code, _, lb = call('GET', '/api/leaderboard', query=f'version=all&min_hands=0&you={pid}')
+    me_row = next((r for r in lb['players'] if r.get('isYou')), None)
+    assert me_row and me_row['hands'] == 81, me_row      # live counter (81), NOT the stale snapshot (80)
 
 
 def test_me_is_counter_based_and_live():

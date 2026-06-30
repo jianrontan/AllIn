@@ -23,15 +23,30 @@ function Leaderboard({ title, minHands = 50, pageSize = 20, version = 'all' }) {
         setPage(0);
     }
 
+    // Poll every 30s (and on returning to the tab) so the board stays in sync with the +EV card as
+    // hands are played -- the board used to fetch ONCE per filter/page change and then sit frozen
+    // while the card kept refreshing, which read as "leaderboard not synced with the tracker".
     useEffect(() => {
         let alive = true;
-        setErr(null);
-        getLeaderboard({ n: pageSize, minHands: effMinHands, accountsOnly, offset: page * pageSize, version })
-            .then((d) => alive && setData({
-                players: d.players || [], total: d.total || 0, yourRank: d.yourRank ?? null,
-            }))
-            .catch((e) => alive && setErr(e.message));
-        return () => { alive = false; };
+        const load = () => {
+            if (document.hidden) return;                 // don't poll a backgrounded tab
+            getLeaderboard({ n: pageSize, minHands: effMinHands, accountsOnly,
+                             offset: page * pageSize, version })
+                .then((d) => { if (!alive) return;
+                    setErr(null);
+                    setData({
+                        players: d.players || [], total: d.total || 0,
+                        yourRank: d.yourRank ?? null, pending: !!d.pending,
+                    });
+                })
+                .catch((e) => alive && setErr(e.message));
+        };
+        load();
+        const id = setInterval(load, 30000);
+        const onVis = () => { if (!document.hidden) load(); };
+        document.addEventListener('visibilitychange', onVis);
+        return () => { alive = false; clearInterval(id);
+                       document.removeEventListener('visibilitychange', onVis); };
     }, [accountsOnly, version, page, effMinHands, pageSize]);
 
     const total = data?.total || 0;
@@ -40,8 +55,9 @@ function Leaderboard({ title, minHands = 50, pageSize = 20, version = 'all' }) {
     // The caller's rank (page-independent) + the page that holds them, for the "Find me" jump.
     const myRank = data?.yourRank ?? null;
     const myPage = myRank != null ? Math.floor((myRank - 1) / pageSize) : null;
+    const pending = !!data?.pending;
     const desc = `${accountsOnly ? 'Signed-in accounts' : 'All players (incl. anonymous)'}`
-        + ` with ${effMinHands}+ hands, ranked by BB/hand.`;
+        + ` with ${effMinHands}+ hands, ranked by Net BB.`;
 
     // Switching the filter resets to the first page (the result set changes).
     const switchFilter = (val) => { if (val !== accountsOnly) { setAccountsOnly(val); setPage(0); } };
@@ -62,16 +78,24 @@ function Leaderboard({ title, minHands = 50, pageSize = 20, version = 'all' }) {
                     ))}
                 </div>
             </div>
-            <p className="text-[11px] text-neutral-600 mb-3">{desc}</p>
+            <p className="text-[11px] text-neutral-600 mb-1">{desc}</p>
+            {!err && data && !pending && rows.length > 0 && (
+                <p className="text-[11px] text-neutral-700 mb-3 tabular-nums">
+                    showing {rows.length} of {total} · min {effMinHands} hands
+                </p>
+            )}
             {err && <p className="text-sm text-rose-400">{err}</p>}
-            {!err && data && rows.length === 0 && (
+            {!err && pending && (
+                <p className="text-sm text-neutral-600">Updating…</p>
+            )}
+            {!err && data && !pending && rows.length === 0 && (
                 <p className="text-sm text-neutral-600">
                     {page > 0
                         ? 'No players on this page.'
                         : `Only signed-in players make the leaderboard — sign in and play ${minHands}+ hands to claim a spot.`}
                 </p>
             )}
-            {!err && rows.length > 0 && (
+            {!err && !pending && rows.length > 0 && (
                 <>
                     <table className="w-full text-sm">
                         <thead>
@@ -88,8 +112,8 @@ function Leaderboard({ title, minHands = 50, pageSize = 20, version = 'all' }) {
                                 // Defensive defaults: a malformed row must not crash the table.
                                 const hands = Number(r.hands) || 0;
                                 const net = Number(r.netBB) || 0;
-                                // BB/hand, matching the bot's EvCounter (net ÷ hands). Ranking is
-                                // unchanged: the backend still sorts by bbPer100 (this ×100).
+                                // BB/hand, matching the bot's EvCounter (net ÷ hands). Secondary stat:
+                                // the backend ranks rows by Net BB, so this column isn't monotonic.
                                 const bbPerHand = hands ? net / hands : 0;
                                 const rank = page * pageSize + i + 1;   // continue across pages
                                 const isYou = !!r.isYou;                 // the caller's own row (server-marked)
@@ -118,7 +142,7 @@ function Leaderboard({ title, minHands = 50, pageSize = 20, version = 'all' }) {
                                             {hands.toLocaleString()}
                                         </td>
                                         <td className="py-1.5 text-right tabular-nums text-neutral-400">
-                                            {net > 0 ? '+' : ''}{net.toLocaleString()}
+                                            {net > 0 ? '+' : ''}{net.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                         </td>
                                     </tr>
                                 );

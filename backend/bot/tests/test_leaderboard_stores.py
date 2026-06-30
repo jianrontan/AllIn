@@ -75,6 +75,23 @@ def test_record_hand_and_top_ordering():
     assert 'playerId' not in board[0] and 'email' not in board[0]
 
 
+def test_top_ranks_by_net_bb():
+    """Leaderboard ranks by NET BB (total winnings), NOT by rate: a high-rate / low-volume player
+    ranks BELOW a higher total-winnings player. This is the change that fixed the 'BB/hand column not
+    aligned with Net BB' look (rate-ranking made the Net BB column non-monotonic)."""
+    s = InMemoryPlayerStore()
+    for _ in range(60):
+        s.record_hand_result('p_rate', 3.0)        # +180 net, 300 bb/100 (high rate, low volume)
+    for _ in range(300):
+        s.record_hand_result('p_big', 1.0)         # +300 net, 100 bb/100 (lower rate, more winnings)
+    s.upsert_handle('p_rate', 'Rate')
+    s.upsert_handle('p_big', 'Big')
+    board = s.top(n=10, min_hands=50)
+    handles = [r['handle'] for r in board]
+    assert handles.index('Big') < handles.index('Rate')   # +300 net outranks +180 net
+    assert board[0]['handle'] == 'Big' and board[0]['netBB'] == 300.0
+
+
 def test_accounts_only_filter():
     s = InMemoryPlayerStore()
     for _ in range(60):
@@ -258,6 +275,20 @@ def test_global_stats_version_counters():
     assert sum(b['hands'] for b in d['byVersion'].values()) == 3
 
 
+def test_global_version_snapshot_roundtrip():
+    """Shared version snapshot: None until set, then round-trips; the refresh lease admits exactly
+    one holder per window (so only one worker runs the slow recap scan, keeping the board coherent)."""
+    g = InMemoryGlobalStatsStore()
+    assert g.get_version_snapshot() is None
+    data = {'totals': {'v2': {'hands': 3, 'humanNetBB': 1.5}},
+            'byPlayer': {'v2': {'p1': {'hands': 3, 'humanNetBB': 1.5}}}}
+    g.put_version_snapshot(data, 1000)
+    snap = g.get_version_snapshot()
+    assert snap['computedAt'] == 1000 and snap['data'] == data
+    assert g.try_acquire_version_refresh(lease_seconds=60) is True    # first wins
+    assert g.try_acquire_version_refresh(lease_seconds=60) is False   # locked out this window
+
+
 def test_factories_default_memory():
     os.environ.pop('ALLIN_STORE_BACKEND', None)
     assert isinstance(make_player_store(), InMemoryPlayerStore)
@@ -314,6 +345,15 @@ def test_dynamodb_global(dynamo):
     d = g.get()
     assert d['byVersion']['v2'] == {'hands': 2, 'netBB': 4.0}
     assert d['totalHands'] == 3                       # totals still bump for versioned hands
+    # Shared version snapshot on real DynamoDB (moto): the JSON blob round-trips (separate item) and
+    # the refresh lease is a working cross-worker lock (conditional write admits one holder/window).
+    assert g.get_version_snapshot() is None
+    snap_data = {'totals': {'v2': {'hands': 2, 'humanNetBB': 4.0}}, 'byPlayer': {}}
+    g.put_version_snapshot(snap_data, 12345)
+    got = g.get_version_snapshot()
+    assert got['computedAt'] == 12345 and got['data'] == snap_data
+    assert g.try_acquire_version_refresh(lease_seconds=120) is True
+    assert g.try_acquire_version_refresh(lease_seconds=120) is False
 
 
 def test_dynamodb_link_account_merges_anon_stats(dynamo):

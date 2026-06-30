@@ -117,6 +117,12 @@ def _bb_per_100(row):
     return (row['netBB'] / h * 100.0) if h else 0.0
 
 
+def _net_rank_key(row):
+    """Leaderboard sort key: NET BB desc, ties broken by hand count (more hands =
+    higher when net is equal). bb/100 stays as a secondary display stat."""
+    return (float(row.get('netBB') or 0.0), int(row.get('hands') or 0))
+
+
 class PlayerStore(ABC):
     @abstractmethod
     def get(self, player_id):
@@ -139,10 +145,10 @@ class PlayerStore(ABC):
 
     @abstractmethod
     def top(self, n=10, min_hands=50, accounts_only=False, include_id=False):
-        """Players with >= min_hands, ranked by bb/100 desc, redacted for public
-        display. accounts_only restricts to linked accounts (the ranked board).
-        include_id=True adds an internal '_pid' per row for caller-row marking (the
-        leaderboard endpoint strips it before responding)."""
+        """Players with >= min_hands, ranked by NET BB desc (ties broken by hands),
+        redacted for public display. accounts_only restricts to linked accounts (the
+        ranked board). include_id=True adds an internal '_pid' per row for caller-row
+        marking (the leaderboard endpoint strips it before responding)."""
 
     @abstractmethod
     def link_account(self, player_id, *, email, auth_provider, provider_sub):
@@ -256,7 +262,7 @@ class InMemoryPlayerStore(PlayerStore):
                     if (r.get('hands') or 0) >= min_hands
                     and not r.get('merged_into')
                     and (not accounts_only or r.get('isRegistered'))]
-        rows.sort(key=_bb_per_100, reverse=True)
+        rows.sort(key=_net_rank_key, reverse=True)
         return [self.public_row(r, include_id) for r in rows[:n]]
 
     def link_account(self, player_id, *, email, auth_provider, provider_sub):
@@ -354,7 +360,13 @@ class DynamoDBPlayerStore(PlayerStore):
         return out
 
     def get(self, player_id):
-        return self._clean(self._table.get_item(Key={'playerId': player_id}).get('Item'))
+        # ConsistentRead so the "You" header (/api/me) and the merge-chain follow read back a
+        # counter that was JUST incremented (record_hand_result ADDs per hand). Default eventually-
+        # consistent reads can return pre-increment totals (stale by ms), making the user's own +/-
+        # look like it lags a hand behind. (moto always reads strongly-consistent; this only bites
+        # on real DynamoDB.)
+        return self._clean(self._table.get_item(
+            Key={'playerId': player_id}, ConsistentRead=True).get('Item'))
 
     def create_if_absent(self, player_id):
         try:
@@ -482,7 +494,7 @@ class DynamoDBPlayerStore(PlayerStore):
                                     ExclusiveStartKey=resp['LastEvaluatedKey'])
             items.extend(resp.get('Items', []))
         rows = [self._clean(it) for it in items]
-        rows.sort(key=_bb_per_100, reverse=True)
+        rows.sort(key=_net_rank_key, reverse=True)
         return [self.public_row(r, include_id) for r in rows[:n]]
 
     def link_account(self, player_id, *, email, auth_provider, provider_sub):

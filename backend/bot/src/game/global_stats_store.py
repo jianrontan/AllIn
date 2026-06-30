@@ -11,11 +11,42 @@ ALLIN_STORE_BACKEND. One logical singleton row:
 totalNetBB is the HUMAN field's net; the bot's net is its negation (what the
 "+EV counter" headlines). Updates are atomic (DynamoDB ADD on the singleton).
 """
+import json
+import logging
 import os
 import threading
 import time
 
+_LOG = logging.getLogger(__name__)
 _SINGLETON_ID = 'global'
+# Shared per-version aggregate snapshot lives in its OWN item (separate from the counter row) so the
+# leaderboard reads one coherent blob across ALL gunicorn workers instead of each worker running its
+# own recap scan on an independent clock (the old per-worker cache flickered between workers).
+_SNAPSHOT_ID = 'version_snapshot'
+# Cap the per-player map stored in the snapshot so the DynamoDB item can't exceed the 400KB limit as
+# the player base grows. The leaderboard only shows the top _LEADERBOARD_MAX (200) anyway; 500/version
+# leaves headroom for merge-resolution. At launch volumes this never truncates. NB the cap is taken by
+# the SAME key the board ranks on (Net BB) -- capping by hands would let a high-net/low-hands player be
+# evicted before ranking and silently vanish from the board past the cap.
+_SNAPSHOT_PLAYER_CAP = 500
+
+
+def _cap_snapshot_by_player(data, cap=_SNAPSHOT_PLAYER_CAP):
+    """Bound the snapshot: keep only the top `cap` players per version by Net BB (the board's ranking
+    key; hands as tiebreak). Returns (capped_data, truncated_bool). 'totals' are untouched (exact)."""
+    by_player = (data or {}).get('byPlayer') or {}
+    capped, truncated = {}, False
+    for ver, pmap in by_player.items():
+        items = sorted(pmap.items(),
+                       key=lambda kv: ((kv[1] or {}).get('humanNetBB', 0.0),
+                                       (kv[1] or {}).get('hands', 0)),
+                       reverse=True)
+        if len(items) > cap:
+            items, truncated = items[:cap], True
+        capped[ver] = dict(items)
+    out = dict(data or {})
+    out['byPlayer'] = capped
+    return out, truncated
 
 
 class GlobalStatsStore:
@@ -41,11 +72,31 @@ class GlobalStatsStore:
         player, so undo that one count (otherwise totalPlayers over-counts vs the board)."""
         raise NotImplementedError
 
+    def get_version_snapshot(self):
+        """Return the SHARED per-version aggregate snapshot, or None if never computed:
+            {'data': {'totals': {...}, 'byPlayer': {...}}, 'computedAt': <int epoch>}
+        Shared across workers so every worker serves the same leaderboard numbers."""
+        raise NotImplementedError
+
+    def put_version_snapshot(self, data, computed_at):
+        """Persist the shared per-version aggregate snapshot (the recap-scan result). Called by
+        whichever worker won try_acquire_version_refresh(). `data` = {'totals':..., 'byPlayer':...}."""
+        raise NotImplementedError
+
+    def try_acquire_version_refresh(self, lease_seconds=90):
+        """Best-effort cross-worker lock: return True iff THIS caller may run the slow recap scan
+        now (and should then call put_version_snapshot). Only one worker per lease window wins;
+        the rest serve the existing snapshot. The lease auto-expires so a crashed holder can't
+        wedge refreshes forever."""
+        raise NotImplementedError
+
 
 class InMemoryGlobalStatsStore(GlobalStatsStore):
     def __init__(self):
         self._d = {'totalHands': 0, 'totalNetBB': 0.0, 'totalPlayers': 0}
         self._byv = {}                     # {version: {'hands': int, 'netBB': float}}
+        self._snapshot = None              # {'data':..., 'computedAt': int}
+        self._refresh_lease = 0.0          # epoch until which a refresh is "held"
         self._lock = threading.Lock()
 
     def get(self):
@@ -73,6 +124,24 @@ class InMemoryGlobalStatsStore(GlobalStatsStore):
         with self._lock:
             self._d['totalPlayers'] = max(0, self._d['totalPlayers'] - 1)
 
+    def get_version_snapshot(self):
+        with self._lock:
+            if self._snapshot is None:
+                return None
+            return {'data': self._snapshot['data'], 'computedAt': self._snapshot['computedAt']}
+
+    def put_version_snapshot(self, data, computed_at):
+        with self._lock:
+            self._snapshot = {'data': data, 'computedAt': int(computed_at)}
+
+    def try_acquire_version_refresh(self, lease_seconds=90):
+        with self._lock:
+            now = time.time()
+            if now >= self._refresh_lease:
+                self._refresh_lease = now + lease_seconds
+                return True
+            return False
+
 
 class DynamoDBGlobalStatsStore(GlobalStatsStore):
     """Atomic counters on one singleton item. boto3 is lazy-imported. Exercised in
@@ -81,6 +150,8 @@ class DynamoDBGlobalStatsStore(GlobalStatsStore):
     def __init__(self, table_name, region=None, endpoint_url=None):
         import boto3
         from botocore.config import Config
+        from botocore.exceptions import ClientError
+        self._ClientError = ClientError
         kwargs = {'config': Config(retries={'mode': 'adaptive', 'max_attempts': 5})}
         if region:
             kwargs['region_name'] = region
@@ -143,6 +214,45 @@ class DynamoDBGlobalStatsStore(GlobalStatsStore):
             Key={'statId': _SINGLETON_ID},
             UpdateExpression='ADD totalPlayers :neg',
             ExpressionAttributeValues={':neg': -1})
+
+    def get_version_snapshot(self):
+        item = self._table.get_item(Key={'statId': _SNAPSHOT_ID}).get('Item') or {}
+        snap = item.get('snapshot')
+        if not snap:
+            return None
+        try:
+            data = json.loads(snap)
+        except (ValueError, TypeError):
+            return None
+        ca = item.get('computedAt') or 0
+        return {'data': data, 'computedAt': int(ca)}
+
+    def put_version_snapshot(self, data, computed_at):
+        capped, truncated = _cap_snapshot_by_player(data)
+        if truncated:
+            _LOG.warning("version snapshot byPlayer truncated to top %d/version", _SNAPSHOT_PLAYER_CAP)
+        # SET (not put_item) so it never clobbers refreshLease on the same item. `snapshot` is a
+        # DynamoDB RESERVED WORD (and moto doesn't enforce that -- it only fails on real DynamoDB /
+        # DynamoDB Local), so alias both names via ExpressionAttributeNames.
+        self._table.update_item(
+            Key={'statId': _SNAPSHOT_ID},
+            UpdateExpression='SET #snap = :s, #ca = :c',
+            ExpressionAttributeNames={'#snap': 'snapshot', '#ca': 'computedAt'},
+            ExpressionAttributeValues={':s': json.dumps(capped), ':c': int(computed_at)})
+
+    def try_acquire_version_refresh(self, lease_seconds=90):
+        now = int(time.time())
+        try:
+            self._table.update_item(
+                Key={'statId': _SNAPSHOT_ID},
+                UpdateExpression='SET refreshLease = :lease',
+                ConditionExpression='attribute_not_exists(refreshLease) OR refreshLease < :now',
+                ExpressionAttributeValues={':lease': now + int(lease_seconds), ':now': now})
+            return True
+        except self._ClientError as e:
+            if e.response.get('Error', {}).get('Code') == 'ConditionalCheckFailedException':
+                return False
+            raise
 
     @staticmethod
     def create_table_if_missing(table_name, region=None, endpoint_url=None):

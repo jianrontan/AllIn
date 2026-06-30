@@ -10,6 +10,30 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-029 — Leaderboard shared snapshot used `snapshot`, a DynamoDB reserved word → every refresh 500'd on real DynamoDB
+
+| | |
+|---|---|
+| **Date** | 2026-06-30 |
+| **Area** | Global stats store (`game/global_stats_store.py` `put_version_snapshot`) |
+| **Severity** | High (prod-only; leaderboard per-version boards never populate) · **Status** | Fixed |
+
+**Summary.** The new shared per-version leaderboard snapshot (added to fix cross-worker flicker) persisted via `update_item(UpdateExpression='SET snapshot = :s, computedAt = :c')`. `snapshot` is a **DynamoDB reserved word**, so real DynamoDB rejects the expression with `ValidationException: Attribute name is a reserved keyword; reserved keyword: snapshot`. The publish (`_do_version_refresh` background thread) therefore always failed: the `version_snapshot` item never got a `snapshot` attribute, so `_version_data()` stayed `{}` forever → every per-version leaderboard cut stuck on `pending` ("Updating…") and `'all'` permanently fell back to the lifetime board instead of the recap snapshot.
+
+**Symptom.** Running `dev_launch.py --refresh` against DynamoDB Local: backend log `WARNING __main__: version snapshot refresh failed` with a traceback ending in `botocore.exceptions.ClientError: ValidationException … reserved keyword: snapshot` from `global_stats_store.py:put_version_snapshot`. The v2 leaderboard tab stayed empty/"Updating…".
+
+**Root cause.** Reserved attribute names must be aliased via `ExpressionAttributeNames` in any DynamoDB expression. `snapshot` was written as a literal name in the `SET` UpdateExpression. (`get_version_snapshot` reads via `get_item`+`item.get('snapshot')` — no expression — so it was unaffected; the bug was write-only. `try_acquire_version_refresh`'s `refreshLease` is not reserved, so the lease write succeeded — which is how the failing publish was even reached.)
+
+**Fix.** Alias both names: `UpdateExpression='SET #snap = :s, #ca = :c'` with `ExpressionAttributeNames={'#snap': 'snapshot', '#ca': 'computedAt'}`. Verified against DynamoDB Local: direct `put_version_snapshot`/`get_version_snapshot` round-trip + lease acquire/deny, then end-to-end on the running dev server (v2 board went `pending` → populated, ranked by Net BB).
+
+**Why not caught earlier.** Identical class to BUG-028: the test suite mocks DynamoDB with **moto**, which does **not** enforce reserved-word rules — `SET snapshot = …` passes under moto, so the snapshot round-trip test was green while the code was broken on real DynamoDB. Only DynamoDB Local (what `dev_launch` uses) or prod catches it. A 4-agent review of the diff also missed it (one agent explicitly judged the snapshot store "correct" — it reasoned about the lease/JSON/Decimal but not the reserved-word list, and trusted the green moto test).
+
+**Retrain impact.** None (serving infra only).
+
+**Lessons.** (1) moto ≠ DynamoDB — **again**: it validates neither float types (BUG-028) nor reserved words. Any new DynamoDB attribute name must be checked against the reserved-word list AND exercised on DynamoDB Local, not just moto. (2) A green CI run on a DynamoDB-store path is necessary but not sufficient; the real gate is a DynamoDB-Local round-trip. (3) Cheap structural defense: alias EVERY attribute name in expressions by default (the codebase already does this in `hand_store.version_aggregates`), so reserved words can never bite. (4) Reserved-word bugs are write-path-only here but silently degrade a read feature (the board) rather than erroring it — the failure surfaced as a stuck "Updating…", not a 500, making it easy to miss without watching the backend log.
+
+---
+
 ## BUG-028 — DynamoDB session lock wrote a float `expiry` → every `/api/game/*` 500'd against real DynamoDB
 
 | | |

@@ -509,6 +509,17 @@ function AiGame() {
     };
     useEffect(() => { fetchLifetime(); }, []);
 
+    // Always show the player their LATEST +/- when they return to the dashboard: refetch on window
+    // focus / tab-visible (in addition to on-mount + after-each-hand). /api/me reads the player's
+    // own counter with a consistent read, so this reflects every hand since they last looked.
+    useEffect(() => {
+        const onReturn = () => { if (!document.hidden) fetchLifetime(); };
+        window.addEventListener('focus', onReturn);
+        document.addEventListener('visibilitychange', onReturn);
+        return () => { window.removeEventListener('focus', onReturn);
+                       document.removeEventListener('visibilitychange', onReturn); };
+    }, []);
+
     // Check ONCE on mount whether the backend exposes the debug overlay
     // (ALLIN_DEBUG_OVERLAY). If it doesn't, the Debug button is hidden — no
     // dead toggle, no "No bot decisions yet" panel that never populates.
