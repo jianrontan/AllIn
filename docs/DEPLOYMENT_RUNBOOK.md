@@ -296,7 +296,8 @@ retroactively Git-connected through the dashboard).
 > level of subdomain) but NOT `*.allin.jianrontan.com` (two levels). Using a flat
 > `api-allin.jianrontan.com` stays within the free Universal SSL cert. The Lightsail
 > custom-domain feature provisions its own ACM cert for the same hostname, attached
-> to the public endpoint — required so origin TLS validates with CF Full mode.
+> to the public endpoint — required so origin TLS validates with CF Full (Strict) mode
+> (Cloudflare validates the origin ACM cert against a trusted CA on every origin hop).
 
 Add a **Cloudflare Rate Limiting rule** at this stage:
 
