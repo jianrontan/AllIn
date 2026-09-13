@@ -7,15 +7,15 @@ championship-level poker bots. It approximates **game-theory-optimal (GTO)**
 strategy through millions of iterations of self-play, serves that strategy
 through a **Flask** API, and exposes it in an interactive **React** platform.
 
-> 🔴 **Live at [allin.jianrontan.com](https://allin.jianrontan.com)** — play heads-up
+> **Live at [allin.jianrontan.com](https://allin.jianrontan.com)** — play heads-up
 > against the bot. Backend on AWS Lightsail + DynamoDB, frontend on Cloudflare Pages,
 > auth via Cognito + Google, edge (DNS/CDN/WAF) on Cloudflare.
 
 ---
 
-## 🎯 AI & Machine Learning Overview
+## AI & Machine Learning Overview
 
-### 🧠 The Intelligence Engine
+### The Intelligence Engine
 - **Monte Carlo CFR+ with external sampling**: each iteration samples chance and
   opponent actions, walking one trajectory through the game tree instead of the
   full exponential tree — making millions of training iterations tractable.
@@ -29,22 +29,26 @@ through a **Flask** API, and exposes it in an interactive **React** platform.
   **lossless 169-fine / 10-coarse equity-based preflop buckets** (one fine bucket per
   canonical hand — perfect preflop resolution) **+ distribution-aware (potential-aware)
   postflop buckets** clustered by Earth Mover's Distance over equity distributions
-  (prod v1 = 20 flop / 16 turn / 10 river; v2 = **30 / 24 / 10**, dev-served with the assets-v2 prod cutover pending).
+  (served v2 = **30** flop / **24** turn / **10** river; the earlier v1 = 20 / 16 / 10).
 
-### 📊 Trained Blueprint (active model)
+### Trained Blueprint (active model)
 ```
-Served blueprint (capped run, 25M-iteration snapshot — see Deployment):
-├── Algorithm:          Monte Carlo CFR+ with external sampling + Linear-CFR-style discount
-├── Training iterations: 25,550,000 (the least-exploitable snapshot; served as blueprint_final.db)
-├── Info sets:          128,177 (trained situations stored)
-├── Game:               Heads-up NLHE, 100 BB effective stacks (SB 1 / BB 2)
-└── Storage:            SQLite (incremental checkpoint + resume)
+Served blueprint — v2 (lossless-preflop / gamma=1 / 30-24 retrain):
+├── Algorithm:           Monte Carlo CFR+ with external sampling + Linear-CFR-style discount
+├── Training iterations: 52,500,000
+├── Info sets:           194,617 (trained situations stored)
+├── Discounts:           regret alpha = 1.5, strategy-sum gamma = 1.0
+├── Abstraction:         lossless 169-fine / 10-coarse preflop + 30 / 24 / 10 postflop
+├── File:                blueprint_final_v2.db
+├── Game:                Heads-up NLHE, 100 BB effective stacks (SB 1 / BB 2)
+└── Storage:             SQLite (incremental checkpoint + resume)
 ```
-*The served snapshot uses the earlier 30-bucket preflop scheme. A **lossless-preflop (169) +
-γ=1 + finer-postflop (30/24)** retrain is in progress (parallel MCCFR on a cloud box) and will
-replace it once it converges and beats the 25.5M on the BR/LBR scoreboard.*
+*The live values are reported by `GET /api/healthz` (blueprint filename + iteration count),
+which is the ground truth for what production is actually serving. The earlier v1 snapshot
+(`blueprint_final.db` — 25,550,000 iterations, 128,177 info sets, γ=2, 20/16/10 postflop) is
+retained in the repo but is no longer served.*
 
-### 🔬 Algorithmic Architecture
+### Algorithmic Architecture
 ```
 Training Pipeline:
 Random self-play deal → Monte Carlo CFR+ traversal → regret/strategy update →
@@ -61,7 +65,7 @@ SQLite checkpoint → automatic active-blueprint selection → API inference
 
 ---
 
-## 🚀 Why CFR+? (Algorithmic Highlights)
+## Why CFR+? (Algorithmic Highlights)
 
 - **External sampling** turns a full game-tree traversal into a single sampled
   path per iteration — the key to scaling to millions of iterations.
@@ -77,21 +81,22 @@ SQLite checkpoint → automatic active-blueprint selection → API inference
 
 ---
 
-## 🛠 Technical Stack
+## Technical Stack
 
-### 🐍 AI / ML Backend
+### AI / ML Backend
 - **Python 3.12** — core development language
 - **NumPy** — vectorized regret matching and best-response evaluation
 - **phevaluator** — O(1) hand evaluation via precomputed tables
 - **SQLite** — blueprint persistence with checkpoint/resume + read-while-writing
+  during training (the production image ships a read-only snapshot)
 
-### 🧮 Algorithms
+### Algorithms
 - **Monte Carlo CFR+** with **external sampling** and **Linear-CFR-style** discounting
 - **Nash-equilibrium approximation** through iterative self-play
 - **Feature engineering**: equity-based card bucketing, action abstraction, and
   position-aware information-set keys
 
-### 🌐 Full-Stack Integration
+### Full-Stack Integration
 - **Flask API** — strategy lookup + live game endpoints
 - **React + Vite frontend** — strategy explorer and play-vs-bot table
 - **PyPokerEngine** — used in the test harness for bot-vs-bot simulation
@@ -99,17 +104,19 @@ SQLite checkpoint → automatic active-blueprint selection → API inference
 
 ---
 
-## 🎯 Key Features
+## Key Features
 
-### 🤖 Strategy Engine
+### Strategy Engine
 - **Fast inference**: direct blueprint lookup from SQLite, no per-decision search.
-- **Distribution-aware abstractions**: lossless 169-fine/10-coarse decoupled preflop + potential-aware postflop buckets (prod v1 = 20/16/10, v2 = 30/24/10 dev-served; EMD-clustered equity distributions).
+- **Distribution-aware abstractions**: lossless 169-fine/10-coarse decoupled preflop +
+  potential-aware postflop buckets (served v2 = 30/24/10; earlier v1 = 20/16/10;
+  EMD-clustered equity distributions).
 - **Mixed-strategy output**: probability distributions over fold / call / bet /
   raise / all-in, sampled at play time.
 - **Honest "unknown" handling**: situations never reached in training report
   `found: false` rather than guessing.
 
-### 📊 Interactive Platform
+### Interactive Platform
 - **Strategy Explorer** — look up the blueprint's play for any spot:
   - *Hand Explorer*: enter real cards + a betting line, see the resulting
     info-set key and strategy.
@@ -118,7 +125,7 @@ SQLite checkpoint → automatic active-blueprint selection → API inference
 - **Play vs the Bot** — an interactive heads-up table against the trained AI,
   100 BB deep, with full action and pot tracking.
 
-### 🔬 Quality & Correctness
+### Quality & Correctness
 - **Exploitability scoring** via a vectorized best-response walk of the public
   game tree (`tests/run_evaluation.py`).
 - **Property-based testing** (Hypothesis) over the engine's semantic invariants —
@@ -127,7 +134,7 @@ SQLite checkpoint → automatic active-blueprint selection → API inference
 
 ---
 
-## 🛠 Getting Started
+## Getting Started
 
 ### Prerequisites
 - **Python 3.12**
@@ -158,7 +165,7 @@ npm install
 npm run dev                   # http://localhost:5173
 ```
 
-### 🎓 Train your own blueprint
+### Train your own blueprint
 ```bash
 cd backend/bot
 
@@ -179,13 +186,13 @@ Parallel training is `run_blueprint_trainer.py --workers N --merge-every 2000 --
 (resumes the same DB with `--resume`). The end-to-end cloud walkthrough (provision → connect →
 run → monitor → collect → tear down) lives in `docs/TRAININGFLOW.md`.
 
-### 📊 Using the platform
+### Using the platform
 1. Open the frontend at `http://localhost:5173`.
 2. **Strategy Explorer**: enter a hand + betting line (or build an info-set key)
    and get the GTO strategy with probabilities.
 3. **Play vs the Bot**: play heads-up against the AI and watch how it responds.
 
-### 📈 Measure blueprint quality
+### Measure blueprint quality
 ```bash
 cd backend/bot
 python tests/run_evaluation.py --samples 1000   # exploitability in mbb/hand (lower = better)
@@ -193,31 +200,32 @@ python tests/run_evaluation.py --samples 1000   # exploitability in mbb/hand (lo
 
 ---
 
-## 🗺 Roadmap
+## Roadmap
 
-- ✅ **Blueprint training** — Monte Carlo CFR+ with SQLite checkpoint/resume
-- ✅ **Serving + Play-vs-bot** — Flask API + React platform
-- ✅ **Exploitability evaluation** — best-response convergence scoreboard
-- ✅ **Hand-level Bayesian range tracker** — opponent-range belief with confidence
-- ✅ **River subgame solving** — real-time re-solving of the river with full
+- **Done** — **Blueprint training**: Monte Carlo CFR+ with SQLite checkpoint/resume
+- **Done** — **Serving + Play-vs-bot**: Flask API + React platform
+- **Done** — **Exploitability evaluation**: best-response convergence scoreboard
+- **Done** — **Hand-level Bayesian range tracker**: opponent-range belief with confidence
+- **Done** — **River subgame solving**: real-time re-solving of the river with full
   pot/stack information and the live range (the shippable real-time-solving feature)
-- 🧊 **Turn/flop depth-limited solving** — built and validated in the lab, but
-  **shelved**: it lowered exploitability yet did not beat the blueprint in real
-  games (a cross-street consistency problem needing continual re-solving). See ROADMAP.
-- ✅ **Online 1v1 play on AWS** — **shipped, live at [allin.jianrontan.com](https://allin.jianrontan.com)**:
-  Lightsail Containers (Flask + gunicorn), DynamoDB session/leaderboard/hand-recap stores,
-  Cognito + Google auth, Cloudflare edge (DNS/CDN/WAF), Cloudflare Pages frontend, global +EV
-  leaderboard, unrestricted human bet sizing
-- 📅 **Continual re-solving turn/flop** — revive the shelved depth-limited solver with
-  blueprint counterfactual values as the leaf function (the path that unlocks the bot's own
-  flop/turn overbets and 5-bets)
+- **Shelved** — **Turn/flop depth-limited solving**: built and validated in the lab, but
+  it lowered exploitability yet did not beat the blueprint in real games (a cross-street
+  consistency problem needing continual re-solving). See ROADMAP.
+- **Done** — **Online 1v1 play on AWS**: shipped, live at
+  [allin.jianrontan.com](https://allin.jianrontan.com) — Lightsail Containers (Flask +
+  gunicorn), DynamoDB session/leaderboard/hand-recap stores, Cognito + Google auth,
+  Cloudflare edge (DNS/CDN/WAF), Cloudflare Pages frontend, global +EV leaderboard,
+  unrestricted human bet sizing
+- **Planned** — **Continual re-solving turn/flop**: revive the shelved depth-limited solver
+  with blueprint counterfactual values as the leaf function (the path that unlocks the bot's
+  own flop/turn overbets and 5-bets)
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for detail, and
 [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) for the architecture.
 
 ---
 
-## 📚 Documentation
+## Documentation
 
 | Doc | Purpose |
 |---|---|
