@@ -10,6 +10,38 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-030 — Prod API latency incident (20 timeouts / 8h30m) was undiagnosable: the container log carried no request durations and dropped stderr entirely
+
+| | |
+|---|---|
+| **Date** | 2026-09-22 |
+| **Area** | Serving / observability (`docker-entrypoint.sh` gunicorn logging) · Lightsail + Cloudflare edge |
+| **Severity** | Medium (observability: High) · **Status** | Logging **fixed**; incident root cause **OPEN — monitoring** |
+
+**Summary.** UptimeRobot recorded **20 incidents totalling 8h30m36s**, all root-caused as "Connection Timeout", clustered on **2026-09-22 18:03–23:54 GMT+8** (longest 49m31s). `/api/healthz` response time over that 24h: **min 1062 ms, avg 3731 ms, max 26444 ms** from the North America probe. The investigation could not determine *where* the time went, because the container log answers neither "was the container slow?" nor "did anything error?" — the access log has **no duration field**, and gunicorn's error log goes to **stderr, which Lightsail does not surface**. The logging gap is fixed here; the incident's own root cause remains open behind a new experiment (below).
+
+**Symptom.** Frontend (Cloudflare Pages) served fine; every `/api/*` call hung. A probe from Singapore mid-incident sat **130 s and received zero bytes** — notably *not* a Cloudflare 522/524, which is what a merely-slow origin produces (522 ≈ 15 s, 524 at 100 s). After recovery the same endpoint answered in **80–260 ms** from Singapore and **18–27 ms** origin-direct from an ap-southeast-1 shell.
+
+**Root cause (of the diagnostic failure).** Two gaps in the gunicorn invocation:
+1. `--access-logformat` was never set, so the default format (no `%(D)s`/`%(L)s`) logged status but not latency. During the incident the log showed an unbroken wall of `200`s to the ELB health-checker — indistinguishable from a container answering those checks in 20 seconds.
+2. `--error-logfile -` writes to **stderr**, which the Lightsail log pipeline appears to drop: `--filter-pattern "INFO"` over 24 h returned **0 events**. On its own that is only suggestive — the image bakes `ALLIN_MAX_REQUESTS=50000` (not the entrypoint's 500), so workers recycle roughly **daily** and would emit just a couple of `Booting worker` lines in a 24 h window. But Python's logging default also writes to stderr, so **every `_LOG.warning`/`exception` in `strategy_api` sits on the same unverified channel** — the app could have been throwing continuously with no trace, and we had no way to tell.
+
+**What was ruled out (and how).** Load: `allin-hands` held **1 hand in the incident window, 1 that day, 8 in the last 7 days** — the box was idle, killing the sustained-CPU / river-cache / OOM theories (and the image already bakes `ALLIN_RIVER_CACHE_BOARDS=20000` ≈ 52 MB/worker, so the 100k default's ~0.26 GB never applied in prod; `version_aggregates` scans only 9,055 items / 5.9 MB). Deploy: none since 2026-06-30; only green nightly CI. Crash: no restart markers, no `WORKER TIMEOUT`, no `SIGKILL`, and ELB health checks returned 200 throughout — though note gap #2 means *absence of errors is not evidence of no errors*.
+
+**Live hypothesis — worker-recycle re-import stall.** [Dockerfile:104](../../../Dockerfile) already documents this failure mode from an earlier round: each `--max-requests` recycle **re-imports the whole app (blueprint + 127 MB postflop table) on a fractional vCPU, pinning the CPU for tens of seconds and stalling the other worker's in-flight requests** — previously observed as intermittent ~10 s actions with a single player. It needs **no traffic**, which fits an idle box, and it is exactly the shape of a multi-second latency spike. Frequency is the open objection: at ~36 health-check req/min the 50000 threshold trips only ~once per worker per day, whereas 5 incidents landed in one evening. **The Lightsail CPU graph does NOT rule this out**: it plots *average CPU per 1 hour*, so a 60 s pin at 100% averages to ~1.7% and is invisible — a trap worth remembering. The `%(D)s` duration field added in this commit is what distinguishes a recycle stall (slow requests logged by the container) from an edge/LB fault (no slow requests logged at all).
+
+**Fix (this commit).** `docker-entrypoint.sh`: add `--access-logformat` carrying `%(D)s` (request microseconds), point `--error-logfile` at `/dev/stdout`, and add `--capture-output` so stray `print()`/tracebacks land in the captured stream. Both new knobs are env-overridable (`ALLIN_ACCESS_LOGFORMAT`, `ALLIN_ERROR_LOGFILE`) so a runtime that cannot open `/dev/stdout` can fall back to `-` (stderr) **without a rebuild**. `/dev/stdout` is `/proc/self/fd/1` and the process owns fd 1, so non-root `USER allin` (UID 10001) can write it. **Verification after deploy:** `--filter-pattern "Booting"` should start returning events, and access-log lines should end with a microsecond figure.
+
+**Open — the experiment that settles the incident.** The one test never run was the origin, **bypassing Cloudflare, during an incident** (the origin-direct check was made after recovery, and from a shell that turned out to be in ap-southeast-1, not us-east-1 — 4.5 ms TCP connect is impossible trans-Pacific, so it measured Singapore→Singapore and proved nothing about the failing path). Since this recurs, add a **second UptimeRobot monitor on the raw Lightsail URL** (`allin.r2he3z3w6ew0w.ap-southeast-1.cs.amazonlightsail.com/api/healthz`). Next occurrence: CF monitor down + origin monitor up ⇒ Cloudflare edge→origin leg (consider Argo; the origin is in ap-southeast-1 and the free-plan probe is North America, which alone explains the ~1 s floor but **not** 26 s or the 130 s zero-byte hang). Both down ⇒ Lightsail LB / network, with evidence for a support case.
+
+**Why not caught earlier.** The logging config was written for "include the trace ops needs to diagnose user reports" (its own comment) and was never tested against the question it would actually be asked. Nothing fails when a log field is missing — the gap is invisible until an incident, and then it is too late to add retroactively. Health checks were also the only traffic, so the log looked healthy and voluminous while carrying almost no diagnostic signal.
+
+**Retrain impact.** None (serving infra only).
+
+**Lessons.** (1) A log that cannot answer *"was this request slow?"* is not an operational log; duration is the one field worth more than all the others combined. (2) Verify the log pipeline actually carries **stderr**, not just stdout — assume nothing, and prove it with a filter for a line you *know* should exist (`Booting worker` was the tell). (3) Absence of errors in a stream that silently drops errors is worth nothing; establish capture before reasoning from silence. (4) Check the *load* assumption early — one DynamoDB count (`ts BETWEEN`) killed three plausible resource-exhaustion theories in seconds. (5) Verify a vantage point before trusting a latency measurement: sub-10 ms across an ocean means the probe is not where its label claims. (6) Cloudflare returning **nothing** for 130 s is diagnostically distinct from 522/524 — the error code (or its absence) localises the failure before any log is read.
+
+---
+
 ## BUG-029 — Leaderboard shared snapshot used `snapshot`, a DynamoDB reserved word → every refresh 500'd on real DynamoDB
 
 | | |

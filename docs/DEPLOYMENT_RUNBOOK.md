@@ -122,6 +122,15 @@ diagnosing CI failures, dev workflow) — that's in
     ~15 min — each recycle re-imports the app on a fractional vCPU and stalls in-flight
     requests for ~10s (see MAINTENANCE.md "Common pitfalls").
   - `ALLIN_BIND` — gunicorn listen address (default `0.0.0.0:5000`).
+  - `ALLIN_ACCESS_LOGFORMAT` — gunicorn access-log format. Default carries `%(D)s`
+    (request duration in microseconds) — **do not drop that field**: without it a 20ms
+    reply and a 20s reply are indistinguishable in the container log, which is what made
+    the 2026-09-22 latency incident undiagnosable (BUG-030).
+  - `ALLIN_ERROR_LOGFILE` — gunicorn error-log destination (default `/dev/stdout`).
+    Lightsail's log pipeline surfaces stdout; gunicorn's own default (`-` = stderr) appears
+    to be dropped, taking worker recycles, tracebacks, `WORKER TIMEOUT` and every app-level
+    `_LOG.warning`/`exception` with it. Set to `-` to revert to stderr without a rebuild if
+    `/dev/stdout` is ever unopenable in the runtime.
 - `VITE_API_BASE` — frontend API base URL (set at build time).
 - `VITE_COGNITO_DOMAIN` / `VITE_COGNITO_APP_CLIENT_ID` / `VITE_COGNITO_REDIRECT_URI` —
   frontend (build-time), for the "Sign in with Google" Hosted-UI redirect. **Public values**

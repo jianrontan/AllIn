@@ -48,6 +48,31 @@ fi
 # to stdout so Lightsail's container logs include the trace ops needs to
 # diagnose user reports. --graceful-timeout matches our hand timeout so a
 # SIGTERM mid-solve gets enough room to finish.
+#
+# LOGGING (BUG-030). Two blind spots made the 2026-09-22 latency incident
+# undiagnosable from the container log:
+#
+#  1. The access log carried no request DURATION, so a 20 ms reply and a 20 s
+#     reply looked identical. UptimeRobot saw 3.7 s average / 26 s peak while
+#     the log showed an unbroken wall of "200" -- we could not tell whether the
+#     container was slow or something in front of it was. %(D)s (microseconds)
+#     closes that; it is the single field that would have answered it.
+#  2. gunicorn writes its ERROR log (startup, worker recycles, tracebacks,
+#     WORKER TIMEOUT, OOM kills) to STDERR, and Lightsail's log pipeline appears
+#     to surface only STDOUT: a `--filter-pattern INFO` over 24h returned ZERO
+#     events. (Weak-ish evidence on its own -- the image bakes
+#     ALLIN_MAX_REQUESTS=50000, so workers recycle only ~daily and would emit
+#     just a couple of "Booting worker" lines in that window -- but app-level
+#     _LOG.* WARNING/ERROR goes to stderr too, so the whole error channel was
+#     unverifiable.) Point the error log at stdout and add --capture-output so
+#     stray print()/tracebacks land in the same stream; after deploy, a filter
+#     for "Booting" CONFIRMS whether stderr was the gap.
+#
+# Both are env-overridable: if /dev/stdout is ever unopenable in the runtime
+# (it is /proc/self/fd/1 -- the process owns fd 1, so `USER allin` can write it)
+# set ALLIN_ERROR_LOGFILE=- to fall back to stderr WITHOUT a rebuild.
+ACCESS_FMT="${ALLIN_ACCESS_LOGFORMAT:-%(h)s %(t)s \"%(r)s\" %(s)s %(b)s %(D)s \"%(a)s\"}"
+
 exec gunicorn --chdir backend/api wsgi:app \
     --workers "$WORKERS" \
     --threads "${ALLIN_THREADS:-4}" \
@@ -56,5 +81,7 @@ exec gunicorn --chdir backend/api wsgi:app \
     --max-requests "${ALLIN_MAX_REQUESTS:-500}" \
     --max-requests-jitter "${ALLIN_MAX_REQUESTS_JITTER:-50}" \
     --access-logfile - \
-    --error-logfile - \
+    --access-logformat "$ACCESS_FMT" \
+    --error-logfile "${ALLIN_ERROR_LOGFILE:-/dev/stdout}" \
+    --capture-output \
     --bind "${ALLIN_BIND:-0.0.0.0:5000}"
