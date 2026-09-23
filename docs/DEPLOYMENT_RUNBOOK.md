@@ -126,11 +126,13 @@ diagnosing CI failures, dev workflow) — that's in
     (request duration in microseconds) — **do not drop that field**: without it a 20ms
     reply and a 20s reply are indistinguishable in the container log, which is what made
     the 2026-09-22 latency incident undiagnosable (BUG-030).
-  - `ALLIN_ERROR_LOGFILE` — gunicorn error-log destination (default `/dev/stdout`).
-    Lightsail's log pipeline surfaces stdout; gunicorn's own default (`-` = stderr) appears
-    to be dropped, taking worker recycles, tracebacks, `WORKER TIMEOUT` and every app-level
-    `_LOG.warning`/`exception` with it. Set to `-` to revert to stderr without a rebuild if
-    `/dev/stdout` is ever unopenable in the runtime.
+  - **Error log stays on stderr (`--error-logfile -`) — do NOT redirect it to a pipe.**
+    gunicorn 23 opens a non-`-` error log with `open(errorlog, 'a+')`, which requires a
+    **seekable** file; a container's stdout is a pipe, so `--error-logfile /dev/stdout`
+    raises `io.UnsupportedOperation: File or stream is not seekable` during startup and the
+    container never listens. This failed Lightsail deployment **v18** on 2026-09-22
+    (BUG-030). Whether Lightsail surfaces stderr at all is still open; if it doesn't, the
+    fix is a stdout logging handler inside the app, not an errorlog path.
 - `VITE_API_BASE` — frontend API base URL (set at build time).
 - `VITE_COGNITO_DOMAIN` / `VITE_COGNITO_APP_CLIENT_ID` / `VITE_COGNITO_REDIRECT_URI` —
   frontend (build-time), for the "Sign in with Google" Hosted-UI redirect. **Public values**

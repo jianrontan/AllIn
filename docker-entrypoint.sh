@@ -49,28 +49,27 @@ fi
 # diagnose user reports. --graceful-timeout matches our hand timeout so a
 # SIGTERM mid-solve gets enough room to finish.
 #
-# LOGGING (BUG-030). Two blind spots made the 2026-09-22 latency incident
-# undiagnosable from the container log:
+# LOGGING (BUG-030). The 2026-09-22 latency incident was undiagnosable from the
+# container log because the access log carried no request DURATION: a 20 ms
+# reply and a 20 s reply looked identical. UptimeRobot saw a 3.7 s average and a
+# 26 s peak while the log showed an unbroken wall of "200"s, so we could not
+# tell whether the container was slow or whether something in FRONT of it was
+# dropping requests. %(D)s (microseconds) is the field that answers that, and it
+# is overridable via ALLIN_ACCESS_LOGFORMAT.
 #
-#  1. The access log carried no request DURATION, so a 20 ms reply and a 20 s
-#     reply looked identical. UptimeRobot saw 3.7 s average / 26 s peak while
-#     the log showed an unbroken wall of "200" -- we could not tell whether the
-#     container was slow or something in front of it was. %(D)s (microseconds)
-#     closes that; it is the single field that would have answered it.
-#  2. gunicorn writes its ERROR log (startup, worker recycles, tracebacks,
-#     WORKER TIMEOUT, OOM kills) to STDERR, and Lightsail's log pipeline appears
-#     to surface only STDOUT: a `--filter-pattern INFO` over 24h returned ZERO
-#     events. (Weak-ish evidence on its own -- the image bakes
-#     ALLIN_MAX_REQUESTS=50000, so workers recycle only ~daily and would emit
-#     just a couple of "Booting worker" lines in that window -- but app-level
-#     _LOG.* WARNING/ERROR goes to stderr too, so the whole error channel was
-#     unverifiable.) Point the error log at stdout and add --capture-output so
-#     stray print()/tracebacks land in the same stream; after deploy, a filter
-#     for "Booting" CONFIRMS whether stderr was the gap.
+# DO NOT point --error-logfile at /dev/stdout (or any pipe). gunicorn 23 opens
+# the error log with open(errorlog, 'a+') (glogging.py:205), and 'a+' requires a
+# SEEKABLE file; a container's stdout is a PIPE, so it raises
+#     io.UnsupportedOperation: File or stream is not seekable
+# during Arbiter setup -- before any worker boots, before anything is logged.
+# That is exactly what failed Lightsail deployment v18 on 2026-09-22: the
+# container never listened, health checks never passed, and the rolling deploy
+# correctly kept the previous version serving. Keep '-' (stderr).
 #
-# Both are env-overridable: if /dev/stdout is ever unopenable in the runtime
-# (it is /proc/self/fd/1 -- the process owns fd 1, so `USER allin` can write it)
-# set ALLIN_ERROR_LOGFILE=- to fall back to stderr WITHOUT a rebuild.
+# STILL OPEN: whether Lightsail surfaces gunicorn's stderr at all (a 24h filter
+# for "INFO" returned zero events). If it does not, app-level _LOG.* WARNING and
+# ERROR are invisible -- but the fix for that is a stdout logging handler inside
+# the app, NOT an errorlog path. See BUG-030.
 ACCESS_FMT="${ALLIN_ACCESS_LOGFORMAT:-%(h)s %(t)s \"%(r)s\" %(s)s %(b)s %(D)s \"%(a)s\"}"
 
 exec gunicorn --chdir backend/api wsgi:app \
@@ -82,6 +81,5 @@ exec gunicorn --chdir backend/api wsgi:app \
     --max-requests-jitter "${ALLIN_MAX_REQUESTS_JITTER:-50}" \
     --access-logfile - \
     --access-logformat "$ACCESS_FMT" \
-    --error-logfile "${ALLIN_ERROR_LOGFILE:-/dev/stdout}" \
-    --capture-output \
+    --error-logfile - \
     --bind "${ALLIN_BIND:-0.0.0.0:5000}"
