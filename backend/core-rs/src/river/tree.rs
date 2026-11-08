@@ -12,6 +12,11 @@ pub const MIN_BET: f64 = 2.0;
 pub const DEFAULT_MENU: [f64; 4] = [0.5, 0.75, 1.0, 1.5];
 pub const MAX_AGGRESSIONS: u32 = 3;
 pub const OOP_SEAT: u8 = 1;
+/// Input limits (see `RiverTree::build`).
+pub const MAX_MENU: usize = 8;
+pub const MAX_AGGRESSIONS_LIMIT: u32 = 6;
+/// The served deep tree has ~600 nodes; the builder stops past this budget.
+pub const MAX_TREE_NODES: usize = 20_000;
 
 #[derive(Clone, Debug)]
 pub struct Decision {
@@ -116,8 +121,25 @@ impl RiverTree {
         menu: &[f64],
         max_aggressions: u32,
     ) -> Result<Self, String> {
-        if pot_entry <= 0.0 {
-            return Err("pot_entry must be positive".into());
+        // Hard limits: the builder recurses per aggression and the tree grows
+        // ~(menu+1)^max_aggressions, so unbounded inputs could overflow the
+        // stack or exhaust memory (prod uses a 4-size menu and 3 aggressions).
+        if !(pot_entry.is_finite() && pot_entry > 0.0) {
+            return Err("pot_entry must be finite and positive".into());
+        }
+        if !stacks.iter().all(|s| s.is_finite() && *s >= 0.0) {
+            return Err("stacks must be finite and >= 0".into());
+        }
+        if menu.is_empty() || menu.len() > MAX_MENU {
+            return Err(format!("menu must have 1..={MAX_MENU} sizes"));
+        }
+        if !menu.iter().all(|f| f.is_finite() && *f > 0.0) {
+            return Err("menu fractions must be finite and positive".into());
+        }
+        if max_aggressions > MAX_AGGRESSIONS_LIMIT {
+            return Err(format!(
+                "max_aggressions must be <= {MAX_AGGRESSIONS_LIMIT}"
+            ));
         }
         if (stacks[0] - stacks[1]).abs() > 1e-6 {
             return Err(format!(
@@ -135,6 +157,12 @@ impl RiverTree {
             decision: Vec::new(),
         };
         b.build(OOP_SEAT, [0.0, 0.0], 0, MIN_BET, false);
+        if b.nodes.len() > MAX_TREE_NODES {
+            return Err(format!(
+                "river tree too large ({} > {MAX_TREE_NODES} nodes)",
+                b.nodes.len()
+            ));
+        }
         Ok(RiverTree {
             nodes: b.nodes,
             decision: b.decision,
@@ -206,6 +234,10 @@ impl Builder<'_> {
         last_inc: f64,
         prev_check: bool,
     ) -> usize {
+        if self.nodes.len() > MAX_TREE_NODES {
+            // Over budget: stop expanding (the caller rejects the tree).
+            return self.terminal(sc, None);
+        }
         let p = player as usize;
         let max_sc = fmax(sc[0], sc[1]);
         let to_call = max_sc - sc[p];

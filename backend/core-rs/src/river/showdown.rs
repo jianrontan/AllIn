@@ -19,6 +19,8 @@
 //!   [groups x 52] table per call) and exists for verification.
 
 pub const NUM_CARDS: usize = 52;
+/// C(52, 2): no river range has more hands.
+pub const MAX_HANDS: usize = 1326;
 
 /// numpy's pairwise summation (`pairwise_sum` in numpy 1.26 `loops_utils.h`),
 /// which is what `ndarray.sum()` uses for a contiguous float64 vector. For
@@ -96,6 +98,9 @@ impl Board {
     /// produces them). Tie groups are hands with exactly equal `raw`.
     pub fn new(raw: &[f64], c1: &[i64], c2: &[i64]) -> Result<Self, String> {
         let h = raw.len();
+        if h > MAX_HANDS {
+            return Err(format!("at most {MAX_HANDS} hands (got {h})"));
+        }
         if c1.len() != h || c2.len() != h {
             return Err(format!(
                 "raw/c1/c2 length mismatch: {h}/{}/{}",

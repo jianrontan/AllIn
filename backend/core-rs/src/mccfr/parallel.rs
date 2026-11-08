@@ -77,12 +77,17 @@ impl Trainer {
     }
 }
 
-fn ensure<'t>(
-    table: &'t mut Table,
+/// The pending merged value of `key`: this round's update so far, else the
+/// table's entry, else a new info set; legal actions filled from the workers.
+fn ensure<'u>(
+    table: &Table,
+    updates: &'u mut FxHashMap<u64, InfoSet>,
     key: u64,
     workers: &[WorkerDelta],
-) -> Result<&'t mut InfoSet, String> {
-    let is = table.entry(key).or_default();
+) -> Result<&'u mut InfoSet, String> {
+    let is = updates
+        .entry(key)
+        .or_insert_with(|| table.get(&key).copied().unwrap_or_default());
     if is.legal.is_empty() {
         if let Some(l) = workers.iter().find_map(|w| w.legal.get(&key)) {
             is.legal = *l;
@@ -124,6 +129,8 @@ fn increment<'w>(base: &ActMap, maps: impl Iterator<Item = &'w ActMap>) -> Resul
 }
 
 /// Port of `parallel_trainer.merge_round`. Returns the touched keys.
+/// All-or-nothing: updates are computed first and applied only if every key
+/// merged cleanly, so an error never leaves the table half-merged.
 pub fn merge_round(
     table: &mut Table,
     workers: &[WorkerDelta],
@@ -136,11 +143,16 @@ pub fn merge_round(
         regret_keys.extend(w.regret.keys());
         strategy_keys.extend(w.strategy.keys());
     }
+    let mut updates: FxHashMap<u64, InfoSet> = FxHashMap::default();
+    let bump = |c: &mut i64| -> Result<(), String> {
+        *c = c.checked_add(1).ok_or("visit counter overflow")?;
+        Ok(())
+    };
     for &key in &regret_keys {
-        let is = ensure(table, key, workers)?;
+        let is = ensure(table, &mut updates, key, workers)?;
         let base = is.regrets;
         let inc = increment(&base, workers.iter().filter_map(|w| w.regret.get(&key)))?;
-        is.visit_count += 1;
+        bump(&mut is.visit_count)?;
         let t = is.visit_count;
         let decay = if t > 1 {
             ((t - 1) as f64 / t as f64).powf(alpha)
@@ -150,10 +162,10 @@ pub fn merge_round(
         is.regrets = merged(&base, &inc, decay, true)?;
     }
     for &key in &strategy_keys {
-        let is = ensure(table, key, workers)?;
+        let is = ensure(table, &mut updates, key, workers)?;
         let base = is.strategy;
         let inc = increment(&base, workers.iter().filter_map(|w| w.strategy.get(&key)))?;
-        is.strategy_visit_count += 1;
+        bump(&mut is.strategy_visit_count)?;
         let s = is.strategy_visit_count;
         let decay = if s > 1 && gamma != 0.0 {
             ((s - 1) as f64 / s as f64).powf(gamma)
@@ -162,8 +174,9 @@ pub fn merge_round(
         };
         is.strategy = merged(&base, &inc, decay, false)?;
     }
-    regret_keys.extend(strategy_keys);
-    Ok(regret_keys)
+    let touched: FxHashSet<u64> = updates.keys().copied().collect();
+    table.extend(updates);
+    Ok(touched)
 }
 
 /// Deterministic per-iteration generator.
@@ -207,6 +220,8 @@ pub fn train_single<A: Abstraction + ?Sized>(
 }
 
 const BLOCK: u64 = 16;
+/// Upper bound on worker threads (sanity limit, far above any core count).
+pub const MAX_WORKERS: usize = 1024;
 
 /// Data-parallel training for `iterations` starting at `start`; rounds of
 /// `merge_every * workers` iterations. `on_round(stats_so_far)` runs after
@@ -222,8 +237,20 @@ pub fn train_parallel<A: Abstraction + ?Sized>(
     seed: u64,
     mut on_round: impl FnMut(&Trainer, &RunStats) -> bool,
 ) -> Result<RunStats, String> {
-    if workers == 0 || merge_every == 0 {
-        return Err("workers and merge_every must be >= 1".into());
+    if workers == 0 || workers > MAX_WORKERS || merge_every == 0 {
+        return Err(format!(
+            "workers must be 1..={MAX_WORKERS} and merge_every >= 1"
+        ));
+    }
+    let per_round = merge_every
+        .checked_mul(workers as u64)
+        .ok_or("merge_every * workers overflows")?;
+    if start < 0
+        || (start as u64)
+            .checked_add(iterations)
+            .is_none_or(|e| e > i64::MAX as u64)
+    {
+        return Err("iteration range out of bounds".into());
     }
     if !master.discount_enabled {
         return Err("the master trainer must have the discount enabled".into());
@@ -232,7 +259,7 @@ pub fn train_parallel<A: Abstraction + ?Sized>(
     let mut stats = RunStats::default();
     let (mode, sched) = (master.menu_mode.clone(), master.sched);
     while stats.iterations < iterations {
-        let round_total = (merge_every * workers as u64).min(iterations - stats.iterations);
+        let round_total = per_round.min(iterations - stats.iterations);
         let cursor = start + stats.iterations as i64;
         let base = Arc::new(std::mem::take(&mut master.table));
         let next = AtomicU64::new(0);
@@ -241,34 +268,43 @@ pub fn train_parallel<A: Abstraction + ?Sized>(
                 .map(|_| {
                     let base = Arc::clone(&base);
                     let (next, mode) = (&next, &mode);
-                    s.spawn(move || -> Result<WorkerDelta, String> {
-                        let mut wt = Trainer::worker(mode, sched, base)?;
-                        loop {
-                            let k = next.fetch_add(BLOCK, Ordering::Relaxed);
-                            if k >= round_total {
-                                break;
+                    // Builder::spawn_scoped returns an error (instead of
+                    // panicking) if the OS refuses a thread.
+                    std::thread::Builder::new().spawn_scoped(
+                        s,
+                        move || -> Result<WorkerDelta, String> {
+                            let mut wt = Trainer::worker(mode, sched, base)?;
+                            loop {
+                                let k = next.fetch_add(BLOCK, Ordering::Relaxed);
+                                if k >= round_total {
+                                    break;
+                                }
+                                for j in k..(k + BLOCK).min(round_total) {
+                                    let it = cursor + j as i64;
+                                    let mut rng = iteration_rng(seed, it);
+                                    let deal = rng.deal();
+                                    wt.run_iteration(it, deal, abs, &mut rng)?;
+                                }
                             }
-                            for j in k..(k + BLOCK).min(round_total) {
-                                let it = cursor + j as i64;
-                                let mut rng = iteration_rng(seed, it);
-                                let deal = rng.deal();
-                                wt.run_iteration(it, deal, abs, &mut rng)?;
-                            }
-                        }
-                        Ok(wt.into_delta())
-                    })
+                            Ok(wt.into_delta())
+                        },
+                    )
                 })
                 .collect();
             handles
                 .into_iter()
-                .map(|h| {
-                    h.join()
-                        .unwrap_or_else(|_| Err("worker thread panicked".into()))
+                .map(|h| match h {
+                    Err(e) => Err(format!("could not spawn a worker thread: {e}")),
+                    Ok(h) => h
+                        .join()
+                        .unwrap_or_else(|_| Err("worker thread panicked".into())),
                 })
                 .collect()
         });
-        master.table = Arc::try_unwrap(base)
-            .map_err(|_| "baseline still shared after the round".to_string())?;
+        // Always restore the table before reporting any worker error: all
+        // workers are joined here, so the Arc is unique (clone defensively
+        // rather than ever lose the blueprint).
+        master.table = Arc::try_unwrap(base).unwrap_or_else(|a| (*a).clone());
         let deltas = results.into_iter().collect::<Result<Vec<_>, String>>()?;
         let touched = merge_round(&mut master.table, &deltas, sched.alpha, sched.gamma)?;
         master.dirty.extend(touched);

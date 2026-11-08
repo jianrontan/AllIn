@@ -65,6 +65,14 @@ fn finite(x: f64, what: &str) -> PyResult<f64> {
     }
 }
 
+fn stack_arg(x: f64) -> PyResult<f64> {
+    if x.is_finite() && x >= 0.0 {
+        Ok(x)
+    } else {
+        Err(err("stack_cp must be finite and >= 0".into()))
+    }
+}
+
 fn get<'py, T: FromPyObjectOwned<'py>>(d: &Bound<'py, PyDict>, k: &str) -> PyResult<T> {
     d.get_item(k)?
         .ok_or_else(|| err(format!("state dict missing {k:?}")))?
@@ -191,7 +199,7 @@ impl PyEngine {
             street_arg(street)?,
             &st,
             seat_arg(cp)?,
-            finite(stack_cp, "stack_cp")?,
+            stack_arg(stack_cp)?,
         );
         Ok(legal.into_iter().map(Action::name).collect())
     }
@@ -211,7 +219,7 @@ impl PyEngine {
                 street_arg(street)?,
                 &st,
                 seat_arg(cp)?,
-                finite(stack_cp, "stack_cp")?,
+                stack_arg(stack_cp)?,
             )
             .map_err(err)
     }
@@ -235,7 +243,7 @@ impl PyEngine {
                 action(action_name)?,
                 street_arg(street)?,
                 seat_arg(cp)?,
-                finite(stack_cp, "stack_cp")?,
+                stack_arg(stack_cp)?,
                 [finite(p_inv.0, "p_inv")?, finite(p_inv.1, "p_inv")?],
             )
             .map_err(err)?;
@@ -276,13 +284,10 @@ impl PyEngine {
         }
         let h = history(&history_names)?;
         let street = street_arg(street)?;
-        let needed = if h.contains(&Action::AllIn) {
-            5
-        } else {
-            engine::board_count(street)
-        };
-        if !h.contains(&Action::Fold) && board.len() < needed {
-            return Err(err(format!("showdown needs {needed} board cards")));
+        // Every trainer showdown is on the full board (river, or an all-in
+        // run-out); anything shorter would rank incomplete hands.
+        if !h.contains(&Action::Fold) && board.len() < 5 {
+            return Err(err("a showdown needs all 5 board cards".into()));
         }
         Ok(engine::utility(
             [ids[0], ids[1]],

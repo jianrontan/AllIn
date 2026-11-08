@@ -453,6 +453,14 @@ impl Engine {
             ..*st
         };
         let cost = self.action_cost(action, street, st, cp, stack_cp)?;
+        // Chip sanity (never violated by legal play): no negative cost (a custom
+        // total below the current contribution) and no spending past the stack.
+        if !(cost.is_finite() && cost >= 0.0 && cost <= stack_cp + 1e-9) {
+            return Err(format!(
+                "{} costs {cost} with stack {stack_cp}",
+                action.name()
+            ));
+        }
         new.pot += cost;
         let p = cp as usize;
         match action {
@@ -477,7 +485,7 @@ impl Engine {
                     total
                 };
                 new.bet_to = pymax(st.bet_to, match_level);
-                new.num_br += 1;
+                new.num_br = new.num_br.checked_add(1).ok_or("num_br overflow")?;
                 new.last_kind = Kind::Aggr;
             }
         }

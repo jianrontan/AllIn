@@ -16,9 +16,10 @@ Run from backend/bot/ (after `maturin develop --release` in backend/core-rs):
     python scripts/train_rust.py --iterations 200000 --workers 1 --out-dir /tmp/bp   # single-thread
 
 Ctrl+C stops at the next round boundary and checkpoints what completed.
-New blueprints land in analysis/blueprints/ by default, where
-config.resolve_blueprint_path() auto-selects the one with the most iterations
-for LOCAL serving -- use --out-dir for experiments.
+New blueprints land in analysis/blueprints_rs/ by default -- deliberately NOT
+analysis/blueprints/, where config.resolve_blueprint_path() auto-selects the
+blueprint with the most iterations for local serving. Move a finished run there
+(or point ALLIN_BLUEPRINT_DB at it) when you want to serve it.
 """
 import argparse
 import os
@@ -33,7 +34,7 @@ sys.path.insert(0, BOT)
 
 import allin_core  # noqa: E402
 
-BLUEPRINTS = os.path.join(BOT, 'analysis', 'blueprints')
+BLUEPRINTS = os.path.join(BOT, 'analysis', 'blueprints_rs')
 ABSTRACTIONS = os.path.join(BOT, 'analysis', 'abstractions')
 
 
@@ -78,12 +79,20 @@ def main():
 
     mode = 'parallel' if args.workers > 1 else 'single'
     seed = args.seed if args.seed is not None else random.randrange(1 << 62)
-    os.makedirs(args.out_dir, exist_ok=True)
     trainer = allin_core.Trainer(args.menu_mode, args.alpha, args.gamma)
+    # Load the abstraction FIRST, so a bad tables dir fails before any DB exists.
+    print(f"Loading abstraction from {args.abstractions_dir} ...", flush=True)
+    t_load = time.time()
+    trainer.load_abstraction(args.abstractions_dir, args.river_cache_boards)
+    print(f"  loaded in {time.time() - t_load:.1f}s")
+
+    os.makedirs(args.out_dir, exist_ok=True)
     start = 0
     if args.resume:
         if os.path.basename(args.resume) != args.resume:
             ap.error('--resume takes a file name inside --out-dir, not a path')
+        if args.resume.startswith('blueprint_final'):
+            ap.error('refusing to train into a served blueprint (blueprint_final*); copy it first')
         db_path = os.path.join(args.out_dir, args.resume)
         if not os.path.exists(db_path):
             ap.error(f'not found: {db_path}')
@@ -92,15 +101,15 @@ def main():
     else:
         prefix = 'blueprint_par' if mode == 'parallel' else 'blueprint'
         tag = '' if args.menu_mode == 'control' else f"_{args.menu_mode.replace('_', '')}"
-        name = f"{prefix}{tag}_rs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        # Timestamp + random suffix: two runs started in the same second must
+        # never share (and corrupt) one DB.
+        name = (f"{prefix}{tag}_rs_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                f"_{random.randrange(16**6):06x}.db")
         db_path = os.path.join(args.out_dir, name)
+        if os.path.exists(db_path):
+            ap.error(f'refusing to overwrite {db_path}')
         print(f"New run: {db_path}")
     trainer.stamp_mode(db_path, mode)
-
-    print(f"Loading abstraction from {args.abstractions_dir} ...", flush=True)
-    t_load = time.time()
-    trainer.load_abstraction(args.abstractions_dir, args.river_cache_boards)
-    print(f"  loaded in {time.time() - t_load:.1f}s")
     print(f"menu={args.menu_mode} mode={mode} workers={args.workers} merge_every={args.merge_every} "
           f"alpha={args.alpha} gamma={args.gamma} seed={seed}")
 

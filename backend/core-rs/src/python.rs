@@ -20,6 +20,33 @@ fn vec1(a: &PyReadonlyArray1<'_, f64>) -> Vec<f64> {
     a.as_array().to_vec()
 }
 
+/// A vector that must be all-finite (NaN/inf would silently become a uniform
+/// strategy or NaN values downstream).
+fn finite(a: &PyReadonlyArray1<'_, f64>, what: &str) -> PyResult<Vec<f64>> {
+    let v = vec1(a);
+    if v.iter().any(|x| !x.is_finite()) {
+        return Err(err(format!("{what} must be finite")));
+    }
+    Ok(v)
+}
+
+/// A reach / range weight vector: finite and non-negative.
+fn reach(a: &PyReadonlyArray1<'_, f64>, what: &str) -> PyResult<Vec<f64>> {
+    let v = finite(a, what)?;
+    if v.iter().any(|x| *x < 0.0) {
+        return Err(err(format!("{what} must be non-negative")));
+    }
+    Ok(v)
+}
+
+fn finite_scalar(x: f64, what: &str) -> PyResult<f64> {
+    if x.is_finite() {
+        Ok(x)
+    } else {
+        Err(err(format!("{what} must be finite")))
+    }
+}
+
 fn veci(a: &PyReadonlyArray1<'_, i64>) -> Vec<i64> {
     a.as_array().to_vec()
 }
@@ -52,7 +79,9 @@ fn showdown_measure<'py>(
 ) -> PyResult<Bound<'py, PyArray1<f64>>> {
     let mut b = Board::new(&vec1(&raw), &veci(&c1), &veci(&c2)).map_err(err)?;
     b.exact = exact;
-    let rv = vec1(&rv);
+    let rv = reach(&rv, "rv")?;
+    let final_pot = finite_scalar(final_pot, "final_pot")?;
+    let hero_total = finite_scalar(hero_total, "hero_total")?;
     if rv.len() != b.h {
         return Err(err(format!("rv length {} != H={}", rv.len(), b.h)));
     }
@@ -73,7 +102,7 @@ fn compatible_mass<'py>(
     let (c1, c2) = (veci(&c1), veci(&c2));
     let mut b = Board::new(&vec![0.0; c1.len()], &c1, &c2).map_err(err)?;
     b.exact = exact;
-    let rv = vec1(&rv);
+    let rv = reach(&rv, "rv")?;
     if rv.len() != b.h {
         return Err(err(format!("rv length {} != H={}", rv.len(), b.h)));
     }
@@ -189,7 +218,7 @@ impl PyRiverCfr {
         r1: PyReadonlyArray1<'_, f64>,
         iters: u64,
     ) -> PyResult<()> {
-        let (r0, r1) = (vec1(&r0), vec1(&r1));
+        let (r0, r1) = (reach(&r0, "r0")?, reach(&r1, "r1")?);
         let inner = &mut self.inner;
         py.detach(|| inner.run(&r0, &r1, iters)).map_err(err)
     }
@@ -203,7 +232,11 @@ impl PyRiverCfr {
         villain_seat: u8,
         iters: u64,
     ) -> PyResult<()> {
-        let (hero, villain, optout) = (vec1(&hero), vec1(&villain), vec1(&optout));
+        let (hero, villain, optout) = (
+            reach(&hero, "hero")?,
+            reach(&villain, "villain")?,
+            finite(&optout, "optout")?,
+        );
         let inner = &mut self.inner;
         py.detach(|| inner.run_gadget(&hero, &villain, &optout, villain_seat, iters))
             .map_err(err)
@@ -229,7 +262,7 @@ impl PyRiverCfr {
         r0: PyReadonlyArray1<'py, f64>,
         r1: PyReadonlyArray1<'py, f64>,
     ) -> PyResult<(Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>)> {
-        let (r0, r1) = (vec1(&r0), vec1(&r1));
+        let (r0, r1) = (reach(&r0, "r0")?, reach(&r1, "r1")?);
         let inner = &self.inner;
         let (v0, v1) = py.detach(|| inner.current_values(&r0, &r1)).map_err(err)?;
         Ok((PyArray1::from_vec(py, v0), PyArray1::from_vec(py, v1)))
@@ -241,7 +274,7 @@ impl PyRiverCfr {
         r0: PyReadonlyArray1<'_, f64>,
         r1: PyReadonlyArray1<'_, f64>,
     ) -> PyResult<f64> {
-        let (r0, r1) = (vec1(&r0), vec1(&r1));
+        let (r0, r1) = (reach(&r0, "r0")?, reach(&r1, "r1")?);
         let inner = &self.inner;
         py.detach(|| inner.exploitability(&r0, &r1, None))
             .map_err(err)

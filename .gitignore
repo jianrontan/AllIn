@@ -27,6 +27,7 @@ dist-ssr
 # analysis/abstractions/ (precompute inputs, e.g. bucket centroids) is committed.
 # Opponent modelling
 backend/bot/analysis/blueprints/
+backend/bot/analysis/blueprints_rs/
 backend/bot/analysis/archive
 backend/bot/analysis/opponent_models/
 

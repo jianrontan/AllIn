@@ -29,6 +29,19 @@ fn e(x: rusqlite::Error) -> String {
     format!("sqlite: {x}")
 }
 
+/// The bundled SQLite is built with URI filenames enabled globally, so a path
+/// like `file:x.db?mode=memory` would be parsed as a URI even without
+/// SQLITE_OPEN_URI. Prefixing `./` makes any relative path a plain file name
+/// (absolute paths start with `/` and are never URIs). Matches Python's
+/// `sqlite3.connect(path)`.
+fn plain_path(path: &str) -> String {
+    if path.starts_with('/') {
+        path.to_string()
+    } else {
+        format!("./{path}")
+    }
+}
+
 pub struct BlueprintDb {
     conn: Connection,
 }
@@ -36,7 +49,15 @@ pub struct BlueprintDb {
 impl BlueprintDb {
     /// Open (creating if needed) a writable blueprint, WAL + synchronous=NORMAL.
     pub fn open(path: &str) -> Result<BlueprintDb, String> {
-        let conn = Connection::open(path).map_err(e)?;
+        // Explicit flags: no SQLITE_OPEN_URI, so a "file:...?mode=memory" string
+        // is a plain file name (like Python's sqlite3.connect), never a URI.
+        let conn = Connection::open_with_flags(
+            plain_path(path),
+            OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_CREATE
+                | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(e)?;
         conn.pragma_update(None, "journal_mode", "WAL").map_err(e)?;
         conn.pragma_update(None, "synchronous", "NORMAL")
             .map_err(e)?;
@@ -54,7 +75,7 @@ impl BlueprintDb {
     /// Read-only handle (never writes; safe on a file a trainer holds open).
     pub fn open_read_only(path: &str) -> Result<BlueprintDb, String> {
         let conn = Connection::open_with_flags(
-            path,
+            plain_path(path),
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
         .map_err(e)?;
@@ -83,6 +104,17 @@ impl BlueprintDb {
                 .map_err(e)?;
             for k in keys {
                 let Some(is) = table.get(k) else { continue };
+                // A NaN/inf would make the blueprint unresumable (and means the
+                // run is already corrupt): fail the checkpoint instead. The
+                // transaction rolls back, so the DB keeps the last good state.
+                if is
+                    .regrets
+                    .iter()
+                    .chain(is.strategy.iter())
+                    .any(|(_, v)| !v.is_finite())
+                {
+                    return Err(format!("non-finite value in info set {}", key_string(*k)));
+                }
                 let (legal, regrets, strategy) = encode_row(is);
                 stmt.execute(params![
                     key_string(*k),

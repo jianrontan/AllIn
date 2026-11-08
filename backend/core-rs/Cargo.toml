@@ -30,4 +30,7 @@ serde_json = { version = "1", features = ["float_roundtrip", "preserve_order"] }
 opt-level = 3
 lto = "fat"
 codegen-units = 1
+# Integer overflow panics (-> Python error) instead of silently wrapping
+# (iteration counters, visit clocks). Measured cost is negligible here.
+overflow-checks = true
 debug = 1           # keep symbols for profiling (samply / Instruments); no runtime cost
