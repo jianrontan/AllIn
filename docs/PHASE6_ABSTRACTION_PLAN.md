@@ -1,6 +1,8 @@
 # Phase 6 — abstraction upgrade (v3 blueprint) — PLAN, awaiting sign-off
 
-Branch `rust-core`. Status 2026-11-09: **draft for review — nothing implemented.**
+Branch `rust-core`. Status 2026-11-09: **signed off (Arm A, served-code
+changes behind `key_format`, Arm B deferred); 6.1 measured — see "6.1
+results"; bucket count (4 → 5) awaiting confirmation.**
 Parent plan: [RUST_CORE_PLAN.md](RUST_CORE_PLAN.md) (Phases 0–5 done).
 
 ## Why now
@@ -90,6 +92,43 @@ size, not RAM — check the Lightsail image budget before a cutover.
   and becomes a per-checkpoint probe like the strategy-shape check.
 - Output: frozen SPR boundaries + go/no-go for Arm A.
 
+**6.1 results (2026-11-09)** — `scripts/measure_street_spr.py`, 400k v2
+self-play hands (17 s on 10 workers):
+
+- **The money is at low SPR, even though most decisions are not.** By decision
+  count only 14% of flop decisions start at SPR < 4, but weighted by pot size
+  it is 50%; on the turn, 47% of pot-weighted decisions start at SPR < 2. The
+  2026-06 Measurement A ("9% low-SPR → not worth it") counted decisions and
+  missed this.
+- **Preflop pot type maps cleanly onto flop SPR bands:** limped 100% > 48;
+  single-raised 8–32 (93% in 12–32); 3-bet 2–16 (mostly 4–12); 4-bet+ < 8
+  (85% < 4). ROADMAP's `<2 / 2–4 / 4–8 / >8` would put limped, single-raised
+  and a third of 3-bet pots in one bucket (~90% of flop decisions) — it wastes
+  the split.
+- **Reachable-key multiplier** (distinct keys seen with vs without the bucket):
+
+  | Bucketing | Flop | Turn |
+  |---|---|---|
+  | K4 `<2/2–4/4–8/>8` (ROADMAP) | 1.62× | 1.87× |
+  | K5 `<2/2–4/4–8/8–16/>16` | 1.92× | 2.23× |
+  | **P5 `<2/2–5/5–12/12–40/>40`** (pot-type aligned) | **1.88×** | **2.16×** |
+  | P4 `<4/4–12/12–40/>40` | 1.75× | 1.94× |
+
+  P5 on v2's full key set: flop 80.6k → ~151k, turn 67.6k → ~146k, total
+  ~344k info sets (**1.77× v2**, well under the 3.3× worst case) → ~95M
+  iterations for v2-level per-key convergence, ~45 min.
+- **Facing an all-in** (realized value of calling, exact showdown): no large
+  leak *in self-play* — the losing cells (medium/weak hands calling in
+  3-bet/4-bet pots, mostly on the turn) sum to about −25 mbb/hand. Caveat:
+  self-play understates BUG-027, because v2's own shoving range is the same
+  blended range; a human who shoves only the nuts in a 4-bet pot (the real
+  BUG-027 hand) punishes the blended call far harder.
+- **Recommendation:** go, with **P5** (5 buckets, one per pot type:
+  `>40` limped, `12–40` single-raised, `5–12` 3-bet, `2–5` 4-bet,
+  `<2` jam zone) on flop and turn — costs about the same as K5 and separates
+  the pot types K4 merges. *This changes K from the signed-off 4 to 5 —
+  needs confirmation.*
+
 **6.2 Implement the key change, backward compatible.**
 - `make_info_set_key(..., spr_bucket=None)`; `None` keeps today's format, so
   v2 keeps working unchanged. The blueprint DB is stamped with a
@@ -104,6 +143,22 @@ size, not RAM — check the Lightsail image budget before a cutover.
   `key_format` switch.
 - `cross_match` must build each side's keys in that side's format, so a v3
   blueprint can play v2 head-to-head.
+- **River solver consumers.** The river solver itself is bucket-free (exact
+  hands, real pot and stacks), but it reads the blueprint in three places, and
+  all three must use the new keys:
+  1. its **input ranges** come from the range tracker, which updates on every
+     flop/turn action through blueprint keys → those lookups need the SPR
+     bucket, or the ranges are built from the wrong (or missing) strategies;
+  2. the **safe gadget's opt-out values** (`blueprint_projection`, river-entry
+     CFV) look up river keys — unchanged under Arm A (river excluded), but they
+     change under Arm B (new river K / tables) and the turn-projection path
+     uses turn keys;
+  3. the **guards and fallback** in `river_subgame_solver` (untrained-key
+     checks, blueprint fallback) look keys up directly.
+  Arm B's new tables reach the solver's bucket groups automatically through
+  `CardAbstraction`, so the tables and the blueprint must always ship together
+  (the existing centroid-hash stamp enforces this). Test: a river solve on a
+  v3 blueprint gives the same ranges as building them by hand from v3 keys.
 - Tests: key round-trip for both formats; SPR computed from history equals the
   engine's pot/stack at street start (property test); parity green.
 
