@@ -263,5 +263,7 @@ fn allin_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(compatible_mass, m)?)?;
     m.add_function(wrap_pyfunction!(river_tree_nodes, m)?)?;
     m.add_class::<PyRiverCfr>()?;
+    crate::py_engine::register(m)?;
+    crate::py_buckets::register(m)?;
     Ok(())
 }

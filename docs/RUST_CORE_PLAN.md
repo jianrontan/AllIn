@@ -81,7 +81,7 @@ If `cargo` isn't on PATH: Homebrew's rustup is keg-only — add
 |---|---|---|---|
 | 0 | Scaffold + oracles | crate, fixtures, harness, baseline | ✅ harness 9/9 vs Python; mutation-tested |
 | 1 | River solver | `river_showdown`, `river_tree`, `river_cfr`, `river_gadget` | ✅ core: parity green (exact mode bit-identical), 7× measured. ⬜ serving: `ALLIN_RIVER_BACKEND` adapter + Docker Rust stage + local A/B |
-| 2 | Evaluator + bucketing | `eval_rank7`, `buckets` (preflop map; flop/turn `.npy` table lookup; river runtime equity + canonical-board cache) | exact on all fixtures |
+| 2 | Evaluator + bucketing | `eval_rank7`, `buckets` (preflop map; flop/turn `.npy` table lookup; river runtime equity + canonical-board cache) | ✅ exact on all fixtures (strict parity green); rank7 10×, river board 470× cold |
 | 3 | Betting engine + keys | `engine` (state-threaded, both menu modes), `keys` | exact on all fixtures |
 | 4 | Single-thread MCCFR + SQLite writer | `mccfr` (fixture TBD) | table identical to Python for N iters under a shared injected uniform stream |
 | 5 | Parallel trainer (M6) | shared table, all cores | BR/LBR matches a Python run at equal iterations; throughput measured |
@@ -147,7 +147,9 @@ Phases 1, 2, 3 are independent (can run in parallel sessions/worktrees);
 | River CFR, 24 nodes (80 / 160) | 2.7 ms/iter → 1.1 s | 0.38 ms → 0.15 s (7.1×) | 0.74 ms |
 | Gadget / exploitability | ≈ CFR per iteration | 7.1× / 7.5× | |
 | `build_board_arrays` (river only) | 0.05 s | (Phase 2) | |
-| `rank7` | 1.28 M/s | (Phase 2) | |
+| `rank7` | 1.28 M/s | 12.8 M/s via `rank_batch` incl. numpy marshalling (10×) | |
+| River buckets, one board × 1081 hands (`bench/bench_buckets.py`) | 45 ms | 0.095 ms cold / 0.009 ms cached | |
+| Flop / turn bucket lookup | 73 k/s / 68 k/s | 6.4 M/s / 1.8 M/s | |
 | Training, capped, single core (early run) | 227 it/s | (Phase 4) | |
 
 The river solver was already numpy-vectorized, so ~7× is the honest ceiling of a
@@ -191,3 +193,46 @@ updates). The trainer is pure interpreter overhead and should gain far more.
   needs `RiverCFR.from_tree` (Python tree incl. injected edges), `reach_into`,
   `node_action_values`, `warm_start`, `_eval`/`_br_value` with blueprint
   strategy tables, a Rust build stage in the Docker image, and a local A/B.
+
+### 2026-11-08 — Phase 2: evaluator + bucketing ported
+- `src/eval.rs` (`rank`, `rank_with`, `rank_batch`, `validate_row`): Cactus-Kev
+  class values (= phevaluator), per-suit 13-bit masks + multiplicity masks +
+  colex ranks; all tables `const`. Unit tests: exhaustive 2,598,960 5-card hands
+  and 500k random 6- and 7-card hands vs an independent brute-force (best of
+  C(k,5) subsets, classes enumerated and sorted). Every class reached.
+- `src/buckets/`: `preflop` (maps derived from the generated
+  `preflop_equity.rs` exactly as `_quantile_buckets`: stable sort, dict order
+  breaks ties, float `int(i*n/169)`), `canonical` (24 perms in itertools order,
+  suits compared as LETTERS `C<D<H<S` like Python's tuples, encoded by deck
+  index `HDCS`), `npz` (stored-zip + npy reader, bounds-checked, rejects
+  compressed/oversized/truncated/unsorted/out-of-range), `sha1` (centroid
+  stamp), `cache` (sharded `Mutex` LRU, `Arc` values, compute outside the lock;
+  `Send + Sync`), `mod.rs` (`Buckets`: lazy `OnceLock` tables, stamp check =
+  `_verify_stamp`, a mismatch is a hard error; river = `board_winrates` with
+  integer win/tie counts then Python's `rint((w + 0.5 t)/990 * 1980)`).
+  Bindings in `src/py_buckets.rs`: `rank_batch`, `preflop_buckets`,
+  `fine_to_coarse`, `Buckets(dir, river_cache_boards=None)` with
+  `situation_ids`, `bucket_batch`, `preload`, `n_buckets`, `river_cache_info`,
+  `clear_river_cache` (GIL released; bad input = `ValueError`).
+- **Parity: exact on every fixture** (strict mode): 300k rank rows (5/6/7),
+  1326 preflop combos, 20k flop + 20k turn + 2400 river situations (ids and
+  buckets). Extra ad-hoc check: all 1081 hands on 300 random river boards
+  (324,300 situations) identical to `PostflopV2.bucket`.
+- numpy order reproduced in `Centroids::assign` (EMD = sequential `cumsum`,
+  `abs`, pairwise `sum` via `river::showdown::np_sum`; first-minimum argmin).
+  The river bucket depends only on the integer equity numerator (0..=1980), so
+  the 1981-entry numerator→bucket map is precomputed with that exact code.
+- Deviation (semantic, recorded): Python falls back to Monte Carlo
+  `equity_distribution` (its own RNG) on a flop/turn table miss or a missing
+  table; Rust returns an error instead (not reproducible across languages; the
+  shipped tables hold every canonical flop/turn situation). The `.npy` extracts
+  (`ALLIN_MMAP_POSTFLOP`) are not read — the `.npz` is stored-uncompressed, so
+  loading both tables takes ~45 ms. The river cache is per `Buckets` instance
+  (share one across threads), not process-global like `_RIVER_BOARD_CACHE`.
+- Bench (`bench/bench_buckets.py` → `bench/rust_buckets.json`): rank7 12.8 M/s
+  (10× Python, batch API incl. marshalling); one river board × 1081 hands
+  0.095 ms cold / 0.009 ms cached vs Python 45 ms; flop/turn lookups 6.4 / 1.8 M/s
+  vs ~70 k/s.
+- Pure-Rust entry points for other phases: `crate::eval::rank(&[u8]) -> i32`,
+  `crate::eval::rank_with`, `crate::buckets::fine_to_coarse() -> &'static [u8; 169]`,
+  `crate::buckets::preflop_buckets`, `crate::buckets::Buckets::bucket`.
