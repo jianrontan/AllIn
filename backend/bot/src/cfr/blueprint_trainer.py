@@ -3,7 +3,7 @@ import os
 import random
 from .poker_game import PokerGame, STARTING_STACK
 from .information_set import InformationSet
-from .keys import action_char as _action_char, make_info_set_key
+from .keys import action_char as _action_char, make_info_set_key, spr_bucket, KEY_FORMATS
 from ..bot.game_adapter import GameAdapter
 
 
@@ -24,8 +24,12 @@ class BlueprintTrainer:
     Blueprint CFR Trainer with Monte Carlo CFR+ (External Sampling) and stack constraints.
     """
 
-    def __init__(self, menu_mode='control'):
+    def __init__(self, menu_mode='control', key_format='v2'):
         """
+        key_format : 'v2' (default, the served key format) or 'spr5' (Phase 6: an
+                    SPR bucket on flop/turn keys, see cfr/keys.spr_bucket). Stamped
+                    into the DB metadata only when not 'v2' (absent = 'v2', so v2
+                    blueprints stay byte-identical) and resume-guarded.
         menu_mode : 'control' (default) trains on the current postflop menu with the
                     voluntary all-in node (byte-identical to before -- the A/B
                     baseline). 'capped' trains the Fix-#4 redesign: the 5-size capped
@@ -38,6 +42,9 @@ class BlueprintTrainer:
                     single/parallel mode guard).
         """
         self.menu_mode = menu_mode
+        if key_format not in KEY_FORMATS:
+            raise ValueError(f"key_format must be one of {KEY_FORMATS}, got {key_format!r}")
+        self.key_format = key_format
         self.info_sets = {}
         # Keys created/mutated since the last checkpoint. Checkpoints persist
         # only these (every visited info set is mutated -- regrets or strategy --
@@ -180,7 +187,8 @@ class BlueprintTrainer:
             pos = 'ip' if cp == 0 else 'oop'
             pf = self._p0_preflop if cp == 0 else self._p1_preflop
             strength = self._postflop_strength(cp, street, comm) if street > 0 else None
-            key = make_info_set_key(street, pos, pf, strength, pat)
+            key = make_info_set_key(street, pos, pf, strength, pat,
+                                    spr_bucket(self.key_format, street, spot))
             iset = self.info_sets.get(key)
             if iset is None:
                 probs = [1.0 / len(legal)] * len(legal)
@@ -309,7 +317,8 @@ class BlueprintTrainer:
         strength = (self._postflop_strength(current_player, street, community_cards)
                     if street > 0 else None)
         info_set_key = make_info_set_key(
-            street, position, preflop_bucket, strength, bet_pattern)
+            street, position, preflop_bucket, strength, bet_pattern,
+            spr_bucket(self.key_format, street, starting_pot))
 
         if info_set_key not in self.info_sets:
             self.info_sets[info_set_key] = InformationSet()
@@ -561,7 +570,7 @@ class BlueprintTrainer:
         # write cost is O(touched) instead of O(all). Guarded by
         # tests/test_checkpoint_dirty.py (DB == in-memory) + the seed-compare.
         dirty = {k: self.info_sets[k] for k in self._dirty if k in self.info_sets}
-        db.save_checkpoint(dirty, {
+        meta = {
             'total_iterations': iteration + 1,
             'alpha': self.alpha,
             'gamma': self.gamma,
@@ -571,7 +580,12 @@ class BlueprintTrainer:
             # Lifetime EV accumulators so the cumulative mean survives a resume.
             'ev_sum': self.ev_sum,
             'ev_count': self.ev_count,
-        })
+        }
+        if self.key_format != 'v2':
+            # Key format (absent = 'v2'): readers build keys in the blueprint's own
+            # format, and resume refuses a mismatch.
+            meta['key_format'] = self.key_format
+        db.save_checkpoint(dirty, meta)
         self._dirty.clear()
         print(f"Checkpoint: {len(dirty)} info sets written "
               f"({len(self.info_sets)} total) at iteration {iteration + 1}")
@@ -637,5 +651,12 @@ class BlueprintTrainer:
                 f"action abstractions (5-size + emergent all-in vs 4-size + voluntary "
                 f"all-in) and produce incompatible info-set keys. Resume with "
                 f"menu_mode={stored_menu!r}, or start a fresh run.")
+        stored_kf = db.get_metadata('key_format', 'v2')
+        if stored_kf != self.key_format:
+            raise ValueError(
+                f"Resume key-format mismatch: this blueprint uses key_format="
+                f"{stored_kf!r}, but the run is configured for {self.key_format!r}. "
+                f"The formats build different info-set keys. Resume with "
+                f"key_format={stored_kf!r}, or start a fresh run.")
         print(f"Resumed: {len(self.info_sets)} info sets, continuing from iteration {start_iteration}")
         return start_iteration

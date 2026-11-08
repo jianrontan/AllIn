@@ -161,13 +161,13 @@ def _worker_run_chunk(payload):
     """Run `chunk` iterations from a baseline with the discount disabled, and
     return only this round's deltas (the info sets touched, split by whether they
     got a regret update, a strategy update, or both)."""
-    baseline, start_iteration, chunk, seed, alpha, gamma, menu_mode = payload
+    baseline, start_iteration, chunk, seed, alpha, gamma, menu_mode, key_format = payload
     random.seed(seed)
 
     # The worker MUST build its game under the same action abstraction as the master
     # (capped vs control); otherwise it would generate the wrong legal-action set and
     # info-set keys for the arm being trained.
-    trainer = BlueprintTrainer(menu_mode=menu_mode)
+    trainer = BlueprintTrainer(menu_mode=menu_mode, key_format=key_format)
     trainer.alpha = alpha
     trainer.gamma = gamma
     trainer.discount_enabled = False        # master applies the block discount
@@ -322,6 +322,7 @@ def train_blueprint_parallel(trainer, iterations, db=None, start_iteration=0,
         workers = os.cpu_count() or 1
     alpha, gamma = trainer.alpha, trainer.gamma
     menu_mode = trainer.menu_mode      # workers must build the same abstraction arm
+    key_format = trainer.key_format    # ... and the same info-set key format
     # Per-worker seed = base_seed + round_idx*workers + w (unique per (round, worker)).
     # Fold start_iteration in so a SEEDED resume doesn't restart round_idx at 0 and
     # re-deal the exact hands the original run already trained on (correlated work).
@@ -376,7 +377,7 @@ def train_blueprint_parallel(trainer, iterations, db=None, start_iteration=0,
                     cursor + offset,
                     chunk,
                     base_seed + round_idx * workers + w,
-                    alpha, gamma, menu_mode,
+                    alpha, gamma, menu_mode, key_format,
                 ))
                 offset += chunk
 

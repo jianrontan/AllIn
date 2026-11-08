@@ -131,7 +131,7 @@ def test_worker_chunk_disables_discount():
     must populate role-specific dirty sets. Payload carries menu_mode (last field)
     so the worker builds the right action-abstraction arm."""
     baseline = {}
-    res = pt._worker_run_chunk((baseline, 0, 40, 12345, 1.5, 2.0, 'control'))
+    res = pt._worker_run_chunk((baseline, 0, 40, 12345, 1.5, 2.0, 'control', 'v2'))
     check('worker returns regret deltas', len(res['regret']) > 0)
     check('worker returns strategy deltas', len(res['strategy']) > 0)
     check('worker ev_count', res['ev_count'] == 40)
@@ -144,7 +144,7 @@ def test_worker_chunk_capped_menu():
     at least one key whose pattern contains '2' (the 2.0x tier the control menu can
     never produce)."""
     baseline = {}
-    res = pt._worker_run_chunk((baseline, 0, 400, 999, 1.5, 2.0, 'capped'))
+    res = pt._worker_run_chunk((baseline, 0, 400, 999, 1.5, 2.0, 'capped', 'v2'))
     keys = set(res['regret']) | set(res['strategy'])
     # postflop key pattern is the last underscore-token; '2' there == overbet2 played.
     has_overbet2 = any('2' in k.split('_')[-1] for k in keys)

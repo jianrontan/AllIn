@@ -88,6 +88,8 @@ impl Default for Schedule {
 pub struct Trainer {
     pub engine: Engine,
     pub menu_mode: String,
+    /// Info-set key format (`keys.KEY_FORMATS`); stamped when not v2.
+    pub key_format: crate::keys::KeyFormat,
     pub sched: Schedule,
     pub table: Table,
     /// Keys touched since the last checkpoint.
@@ -113,6 +115,8 @@ struct Node {
     pattern: Pattern,
     stacks: [f64; 2],
     st: NodeState,
+    /// Pot when this street began (`starting_pot` in Python's cfr).
+    street_pot: f64,
     /// Index in the history buffer where this street's actions start.
     h0: usize,
 }
@@ -122,6 +126,7 @@ impl Trainer {
         Ok(Trainer {
             engine: Engine::for_mode(menu_mode)?,
             menu_mode: menu_mode.to_string(),
+            key_format: crate::keys::KeyFormat::V2,
             sched,
             table: Table::default(),
             dirty: FxHashSet::default(),
@@ -186,6 +191,7 @@ impl Trainer {
             pattern: Pattern::default(),
             stacks: [STARTING_STACK - 1.0, STARTING_STACK - 2.0],
             st: self.engine.init_node_state(0, 3.0),
+            street_pot: 3.0,
             h0: 0,
         };
         let util = self.cfr(&mut hand, &mut hist, root, updating, iteration, rng)?;
@@ -253,6 +259,7 @@ impl Trainer {
                     pattern: Pattern::default(),
                     stacks: [STARTING_STACK - p_inv[0], STARTING_STACK - p_inv[1]],
                     st: self.engine.init_node_state(n.street + 1, n.st.pot),
+                    street_pot: n.st.pot,
                     h0: hist.len(),
                 };
                 return self.cfr(hand, hist, next, upd, iteration, rng);
@@ -273,7 +280,8 @@ impl Trainer {
         } else {
             (hand.coarse[seat], hand.strength(seat, n.street)?)
         };
-        let key = pack_key(n.street, cp, bucket, strength, n.pattern)?;
+        let spr = crate::keys::spr_bucket(self.key_format, n.street, n.street_pot)?;
+        let key = pack_key(n.street, cp, bucket, strength, n.pattern, spr)?;
         self.dirty.insert(key);
 
         let mut strat = [0.0f64; MAX_ACTIONS];
@@ -400,14 +408,19 @@ impl Trainer {
     /// Metadata written with every checkpoint (`checkpoint_to_db`).
     pub fn checkpoint_meta(&self, iteration: i64) -> Vec<(&'static str, String)> {
         use super::pyjson::py_repr;
-        vec![
+        let mut meta = vec![
             ("total_iterations", (iteration + 1).to_string()),
             ("alpha", py_repr(self.sched.alpha)),
             ("gamma", py_repr(self.sched.gamma)),
             ("menu_mode", format!("\"{}\"", self.menu_mode)),
             ("ev_sum", py_repr(self.ev_sum)),
             ("ev_count", self.ev_count.to_string()),
-        ]
+        ];
+        if self.key_format != crate::keys::KeyFormat::V2 {
+            // Absent = v2, so v2 blueprints stay byte-identical to Python's.
+            meta.push(("key_format", format!("\"{}\"", self.key_format.name())));
+        }
+        meta
     }
 
     /// Atomic incremental checkpoint of the dirty info sets + metadata.
@@ -450,6 +463,21 @@ impl Trainer {
             return Err(format!(
                 "Resume menu-mode mismatch: blueprint menu_mode={stored_menu:?}, run {:?}",
                 self.menu_mode
+            ));
+        }
+        let stored_kf = db
+            .metadata("key_format")?
+            .map(|v| {
+                v.as_str()
+                    .map(String::from)
+                    .ok_or_else(|| "metadata key_format not a string".to_string())
+            })
+            .transpose()?
+            .unwrap_or_else(|| "v2".into());
+        if stored_kf != self.key_format.name() {
+            return Err(format!(
+                "Resume key-format mismatch: blueprint key_format={stored_kf:?}, run {:?}",
+                self.key_format.name()
             ));
         }
         if let (Some(mode), Some(stored)) = (mode, db.metadata("training_mode")?) {

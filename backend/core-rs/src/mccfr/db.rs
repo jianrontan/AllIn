@@ -242,7 +242,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let p = path.to_str().unwrap();
         let mut t = Table::default();
-        let k = pack_key(2, 1, 7, 13, Pattern::parse("ks").unwrap()).unwrap();
+        let k = pack_key(2, 1, 7, 13, Pattern::parse("ks").unwrap(), None).unwrap();
         let mut is = InfoSet::default();
         is.legal = Legal::from_ids(&[2, 1, 3]).unwrap();
         is.regrets.set(1, 0.1 + 0.2).unwrap();

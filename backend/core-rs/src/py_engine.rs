@@ -126,15 +126,20 @@ fn history(h: &[String]) -> PyResult<Vec<Action>> {
 }
 
 #[pyfunction]
+#[pyo3(signature = (street, position, preflop_bucket, strength, pattern, spr=None))]
 fn make_info_set_key(
     street: i64,
     position: &str,
     preflop_bucket: &str,
     strength: Option<i64>,
     pattern: &str,
+    spr: Option<u8>,
 ) -> PyResult<String> {
     let street = street_arg(street)?;
     if street == 0 {
+        if spr.is_some() {
+            return Err(err("preflop keys carry no SPR bucket".into()));
+        }
         // Python formats the bucket id verbatim preflop.
         return Ok(format!("{preflop_bucket}_{position}_{pattern}"));
     }
@@ -146,8 +151,16 @@ fn make_info_set_key(
         strength,
         pattern,
         crate::buckets::fine_to_coarse(),
+        spr,
     )
     .map_err(err)
+}
+
+/// `keys.spr_bucket(key_format, street, street_pot)`.
+#[pyfunction]
+fn spr_bucket(key_format: &str, street: i64, street_pot: f64) -> PyResult<Option<u8>> {
+    let fmt = keys::KeyFormat::parse(key_format).map_err(err)?;
+    keys::spr_bucket(fmt, street_arg(street)?, street_pot).map_err(err)
 }
 
 #[pyfunction]
@@ -304,6 +317,7 @@ impl PyEngine {
 
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(make_info_set_key, m)?)?;
+    m.add_function(wrap_pyfunction!(spr_bucket, m)?)?;
     m.add_function(wrap_pyfunction!(action_char, m)?)?;
     m.add_class::<PyEngine>()?;
     Ok(())

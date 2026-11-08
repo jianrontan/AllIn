@@ -23,6 +23,7 @@ Tolerances:
     (Progress log 2026-11-08 records this split.)
 """
 import json
+import re
 
 import numpy as np
 import pytest
@@ -304,12 +305,14 @@ def _db_rows(path):
     return rows, meta
 
 
-@pytest.mark.parametrize('name', ['mccfr_control_g1', 'mccfr_capped_g1', 'mccfr_control_g2'])
+@pytest.mark.parametrize('name', ['mccfr_control_g1', 'mccfr_capped_g1', 'mccfr_control_g2',
+                                  'mccfr_capped_spr5_g1'])
 def test_mccfr(name, tmp_path):
-    core = need('mccfr', f'{name}.json', f'{name}.db')
+    component = 'mccfr_spr' if 'spr' in name else 'mccfr'
+    core = need(component, f'{name}.json', f'{name}.db')
     with open(fixture_path(f'{name}.json')) as f:
         d = json.load(f)
-    t = core.Trainer(d['mode'], d['alpha'], d['gamma'])
+    t = core.Trainer(d['mode'], d['alpha'], d['gamma'], key_format=d.get('key_format', 'v2'))
     rows = d['deals']
     used = t.run_fixture([r['cards'] for r in rows], [r['fine'] for r in rows],
                          [r['post'] for r in rows], [r['raw'] for r in rows],
@@ -326,6 +329,24 @@ def test_mccfr(name, tmp_path):
         assert g == w, f"row differs:\n rust   {g}\n python {w}"
     for k in ('total_iterations', 'alpha', 'gamma', 'menu_mode', 'ev_sum', 'ev_count'):
         assert got_meta[k] == want_meta[k], f"metadata {k}: {got_meta[k]} != {want_meta[k]}"
+    assert got_meta.get('key_format') == want_meta.get('key_format')
+    if d.get('key_format', 'v2') != 'v2':
+        assert any(re.search(r'_(flop|turn)_r[0-4]_', r[0]) for r in got), 'spr5 run produced no SPR keys'
+
+
+# ----------------------------------------------------------------------------
+# keys_spr -- contract: spr_bucket(key_format, street, street_pot) -> int|None ;
+#   make_info_set_key(..., spr) carries it as an `r<b>` token on flop/turn keys
+# ----------------------------------------------------------------------------
+def test_keys_spr():
+    core = need('keys_spr', 'keys_spr.json')
+    with open(fixture_path('keys_spr.json')) as f:
+        d = json.load(f)
+    for c in d['cases']:
+        assert core.spr_bucket(c['key_format'], c['street'], c['street_pot']) == c['spr'], c
+        got = core.make_info_set_key(c['street'], c['position'], c['preflop_bucket'],
+                                     c['strength'], c['pattern'], c['spr'])
+        assert got == c['key'], c
 
 
 # ----------------------------------------------------------------------------

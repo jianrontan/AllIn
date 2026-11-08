@@ -95,6 +95,8 @@ def main():
     ap.add_argument('--alpha', type=float, default=1.5)
     ap.add_argument('--gamma', type=float, default=1.0)
     ap.add_argument('--menu-mode', choices=['control', 'capped', 'capped_no2'], default='capped')
+    ap.add_argument('--key-format', choices=['v2', 'spr5'], default='v2',
+                    help="info-set key format: v2 (served) or spr5 (Phase 6 SPR buckets on flop/turn)")
     ap.add_argument('--river-cache-boards', type=int, default=None,
                     help='canonical river-board cache cap (default: the crate default)')
     args = ap.parse_args()
@@ -105,7 +107,7 @@ def main():
 
     mode = 'parallel' if args.workers > 1 else 'single'
     seed = args.seed if args.seed is not None else random.randrange(1 << 62)
-    trainer = allin_core.Trainer(args.menu_mode, args.alpha, args.gamma)
+    trainer = allin_core.Trainer(args.menu_mode, args.alpha, args.gamma, key_format=args.key_format)
     # Load the abstraction FIRST, so a bad tables dir fails before any DB exists.
     print(f"Loading abstraction from {args.abstractions_dir} ...", flush=True)
     t_load = time.time()
@@ -127,6 +129,8 @@ def main():
     else:
         prefix = 'blueprint_par' if mode == 'parallel' else 'blueprint'
         tag = '' if args.menu_mode == 'control' else f"_{args.menu_mode.replace('_', '')}"
+        if args.key_format != 'v2':
+            tag += f"_{args.key_format}"
         # Timestamp + random suffix: two runs started in the same second must
         # never share (and corrupt) one DB.
         name = (f"{prefix}{tag}_rs_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -136,7 +140,7 @@ def main():
             ap.error(f'refusing to overwrite {db_path}')
         print(f"New run: {db_path}")
     trainer.stamp_mode(db_path, mode)
-    print(f"menu={args.menu_mode} mode={mode} workers={args.workers} merge_every={args.merge_every} "
+    print(f"menu={args.menu_mode} key_format={args.key_format} mode={mode} workers={args.workers} merge_every={args.merge_every} "
           f"alpha={args.alpha} gamma={args.gamma} seed={seed}")
 
     total_target = start + args.iterations

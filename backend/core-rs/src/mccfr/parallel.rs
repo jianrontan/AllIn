@@ -257,7 +257,7 @@ pub fn train_parallel<A: Abstraction + ?Sized>(
     }
     let t0 = Instant::now();
     let mut stats = RunStats::default();
-    let (mode, sched) = (master.menu_mode.clone(), master.sched);
+    let (mode, sched, key_format) = (master.menu_mode.clone(), master.sched, master.key_format);
     while stats.iterations < iterations {
         let round_total = per_round.min(iterations - stats.iterations);
         let cursor = start + stats.iterations as i64;
@@ -274,6 +274,7 @@ pub fn train_parallel<A: Abstraction + ?Sized>(
                         s,
                         move || -> Result<WorkerDelta, String> {
                             let mut wt = Trainer::worker(mode, sched, base)?;
+                            wt.key_format = key_format;
                             loop {
                                 let k = next.fetch_add(BLOCK, Ordering::Relaxed);
                                 if k >= round_total {
@@ -339,7 +340,7 @@ mod tests {
 
     #[test]
     fn merge_floors_regrets_and_sums_increments() {
-        let k = pack_key(1, 0, 3, 4, Pattern::default()).unwrap();
+        let k = pack_key(1, 0, 3, 4, Pattern::default(), None).unwrap();
         let mut table = Table::default();
         let mut is = InfoSet::default();
         is.legal = Legal::from_ids(&[0, 4]).unwrap();

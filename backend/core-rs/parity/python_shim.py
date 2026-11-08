@@ -20,7 +20,7 @@ from src.evaluation.showdown_kernel import (  # noqa: E402
 __version__ = 'python-reference'
 COMPONENTS = ('eval_rank7', 'buckets', 'keys', 'engine',
               'river_showdown', 'river_tree', 'river_cfr', 'river_gadget',
-              'mccfr', 'mccfr_merge')
+              'mccfr', 'mccfr_merge', 'keys_spr', 'mccfr_spr')
 
 
 def ported():
@@ -72,9 +72,14 @@ class Buckets:
 
 
 # -- keys ---------------------------------------------------------------------
-def make_info_set_key(street, position, preflop_bucket, strength, pattern):
+def make_info_set_key(street, position, preflop_bucket, strength, pattern, spr=None):
     from src.cfr.keys import make_info_set_key as mk
-    return mk(street, position, preflop_bucket, strength, pattern)
+    return mk(street, position, preflop_bucket, strength, pattern, spr)
+
+
+def spr_bucket(key_format, street, street_pot):
+    from src.cfr.keys import spr_bucket as sb
+    return sb(key_format, street, street_pot)
 
 
 def action_char(action):
@@ -178,9 +183,9 @@ class Trainer:
     the uniform stream are injected exactly as export_rust_fixtures records
     them (buckets are recomputed by Python, so fine/post/raw are unused)."""
 
-    def __init__(self, menu_mode='control', alpha=1.5, gamma=1.0):
+    def __init__(self, menu_mode='control', alpha=1.5, gamma=1.0, key_format='v2'):
         from src.cfr.blueprint_trainer import BlueprintTrainer
-        self._t = BlueprintTrainer(menu_mode=menu_mode)
+        self._t = BlueprintTrainer(menu_mode=menu_mode, key_format=key_format)
         self._t.alpha, self._t.gamma = alpha, gamma
 
     @property

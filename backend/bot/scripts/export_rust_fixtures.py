@@ -42,7 +42,7 @@ from src.evaluation.showdown_kernel import (  # noqa: E402
 
 COMPONENTS = ('eval_rank7', 'buckets', 'keys', 'engine',
               'river_showdown', 'river_tree', 'river_cfr', 'river_gadget',
-              'mccfr', 'mccfr_merge')
+              'mccfr', 'mccfr_merge', 'keys_spr', 'mccfr_spr')
 DEFAULT_OUT = os.path.normpath(os.path.join(BOT, '..', 'core-rs', 'fixtures'))
 
 
@@ -455,14 +455,14 @@ class _StreamRandom(random.Random):
         return v
 
 
-def _mccfr_run(out, rng, mode, gamma, n_iter):
+def _mccfr_run(out, rng, mode, gamma, n_iter, key_format='v2'):
     import src.cfr.blueprint_trainer as bt
     from src.abstractions.card_abstractions import FINE_TO_COARSE
     from src.abstractions.postflop_features import rank7
     from src.storage.blueprint_db import BlueprintDB
 
     deals = [_deal(rng, 9) for _ in range(n_iter)]
-    trainer = bt.BlueprintTrainer(menu_mode=mode)
+    trainer = bt.BlueprintTrainer(menu_mode=mode, key_format=key_format)
     trainer.gamma = gamma
     ca = trainer.game_adapter.card_abstractions
     feed = iter(deals)
@@ -475,7 +475,8 @@ def _mccfr_run(out, rng, mode, gamma, n_iter):
             trainer._run_iteration(i)
     finally:
         bt.random = saved
-    name = f'mccfr_{mode}_g{gamma:g}'
+    kf = '' if key_format == 'v2' else f'_{key_format}'
+    name = f'mccfr_{mode}{kf}_g{gamma:g}'
     db_path = os.path.join(out, f'{name}.db')
     for suffix in ('', '-wal', '-shm'):
         if os.path.exists(db_path + suffix):
@@ -497,7 +498,8 @@ def _mccfr_run(out, rng, mode, gamma, n_iter):
             'raw': [int(rank7(list(h) + list(board))) for h in holes],
         })
     _write_json(os.path.join(out, f'{name}.json'), {
-        'mode': mode, 'alpha': trainer.alpha, 'gamma': gamma, 'iterations': n_iter,
+        'mode': mode, 'key_format': key_format,
+        'alpha': trainer.alpha, 'gamma': gamma, 'iterations': n_iter,
         'fine_to_coarse': list(FINE_TO_COARSE), 'deals': rows, 'uniforms': stream.drawn,
         'ev_sum': trainer.ev_sum, 'ev_count': trainer.ev_count,
         'info_sets': len(trainer.info_sets), 'db': os.path.basename(db_path)})
@@ -509,6 +511,43 @@ def export_mccfr(out, rng, quick):
     n = 60 if quick else 600
     return {f'{mode}_g{gamma:g}': _mccfr_run(out, rng, mode, gamma, n)
             for mode, gamma in (('control', 1.0), ('capped', 1.0), ('control', 2.0))}
+
+
+def export_mccfr_spr(out, rng, quick):
+    n = 60 if quick else 600
+    return {'capped_spr5_g1': _mccfr_run(out, rng, 'capped', 1.0, n, key_format='spr5')}
+
+
+# ----------------------------------------------------------------------------
+# keys_spr -- spr_bucket + spr5 key strings (Phase 6)
+# ----------------------------------------------------------------------------
+def export_keys_spr(out, rng, quick):
+    from src.cfr.keys import make_info_set_key, spr_bucket, SPR_EDGES
+    from src.abstractions.card_abstractions import NUM_PREFLOP_BUCKETS
+    # Pots exactly at, and one ulp around, every bucket edge (SPR = 200/pot - 0.5
+    # => edge pot = 200 / (edge + 0.5)), plus random realistic pots.
+    pots = []
+    for e in SPR_EDGES:
+        p = 200.0 / (e + 0.5)
+        pots += [p, float(np.nextafter(p, 0)), float(np.nextafter(p, 1e9))]
+    pots += [3.0, 4.0, 8.0, 10.0, 16.0, 80.0, 400.0, 399.5, 0.5]
+    n = 2_000 if quick else 20_000
+    pots += [float(x) for x in rng.uniform(2.0, 400.0, n)]
+    cases = []
+    for i, pot in enumerate(pots):
+        for kf in ('v2', 'spr5'):
+            street = int(rng.integers(0, 4))
+            b = spr_bucket(kf, street, pot)
+            pos = 'ip' if rng.random() < 0.5 else 'oop'
+            fine = f"pf_{int(rng.integers(0, NUM_PREFLOP_BUCKETS))}"
+            strength = None if street == 0 else int(rng.integers(0, 30))
+            pat = ''.join(rng.choice(list('kcfsmlxo2a')) for _ in range(int(rng.integers(0, 6))))
+            cases.append({'key_format': kf, 'street': street, 'street_pot': pot, 'spr': b,
+                          'position': pos, 'preflop_bucket': fine, 'strength': strength,
+                          'pattern': pat,
+                          'key': make_info_set_key(street, pos, fine, strength, pat, b)})
+    _write_json(os.path.join(out, 'keys_spr.json'), {'cases': cases})
+    return {'cases': len(cases)}
 
 
 # ----------------------------------------------------------------------------

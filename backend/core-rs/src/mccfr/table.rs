@@ -283,9 +283,12 @@ impl Pattern {
 const PAT_BITS: u64 = 40;
 const STR_BITS: u64 = 10;
 const BKT_BITS: u64 = 8;
+/// Bits 61..63: SPR bucket + 1 (0 = no SPR token, i.e. a v2 key).
+const SPR_SHIFT: u64 = PAT_BITS + STR_BITS + BKT_BITS + 1 + 2;
 
 /// Pack a key. `bucket` is the FINE preflop id preflop and the COARSE class
 /// postflop (exactly what the key string prints); `strength` is ignored preflop.
+/// `spr` is the spr5 SPR bucket (flop/turn only), None for a v2 key.
 #[inline]
 pub fn pack_key(
     street: u8,
@@ -293,10 +296,20 @@ pub fn pack_key(
     bucket: u8,
     strength: u16,
     pat: Pattern,
+    spr: Option<u8>,
 ) -> Result<u64, String> {
     if street > 3 || seat > 1 {
         return Err("bad street/seat".into());
     }
+    let spr_bits = match spr {
+        None => 0u64,
+        Some(b)
+            if (street == 1 || street == 2) && (b as usize) < crate::keys::SPR_EDGES.len() + 1 =>
+        {
+            b as u64 + 1
+        }
+        Some(b) => return Err(format!("SPR bucket {b} invalid on street {street}")),
+    };
     if strength as u64 >= 1 << STR_BITS {
         return Err(format!(
             "strength bucket {strength} does not fit the packed key"
@@ -307,7 +320,8 @@ pub fn pack_key(
         | (s << PAT_BITS)
         | ((bucket as u64) << (PAT_BITS + STR_BITS))
         | ((seat as u64) << (PAT_BITS + STR_BITS + BKT_BITS))
-        | ((street as u64) << (PAT_BITS + STR_BITS + BKT_BITS + 1)))
+        | ((street as u64) << (PAT_BITS + STR_BITS + BKT_BITS + 1))
+        | (spr_bits << SPR_SHIFT))
 }
 
 pub struct KeyParts {
@@ -316,6 +330,7 @@ pub struct KeyParts {
     pub bucket: u8,
     pub strength: u16,
     pub pattern: Pattern,
+    pub spr: Option<u8>,
 }
 
 pub fn unpack_key(k: u64) -> KeyParts {
@@ -330,6 +345,10 @@ pub fn unpack_key(k: u64) -> KeyParts {
         bucket: (k >> (PAT_BITS + STR_BITS)) as u8,
         strength: ((k >> PAT_BITS) & ((1 << STR_BITS) - 1)) as u16,
         pattern: Pattern { code, len },
+        spr: match k >> SPR_SHIFT {
+            0 => None,
+            v => Some(v as u8 - 1),
+        },
     }
 }
 
@@ -341,8 +360,12 @@ pub fn key_string(k: u64) -> String {
     if p.street == 0 {
         format!("pf_{}_{pos}_{pat}", p.bucket)
     } else {
+        let r = match p.spr {
+            Some(b) => format!("r{b}_"),
+            None => String::new(),
+        };
         format!(
-            "pf_{}_{}_{pos}_{}_{pat}",
+            "pf_{}_{}_{pos}_{}_{r}{pat}",
             p.bucket, p.strength, STREET_NAMES[p.street as usize]
         )
     }
@@ -364,9 +387,9 @@ pub fn parse_key(s: &str) -> Result<u64, String> {
             if b > 255 {
                 return Err(bad());
             }
-            pack_key(0, seat(pos)?, b as u8, 0, Pattern::parse(pat)?)
+            pack_key(0, seat(pos)?, b as u8, 0, Pattern::parse(pat)?, None)
         }
-        ["pf", b, st, pos, street, pat] => {
+        ["pf", b, st, pos, street, rest @ ..] if rest.len() == 1 || rest.len() == 2 => {
             let b = num(b)?;
             let street = STREET_NAMES
                 .iter()
@@ -376,7 +399,27 @@ pub fn parse_key(s: &str) -> Result<u64, String> {
             if b > 255 {
                 return Err(bad());
             }
-            pack_key(street, seat(pos)?, b as u8, num(st)?, Pattern::parse(pat)?)
+            let (spr, pat) = match rest {
+                [pat] => (None, *pat),
+                [r, pat] => {
+                    let v = r
+                        .strip_prefix('r')
+                        .filter(|d| d.len() == 1)
+                        .and_then(|d| d.parse::<u8>().ok())
+                        .ok_or_else(bad)?;
+                    (Some(v), *pat)
+                }
+                _ => return Err(bad()),
+            };
+            pack_key(
+                street,
+                seat(pos)?,
+                b as u8,
+                num(st)?,
+                Pattern::parse(pat)?,
+                spr,
+            )
+            .map_err(|_| bad())
         }
         _ => Err(bad()),
     }
@@ -395,6 +438,9 @@ mod tests {
             "pf_3_29_oop_river_kos2a",
             "pf_0_0_ip_flop_",
             "pf_168_oop_xa",
+            "pf_9_5_ip_turn_r3_m",
+            "pf_0_0_oop_flop_r0_",
+            "pf_4_12_ip_flop_r4_kss",
         ] {
             let k = parse_key(s).unwrap();
             assert_eq!(key_string(k), s);
@@ -407,6 +453,12 @@ mod tests {
             "pf_1_2_ip_preflop_",
             "pf_1_ip_q",
             "pf_1_2_ip_flop_kkkkkkkkkkk",
+            "pf_1_2_ip_river_r1_k",
+            "pf_1_2_ip_flop_r5_k",
+            "pf_1_2_ip_flop_rx_k",
+            "pf_1_2_ip_flop_r01_k",
+            "pf_1_2_ip_flop_s1_k",
+            "pf_1_2_ip_flop_r1_k_k",
         ] {
             assert!(parse_key(bad).is_err(), "{bad}");
         }

@@ -28,7 +28,7 @@ fn sched(alpha: f64, gamma: f64) -> PyResult<Schedule> {
     Ok(Schedule { alpha, gamma })
 }
 
-/// `Trainer(menu_mode='control', alpha=1.5, gamma=1.0)`.
+/// `Trainer(menu_mode='control', alpha=1.5, gamma=1.0, key_format='v2')`.
 #[pyclass(name = "Trainer", module = "allin_core")]
 pub(crate) struct PyTrainer {
     pub(crate) inner: Trainer,
@@ -38,12 +38,16 @@ pub(crate) struct PyTrainer {
 #[pymethods]
 impl PyTrainer {
     #[new]
-    #[pyo3(signature = (menu_mode="control", alpha=1.5, gamma=1.0))]
-    fn new(menu_mode: &str, alpha: f64, gamma: f64) -> PyResult<Self> {
-        Ok(PyTrainer {
-            inner: Trainer::new(menu_mode, sched(alpha, gamma)?).map_err(err)?,
-            abs: None,
-        })
+    #[pyo3(signature = (menu_mode="control", alpha=1.5, gamma=1.0, key_format="v2"))]
+    fn new(menu_mode: &str, alpha: f64, gamma: f64, key_format: &str) -> PyResult<Self> {
+        let mut inner = Trainer::new(menu_mode, sched(alpha, gamma)?).map_err(err)?;
+        inner.key_format = crate::keys::KeyFormat::parse(key_format).map_err(err)?;
+        Ok(PyTrainer { inner, abs: None })
+    }
+
+    #[getter]
+    fn key_format(&self) -> &'static str {
+        self.inner.key_format.name()
     }
 
     #[getter]
@@ -151,10 +155,16 @@ impl PyTrainer {
             return Err(err("mode must be 'single' or 'parallel'".into()));
         }
         let mut db = BlueprintDb::open(db_path).map_err(err)?;
-        let meta = [
+        let mut meta = vec![
             ("training_mode", format!("\"{mode}\"")),
             ("menu_mode", format!("\"{}\"", self.inner.menu_mode)),
         ];
+        if self.inner.key_format != crate::keys::KeyFormat::V2 {
+            meta.push((
+                "key_format",
+                format!("\"{}\"", self.inner.key_format.name()),
+            ));
+        }
         db.save_checkpoint(&self.inner.table, std::iter::empty(), &meta)
             .map(|_| ())
             .map_err(err)

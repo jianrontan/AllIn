@@ -18,6 +18,45 @@ BOARD_COUNT = [0, 3, 4, 5]
 _BOARD_COUNT_TO_STREET = {n: i for i, n in enumerate(BOARD_COUNT)}
 
 
+# --- Key formats -----------------------------------------------------------------
+# 'v2'  : the served v2 format (no SPR on the key).
+# 'spr5': v2 + a stack-to-pot bucket on FLOP and TURN keys (Phase 6, see
+#         docs/PHASE6_ABSTRACTION_PLAN.md). The bucket is the SPR at the START of
+#         the street, aligned to preflop pot types: >40 limped, 12-40 single-raised,
+#         5-12 3-bet, 2-5 4-bet, <2 jam zone. Preflop and river keys are unchanged.
+# A blueprint DB stamps its format in training_metadata['key_format'] (absent =
+# 'v2'); every reader must build keys in the format of the blueprint it opened.
+KEY_FORMATS = ('v2', 'spr5')
+SPR_EDGES = (2.0, 5.0, 12.0, 40.0)        # bucket b = number of edges <= SPR
+SPR_STREETS = (1, 2)                       # flop, turn
+_KEY_STARTING_STACK = 200                  # == poker_game.STARTING_STACK (test-guarded)
+
+
+def spr_bucket(key_format, street, street_pot):
+    """The SPR bucket (0..4, 0 = jam zone) an info-set key carries, or None when the
+    format/street has none (v2, preflop, river).
+
+    `street_pot` is the pot (chips) when the street BEGAN. Both players start every
+    hand with the same stack and a street only closes once contributions match, so
+    at a street start both have invested pot/2 and the effective stack is
+    STARTING_STACK - pot/2: the SPR is a pure function of the street-start pot,
+    and therefore of the public betting history."""
+    if key_format == 'v2' or street not in SPR_STREETS:
+        if key_format not in KEY_FORMATS:
+            raise ValueError(f"unknown key_format {key_format!r}")
+        return None
+    if key_format != 'spr5':
+        raise ValueError(f"unknown key_format {key_format!r}")
+    if not (street_pot > 0) or street_pot == float('inf'):
+        raise ValueError(f"street_pot must be finite and > 0, got {street_pot!r}")
+    spr = (_KEY_STARTING_STACK - street_pot / 2.0) / street_pot
+    b = 0
+    for e in SPR_EDGES:
+        if spr >= e:
+            b += 1
+    return b
+
+
 def street_from_board_count(n):
     """Street index (0=preflop .. 3=river) from the number of community cards.
     The inverse of BOARD_COUNT. Raises ValueError for a count that is not a legal
@@ -87,7 +126,8 @@ def action_char(action):
         raise ValueError(f"action_char: unmapped action {action!r} (not a grid action)")
 
 
-def make_info_set_key(street, position, preflop_bucket, postflop_strength, bet_pattern):
+def make_info_set_key(street, position, preflop_bucket, postflop_strength, bet_pattern,
+                      spr=None):
     """
     Build the canonical info-set key.
 
@@ -100,12 +140,24 @@ def make_info_set_key(street, position, preflop_bucket, postflop_strength, bet_p
     postflop_strength : the acting player's postflop strength bucket for this
                         street (ignored preflop, may be None)
     bet_pattern       : current-street betting pattern (e.g. 'm', 'km')
+    spr               : SPR bucket from spr_bucket() (spr5 format, flop/turn), or
+                        None for a v2 key. Passing one on preflop/river is an error.
 
     Preflop : {fine_bucket}_{position}_{bet_pattern}
     Postflop: {coarse_class}_{postflop_strength}_{position}_{street}_{bet_pattern}
+    spr5    : {coarse_class}_{postflop_strength}_{position}_{street}_r{spr}_{bet_pattern}
     """
     if street == 0:
+        if spr is not None:
+            raise ValueError("preflop keys carry no SPR bucket")
         return f"{preflop_bucket}_{position}_{bet_pattern}"
     coarse = _coarse_class(preflop_bucket)
+    if spr is None:
+        return (f"{coarse}_{postflop_strength}_{position}_"
+                f"{STREET_NAMES[street]}_{bet_pattern}")
+    if street not in SPR_STREETS:
+        raise ValueError(f"street {street} keys carry no SPR bucket")
+    if not (isinstance(spr, int) and 0 <= spr <= len(SPR_EDGES)):
+        raise ValueError(f"SPR bucket must be an int in 0..{len(SPR_EDGES)}, got {spr!r}")
     return (f"{coarse}_{postflop_strength}_{position}_"
-            f"{STREET_NAMES[street]}_{bet_pattern}")
+            f"{STREET_NAMES[street]}_r{spr}_{bet_pattern}")
