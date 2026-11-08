@@ -18,7 +18,7 @@ import random
 
 import numpy as np
 
-from ..cfr.keys import make_info_set_key, action_char
+from ..cfr.keys import make_info_set_key, action_char, spr_bucket
 from ..cfr.poker_game import STARTING_STACK
 from ..abstractions.sizing import preflop_open_chips, PREFLOP_RAISE_MULT, POSTFLOP_BET_MULT
 from ..abstractions.card_abstractions import CardAbstraction
@@ -85,7 +85,9 @@ class BlueprintPlayer:
 
     def __init__(self, strategy_source, cards, rng, menu_mode='control'):
         from ..cfr.keys import require_key_format
-        require_key_format(strategy_source, ('v2',), 'match')
+        # Each player builds keys in its OWN blueprint's format (a v3/spr5 player
+        # can face a v2 one).
+        self.key_format = require_key_format(strategy_source, ('v2', 'spr5'), 'match') or 'v2'
         self.src = strategy_source
         self.cards = cards
         self.rng = rng
@@ -121,14 +123,17 @@ class BlueprintPlayer:
         self._restricted_cache[ck] = probs
         return probs
 
-    def act(self, seat, hand, vis, street, pot, committed, stack, to_call, num_aggr, pattern):
+    def act(self, seat, hand, vis, street, pot, committed, stack, to_call, num_aggr, pattern,
+            street_pot=None):
+        """`street_pot` = pot when this street began (needed for spr5 flop/turn keys)."""
         pos = 'ip' if seat == 0 else 'oop'
         if street == 0:
             key = make_info_set_key(0, pos, self.cards.get_bucket(list(hand), None), None, pattern)
         else:
             key = make_info_set_key(
                 street, pos, self.cards.get_bucket(list(hand), None),
-                self.cards.get_bucket(list(hand), vis), pattern)
+                self.cards.get_bucket(list(hand), vis), pattern,
+                spr_bucket(self.key_format, street, street_pot))
         legal = _legal_actions(street, to_call, num_aggr, stack, pot, self.menu_mode)
         probs = self._restricted(key, tuple(legal))
         idx = self.rng.choices(range(len(legal)), weights=probs)[0]
@@ -208,7 +213,8 @@ class HeadToHeadMatch:
                 pot = sum(invested)
                 char, add, aggr, info = players[actor].act(
                     actor, hands[actor], vis, street, pot, committed[actor],
-                    stack[actor], to_call, num_aggr, pattern)
+                    stack[actor], to_call, num_aggr, pattern,
+                    street_pot=pot - sum(committed))
                 if events is not None:
                     events.append({
                         'type': 'action', 'street': street, 'vis': list(vis),

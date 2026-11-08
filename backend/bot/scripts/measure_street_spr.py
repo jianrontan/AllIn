@@ -38,7 +38,7 @@ import numpy as np  # noqa: E402
 from measure_spr_spread import SelfPlaySampler  # noqa: E402
 from src.storage.blueprint_db import BlueprintDB  # noqa: E402
 from src.cfr.poker_game import STARTING_STACK  # noqa: E402
-from src.cfr.keys import make_info_set_key, action_char  # noqa: E402
+from src.cfr.keys import make_info_set_key, action_char, spr_bucket, db_key_format  # noqa: E402
 from src.abstractions.hand_evaluator import HandEvaluator  # noqa: E402
 
 # Fine SPR bins for the distribution (upper edges; last bin is open).
@@ -74,6 +74,9 @@ def _pot_type(preflop_pattern):
 class StreetSprSampler(SelfPlaySampler):
     def __init__(self, db):
         super().__init__(db)
+        # Build keys in the blueprint's own format (v2 or spr5) so an spr5 blueprint's
+        # flop/turn lookups hit.
+        self.key_format = db_key_format(db)
         self.ev = HandEvaluator()
         self.hands = 0
         self.dec = {s: np.zeros(len(LABELS)) for s in (1, 2)}         # decisions per SPR bin
@@ -85,6 +88,8 @@ class StreetSprSampler(SelfPlaySampler):
         self.keys_b = {name: {s: set() for s in (1, 2)} for name in CANDIDATES}
         # facing-all-in probe: (street, pot_type, tercile) -> [n, sum_p, sum_p_ev, sum_ev]
         self.jam = defaultdict(lambda: np.zeros(4))
+        self.look = np.zeros(4)                    # blueprint lookups per street
+        self.miss = np.zeros(4)                    # ... that found no trained key
 
     def play_hand(self, rng):
         self.hands += 1
@@ -100,6 +105,7 @@ class StreetSprSampler(SelfPlaySampler):
         bet_pattern = ''
         preflop_pattern = ''
         spr0 = None
+        street_pot = 3.0
         ptype = None
         flop_bin = None
         depth = 0
@@ -130,6 +136,7 @@ class StreetSprSampler(SelfPlaySampler):
                     history = []
                     bet_pattern = ''
                     st = self.game.init_node_state(street, st['pot'])
+                    street_pot = st['pot']
                     spr0 = min(p0_stack, p1_stack) / st['pot']
                     if street == 1:
                         flop_bin = _bin(spr0, EDGES)
@@ -140,7 +147,11 @@ class StreetSprSampler(SelfPlaySampler):
             strength = None
             if street > 0:
                 strength = self.cards.get_bucket(hole[cp], community[:street + 2])
-            key = make_info_set_key(street, position, pf[cp], strength, bet_pattern)
+            key = make_info_set_key(street, position, pf[cp], strength, bet_pattern,
+                                    spr_bucket(self.key_format, street, street_pot))
+            self.look[street] += 1
+            if not self.db.get_average_strategy(key):
+                self.miss[street] += 1
             strat = self._strategy(key, legal)
 
             if street in (1, 2):
@@ -182,6 +193,7 @@ class StreetSprSampler(SelfPlaySampler):
             'ptype_bin': self.ptype_bin, 'flop_hands': self.flop_hands,
             'flop_final_pot': self.flop_final_pot, 'keys': self.keys,
             'keys_b': self.keys_b, 'jam': dict(self.jam),
+            'look': self.look, 'miss': self.miss, 'key_format': self.key_format,
         }
 
 
@@ -207,6 +219,8 @@ def _merge(parts):
             out['keys'][s] |= r['keys'][s]
             for name in CANDIDATES:
                 out['keys_b'][name][s] |= r['keys_b'][name][s]
+        out['look'] += r['look']
+        out['miss'] += r['miss']
         out['flop_hands'] += r['flop_hands']
         out['flop_final_pot'] += r['flop_final_pot']
         for k, v in r['jam'].items():
@@ -234,6 +248,9 @@ def main():
     H = r['hands']
 
     print(f'Phase 6.1 street-start SPR measurement -- {a.db}, {H:,} self-play hands\n')
+    print(f"   key format {r['key_format']}; blueprint lookups found: "
+          + ', '.join(f"{['preflop', 'flop', 'turn', 'river'][s]} "
+                      f"{1 - r['miss'][s] / max(r['look'][s], 1):.2%}" for s in range(4)) + '\n')
     print('1. STREET-START SPR (eff. stack / pot when the street begins)')
     print(f"   {'bin':<10}" + ''.join(f'{lbl:>7}' for lbl in LABELS))
     for s, name in ((1, 'flop'), (2, 'turn')):

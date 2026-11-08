@@ -23,7 +23,7 @@ import random
 
 import numpy as np
 
-from ..cfr.keys import make_info_set_key, action_char
+from ..cfr.keys import make_info_set_key, action_char, spr_bucket
 from ..cfr import translation
 from ..cfr.poker_game import STARTING_STACK
 from ..abstractions.card_abstractions import CardAbstraction
@@ -139,7 +139,9 @@ class CrossBot:
 
     def __init__(self, strategy_source, sizing, cards, rng):
         from ..cfr.keys import require_key_format
-        require_key_format(strategy_source, ('v2',), 'cross_match')
+        # Each bot builds keys in its OWN blueprint's format (v3/spr5 vs v2).
+        self.key_format = require_key_format(
+            strategy_source, ('v2', 'spr5'), 'cross_match') or 'v2'
         self.src = strategy_source
         self.sizing = sizing
         self.cards = cards
@@ -195,14 +197,16 @@ class CrossBot:
         g['a'] = translation.eff_fraction(stack, to_call, pot)
         return sorted(g.items(), key=lambda cf: cf[1])
 
-    def key_for(self, seat, hand, vis, street, pattern):
+    def key_for(self, seat, hand, vis, street, pattern, street_pot):
+        """`street_pot` = pot when this street began (spr5 flop/turn keys)."""
         pos = 'ip' if seat == 0 else 'oop'
         pre = self.cards.get_bucket(list(hand), None)
         if street == 0:
             return make_info_set_key(0, pos, pre, None, pattern)
-        return make_info_set_key(street, pos, pre, self.cards.get_bucket(list(hand), vis), pattern)
+        return make_info_set_key(street, pos, pre, self.cards.get_bucket(list(hand), vis), pattern,
+                                 spr_bucket(self.key_format, street, street_pot))
 
-    def blend_dist(self, seat, hand, vis, street, base, brackets):
+    def blend_dist(self, seat, hand, vis, street, base, brackets, street_pot):
         """Pseudo-harmonic blend of the blueprint response across the two
         bracketing sizes (reuses translate_bet weights). Returns {action: prob} or
         None if no bracketing key has stored mass (caller falls back to nearest)."""
@@ -210,7 +214,7 @@ class CrossBot:
         for ch, w in brackets:
             if w <= 0:
                 continue
-            stored = self._raw(self.key_for(seat, hand, vis, street, base + ch))
+            stored = self._raw(self.key_for(seat, hand, vis, street, base + ch, street_pot))
             if stored:
                 for a, p in stored.items():
                     merged[a] = merged.get(a, 0.0) + w * max(0.0, p)
@@ -282,11 +286,12 @@ class CrossMatch:
                 # else a single key from this bot's own perceived pattern.
                 pend = pending[actor]
                 dist = None
+                street_pot = pot - sum(committed)
                 if pend and len(pend['brackets']) > 1:
                     dist = bot.blend_dist(actor, hands[actor], vis, street,
-                                          pend['base'], pend['brackets'])
+                                          pend['base'], pend['brackets'], street_pot)
                 target = dist if dist is not None else bot.key_for(
-                    actor, hands[actor], vis, street, pattern[actor])
+                    actor, hands[actor], vis, street, pattern[actor], street_pot)
                 chosen = _sample_action(bot, target, legal, self.rng)
 
                 # Resolve the chosen action -> chips + own char.

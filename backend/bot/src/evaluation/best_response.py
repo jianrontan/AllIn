@@ -67,7 +67,7 @@ import random
 import numpy as np
 
 from ..cfr.poker_game import PokerGame, STARTING_STACK
-from ..cfr.keys import action_char, make_info_set_key
+from ..cfr.keys import action_char, make_info_set_key, spr_bucket
 from ..abstractions.card_abstractions import CardAbstraction
 from ..abstractions.hand_evaluator import HandEvaluator
 # Exact range-vs-range showdown + per-board precompute live in a shared kernel so
@@ -80,7 +80,8 @@ from .showdown_kernel import (
 class BestResponseEvaluator:
     def __init__(self, blueprint_db, seed=None, menu_mode=None, purify_threshold=0.0):
         from ..cfr.keys import require_key_format
-        require_key_format(blueprint_db, ('v2',), 'BestResponseEvaluator')
+        self.key_format = require_key_format(
+            blueprint_db, ('v2', 'spr5'), 'BestResponseEvaluator') or 'v2'
         self.db = blueprint_db
         # Strategy purification of the (villain) blueprint before the BR walk -- the
         # A/B knob for the purification experiment. 0.0 = off (default). The hero then
@@ -208,20 +209,22 @@ class BestResponseEvaluator:
         # ~thousands. _restricted_probs is still separately cached by (key, legal).
         key_cache = {}
 
-        def probs_matrix(street, pattern, legal, pos):
+        def probs_matrix(street, pattern, legal, pos, starting_pot):
             """[H, n_legal] blueprint probs per hand at `pos`, grouped by key. (Used
             for the villain split, and for the hero when it plays the blueprint -- a
             restricted-BR off-street node or the gain-logging baseline.)"""
             mat = np.empty((H, len(legal)))
+            # spr5: flop/turn keys carry the street-start SPR bucket (None otherwise).
+            spr = spr_bucket(self.key_format, street, starting_pot)
             for gi, (mask, rep) in enumerate(ba['groups'][street]):
-                kc = (street, gi, pattern, pos)
+                kc = (street, gi, pattern, pos, spr)
                 key = key_cache.get(kc)
                 if key is None:
                     if street == 0:
                         key = make_info_set_key(0, pos, pf[rep], None, pattern)
                     else:
                         key = make_info_set_key(
-                            street, pos, pf[rep], strg[street][rep], pattern)
+                            street, pos, pf[rep], strg[street][rep], pattern, spr)
                     key_cache[kc] = key
                 mat[mask] = self._restricted_probs(key, legal)
             return mat
@@ -294,20 +297,20 @@ class BestResponseEvaluator:
                         return np.maximum.reduce(vals)
                     valmat = np.stack(vals, axis=1)            # [H, A]
                     out = valmat.max(axis=1)
-                    hp = probs_matrix(street, pattern, legal_t, hero_pos)
+                    hp = probs_matrix(street, pattern, legal_t, hero_pos, starting_pot)
                     gain = out - (valmat * hp).sum(axis=1)     # best - blueprint-weighted
                     self._accumulate_gain(gain_acc, street, ba, gain)
                     return out
                 # Restricted: hero plays the BLUEPRINT on this off-target street, so
                 # the value isolates the leak reachable only on its BR streets.
-                hp = probs_matrix(street, pattern, legal_t, hero_pos)
+                hp = probs_matrix(street, pattern, legal_t, hero_pos, starting_pot)
                 total = np.zeros(H)
                 for ai in range(len(legal)):
                     total = total + vals[ai] * hp[:, ai]
                 return total
 
             # Villain node: split reach by blueprint strategy, sum children.
-            probs = probs_matrix(street, pattern, legal_t, villain_pos)
+            probs = probs_matrix(street, pattern, legal_t, villain_pos, starting_pot)
             total = np.zeros(H)
             for ai, a in enumerate(legal):
                 total = total + child(a, rv * probs[:, ai])

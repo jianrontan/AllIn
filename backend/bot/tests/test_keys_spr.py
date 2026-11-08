@@ -164,8 +164,9 @@ def _spr5_db(d):
 
 
 def test_readers_refuse_spr5_blueprints():
-    """Fail closed: v2-only readers must refuse an spr5 blueprint instead of
-    silently missing every flop/turn lookup."""
+    """Fail closed: v2-only readers (the serving path, until it learns spr5) must
+    refuse an spr5 blueprint instead of silently missing every flop/turn lookup;
+    the evaluation harness accepts it."""
     from src.storage.blueprint_db import BlueprintDB
     from src.game.bot_strategy import BlueprintStrategy
     from src.evaluation.lbr import LBREvaluator
@@ -174,10 +175,10 @@ def test_readers_refuse_spr5_blueprints():
     with tempfile.TemporaryDirectory() as d:
         db = BlueprintDB(_spr5_db(d), read_only=True)
         assert db_key_format(db) == 'spr5'
-        for make in (lambda: BlueprintStrategy(db), lambda: LBREvaluator(db, seed=1),
-                     lambda: BestResponseEvaluator(db, seed=1)):
-            with pytest.raises(ValueError, match='key_format'):
-                make()
+        with pytest.raises(ValueError, match='key_format'):
+            BlueprintStrategy(db)
+        assert LBREvaluator(db, seed=1).key_format == 'spr5'
+        assert BestResponseEvaluator(db, seed=1).key_format == 'spr5'
         assert require_key_format(db, ('v2', 'spr5'), 't') == 'spr5'
         assert require_key_format(None, ('v2',), 't') is None
         db.close()
@@ -195,3 +196,69 @@ def test_auto_resolution_skips_spr5(monkeypatch):
 def test_bool_is_not_an_spr_bucket():
     with pytest.raises(ValueError):
         make_info_set_key(1, 'ip', 'pf_160', 5, 'k', True)
+
+
+class _Recorder:
+    """BlueprintDB stand-in that records every key looked up."""
+
+    def __init__(self, db):
+        self.db, self.keys = db, []
+
+    def get_metadata(self, k, default=None):
+        return self.db.get_metadata(k, default)
+
+    def get_average_strategy(self, key):
+        self.keys.append(key)
+        return self.db.get_average_strategy(key)
+
+
+def _trained_db(d, key_format, iters=400):
+    from src.cfr.blueprint_trainer import BlueprintTrainer
+    from src.storage.blueprint_db import BlueprintDB
+    t = BlueprintTrainer(menu_mode='capped', key_format=key_format)
+    for i in range(iters):
+        t._run_iteration(i)
+    p = os.path.join(d, f'bp_{key_format}.db')
+    db = BlueprintDB(p)
+    t.checkpoint_to_db(db, iters - 1)
+    db.close()
+    return BlueprintDB(p, read_only=True)
+
+
+_SPR_KEY = re.compile(r'_(flop|turn)_r[0-4]_')
+
+
+def _assert_format(keys, key_format):
+    post = [k for k in keys if '_flop_' in k or '_turn_' in k]
+    assert post, 'no flop/turn lookups happened'
+    if key_format == 'spr5':
+        assert all(_SPR_KEY.search(k) for k in post), [k for k in post if not _SPR_KEY.search(k)][:3]
+    else:
+        assert not any(re.search(r'_r[0-9]', k) for k in post)
+    assert not any(re.search(r'_r[0-9]', k) for k in keys if k not in post)
+
+
+@pytest.mark.parametrize('key_format', ['v2', 'spr5'])
+def test_lbr_builds_keys_in_the_blueprint_format(key_format):
+    from src.evaluation.lbr import LBREvaluator
+    with tempfile.TemporaryDirectory() as d:
+        rec = _Recorder(_trained_db(d, key_format))
+        LBREvaluator(rec, seed=3, flop_runout_samples=4).evaluate(
+            num_hands=40, progress_every=0)
+        _assert_format(rec.keys, key_format)
+
+
+def test_cross_match_spr5_vs_v2_each_side_uses_its_own_format():
+    from src.evaluation.cross_match import CrossMatch, NEW_SIZING
+    from src.evaluation.match import HeadToHeadMatch
+    with tempfile.TemporaryDirectory() as d:
+        a, b = _Recorder(_trained_db(d, 'spr5')), _Recorder(_trained_db(d, 'v2'))
+        CrossMatch(a, NEW_SIZING, b, NEW_SIZING, seed=5).evaluate(num_hands=200)
+        _assert_format(a.keys, 'spr5')
+        _assert_format(b.keys, 'v2')
+        a.keys.clear()
+        b.keys.clear()
+        HeadToHeadMatch(a, b, seed=6, menu_mode_a='capped', menu_mode_b='capped').evaluate(
+            num_hands=200)
+        _assert_format(a.keys, 'spr5')
+        _assert_format(b.keys, 'v2')

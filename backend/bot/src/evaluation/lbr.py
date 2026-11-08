@@ -39,7 +39,7 @@ from itertools import combinations
 import numpy as np
 
 from ..cfr.poker_game import PokerGame, STARTING_STACK
-from ..cfr.keys import make_info_set_key, action_char
+from ..cfr.keys import make_info_set_key, action_char, spr_bucket
 from ..cfr import translation
 from ..abstractions.sizing import (
     preflop_open_chips, PREFLOP_RAISE_MULT, POSTFLOP_BET_MULT, SIZE_CHAR)
@@ -61,7 +61,10 @@ class LBREvaluator:
     def __init__(self, blueprint_db, seed=None, flop_runout_samples=120,
                  menu_mode=None):
         from ..cfr.keys import require_key_format
-        require_key_format(blueprint_db, ('v2',), 'LBREvaluator')
+        # The victim model and the belief update build keys in the blueprint's own
+        # format (spr5 adds the street-start SPR bucket on flop/turn keys).
+        self.key_format = require_key_format(
+            blueprint_db, ('v2', 'spr5'), 'LBREvaluator') or 'v2'
         self.db = blueprint_db
         # The LBR victim model must MIRROR the deployed bot's action abstraction --
         # the same arm the blueprint was trained under -- or LBR scores the bot's
@@ -198,6 +201,11 @@ class LBREvaluator:
     # Stage 3-4: full-hand simulation, off-tree decision, main loop
     # ------------------------------------------------------------------
 
+    def _spr(self, street, invested, committed):
+        """SPR bucket of this street's keys (None for v2 / preflop / river). The
+        street-start pot is everything invested minus this street's commitments."""
+        return spr_bucket(self.key_format, street, sum(invested) - sum(committed))
+
     @staticmethod
     def _pos(seat):
         return 'ip' if seat == 0 else 'oop'
@@ -296,7 +304,8 @@ class LBREvaluator:
             # LBR to under-value exactly the off-tree bets it exists to find.
             p = botrange.per_hand_action_prob(
                 self._raw_strategy, 'fold', street, self._pos(bot_seat),
-                pattern + c, vis, missing=1.0)
+                pattern + c, vis, missing=1.0,
+                spr=self._spr(street, invested, committed))
             pfold = w * p if pfold is None else pfold + w * p
         w = botrange.w
         wt = w.sum()
@@ -369,13 +378,15 @@ class LBREvaluator:
         else:
             key = make_info_set_key(
                 street, pos, self.cards.get_bucket(list(bot_hand), None),
-                self.cards.get_bucket(list(bot_hand), vis), pattern)
+                self.cards.get_bucket(list(bot_hand), vis), pattern,
+                self._spr(street, invested, committed))
 
         probs = self.restricted_probs(key, tuple(legal))
         action = self.rng.choices(legal, weights=probs)[0]
 
         # Bayesian belief update on the observed action (decision-time context).
-        botrange.observe(self.restricted_probs, action, street, pos, pattern, legal, vis)
+        botrange.observe(self.restricted_probs, action, street, pos, pattern, legal, vis,
+                         spr=self._spr(street, invested, committed))
 
         if action == 'fold':
             return 'f', 0, False
@@ -553,7 +564,7 @@ class BotRange:
         return pf, strength
 
     # -- strategy matrix ----------------------------------------------
-    def action_probs(self, lookup, street, position, bet_pattern, legal, board):
+    def action_probs(self, lookup, street, position, bet_pattern, legal, board, spr=None):
         """
         [n_hands, n_legal] blueprint probabilities per bot hand at this node.
         `lookup` is LBREvaluator.restricted_probs. Hands sharing an info-set key
@@ -573,14 +584,15 @@ class BotRange:
                 if street == 0:
                     key = make_info_set_key(0, position, pf[i], None, bet_pattern)
                 else:
-                    key = make_info_set_key(street, position, pf[i], strength[i], bet_pattern)
+                    key = make_info_set_key(street, position, pf[i], strength[i], bet_pattern,
+                                            spr)
                 row = lookup(key, legal_t)
                 seen[gid] = row
             mat[i] = row
         return mat
 
     # -- Bayesian update ----------------------------------------------
-    def observe(self, lookup, action, street, position, bet_pattern, legal, board):
+    def observe(self, lookup, action, street, position, bet_pattern, legal, board, spr=None):
         """Condition the belief on the bot having taken `action` at this node."""
         legal = list(legal)
         if action not in legal:
@@ -591,7 +603,7 @@ class BotRange:
             # the grid), but kept for parity + defense.
             return
         ai = legal.index(action)
-        mat = self.action_probs(lookup, street, position, bet_pattern, legal, board)
+        mat = self.action_probs(lookup, street, position, bet_pattern, legal, board, spr)
         new_w = self.w * mat[:, ai]
         s = new_w.sum()
         if s > 1e-12:
@@ -605,7 +617,7 @@ class BotRange:
 
     # -- per-hand probability of one action (from the raw average strategy) ---
     def per_hand_action_prob(self, raw_lookup, action, street, position, pattern,
-                             board, missing=0.0):
+                             board, missing=0.0, spr=None):
         """
         Array of P(bot plays `action`) per bot hand, read from the UNRESTRICTED
         average strategy (so e.g. fold probability is not inflated by dropping the
@@ -634,7 +646,7 @@ class BotRange:
                 if street == 0:
                     key = make_info_set_key(0, position, pf[i], None, pattern)
                 else:
-                    key = make_info_set_key(street, position, pf[i], strength[i], pattern)
+                    key = make_info_set_key(street, position, pf[i], strength[i], pattern, spr)
                 strat = raw_lookup(key)
                 p = float(strat.get(action, 0.0)) if strat else missing
                 seen[gid] = p
