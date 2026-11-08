@@ -1,0 +1,28 @@
+[package]
+name = "allin_core"
+version = "0.1.0"
+edition = "2024"
+description = "Rust core for AllIn: river subgame solver + MCCFR blueprint trainer (Python bindings via PyO3)"
+publish = false
+
+[lib]
+name = "allin_core"
+# cdylib = the Python extension module (built by maturin); rlib = plain Rust
+# library so `cargo test` / `cargo bench` run without linking Python.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# The PyO3 binding layer. Off for `cargo test` (pure Rust); maturin turns it on
+# via pyproject.toml.
+python = ["dep:pyo3", "dep:numpy"]
+
+[dependencies]
+pyo3 = { version = "0.30.1", optional = true }
+numpy = { version = "0.30.0", optional = true }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = 1           # keep symbols for profiling (samply / Instruments); no runtime cost

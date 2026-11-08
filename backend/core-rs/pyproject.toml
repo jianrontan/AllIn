@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.16,<2"]
+build-backend = "maturin"
+
+[project]
+name = "allin_core"
+dynamic = ["version"]   # taken from Cargo.toml
+requires-python = ">=3.12"
+dependencies = ["numpy>=1.26"]
+
+[tool.maturin]
+# Build with the PyO3 layer on; `cargo test` builds without it.
+features = ["python", "pyo3/extension-module"]
+module-name = "allin_core"

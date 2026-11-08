@@ -1,0 +1,6 @@
+# Pinned so every session, CI and the Docker build use the same compiler.
+# Bump deliberately (and re-run the parity harness) — never implicitly.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
