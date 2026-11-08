@@ -30,6 +30,8 @@ pub const PORTED: &[&str] = &[
     "buckets",
     "keys",
     "engine",
+    "mccfr",
+    "mccfr_merge",
 ];
 
 /// Crate version, surfaced to Python for diagnostics.
@@ -39,11 +41,14 @@ pub mod buckets;
 pub mod engine;
 pub mod eval;
 pub mod keys;
+pub mod mccfr;
 pub mod river;
 
 #[cfg(feature = "python")]
 mod py_buckets;
 #[cfg(feature = "python")]
 mod py_engine;
+#[cfg(feature = "python")]
+mod py_train;
 #[cfg(feature = "python")]
 mod python;

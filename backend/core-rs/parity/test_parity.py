@@ -279,3 +279,74 @@ def test_river_gadget(exact):
             label = f"{case['file']} @ {cp} iters ({'exact' if exact else 'fast'})"
             _check_snapshot(cfr, d, f'it{cp}_', r0, r1, label, check)
             check(cfr.gadget_regret(), d[f'it{cp}_g_regret'], f"{label} gadget regret")
+
+
+# ----------------------------------------------------------------------------
+# mccfr -- contract:
+#   Trainer(menu_mode, alpha, gamma)
+#     .run_fixture(deals, fine, post, raw, fine_to_coarse, uniforms, start_iteration=0)
+#        -> number of uniforms consumed (opponent sampling replays the stream
+#           exactly like random.choices; buckets/ranks come from the fixture)
+#     .checkpoint(db_path, iteration) -> rows written
+#     .num_info_sets, .ev_sum, .ev_count
+#   The checkpointed blueprint DB must equal the Python trainer's row for row:
+#   every column byte-identical (keys, JSON text incl. float repr and dict
+#   order, clocks) and the same metadata.
+# ----------------------------------------------------------------------------
+def _db_rows(path):
+    import sqlite3
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        rows = con.execute("SELECT * FROM info_sets ORDER BY key").fetchall()
+        meta = dict(con.execute("SELECT key, value FROM training_metadata").fetchall())
+    finally:
+        con.close()
+    return rows, meta
+
+
+@pytest.mark.parametrize('name', ['mccfr_control_g1', 'mccfr_capped_g1', 'mccfr_control_g2'])
+def test_mccfr(name, tmp_path):
+    core = need('mccfr', f'{name}.json', f'{name}.db')
+    with open(fixture_path(f'{name}.json')) as f:
+        d = json.load(f)
+    t = core.Trainer(d['mode'], d['alpha'], d['gamma'])
+    rows = d['deals']
+    used = t.run_fixture([r['cards'] for r in rows], [r['fine'] for r in rows],
+                         [r['post'] for r in rows], [r['raw'] for r in rows],
+                         d['fine_to_coarse'], d['uniforms'])
+    assert used == len(d['uniforms']), f"consumed {used} uniforms, Python {len(d['uniforms'])}"
+    assert t.num_info_sets == d['info_sets']
+    assert (t.ev_sum, t.ev_count) == (d['ev_sum'], d['ev_count'])
+    out = str(tmp_path / 'rust.db')
+    assert t.checkpoint(out, d['iterations'] - 1) == d['info_sets']
+    got, got_meta = _db_rows(out)
+    want, want_meta = _db_rows(fixture_path(d['db']))
+    assert len(got) == len(want)
+    for g, w in zip(got, want):
+        assert g == w, f"row differs:\n rust   {g}\n python {w}"
+    for k in ('total_iterations', 'alpha', 'gamma', 'menu_mode', 'ev_sum', 'ev_count'):
+        assert got_meta[k] == want_meta[k], f"metadata {k}: {got_meta[k]} != {want_meta[k]}"
+
+
+# ----------------------------------------------------------------------------
+# mccfr_merge -- contract: merge_round(global, workers, alpha, gamma) -> (after, touched)
+#   global/after: {key: {legal, regret, strategy, visit_count, strategy_visit_count}};
+#   workers: parallel_trainer worker results ({regret, strategy, legal}).
+#   Values bit-identical. Per-key ACTION ORDER is not compared: Python builds
+#   the merged dict from set iteration (hash-seed dependent).
+# ----------------------------------------------------------------------------
+def test_mccfr_merge():
+    core = need('mccfr_merge', 'mccfr_merge.json')
+    with open(fixture_path('mccfr_merge.json')) as f:
+        d = json.load(f)
+    for i, c in enumerate(d['cases']):
+        after, touched = core.merge_round(c['global'], c['workers'], c['alpha'], c['gamma'])
+        assert sorted(touched) == c['touched'], f"case {i}: touched"
+        assert set(after) == set(c['after']), f"case {i}: keys"
+        for k, w in c['after'].items():
+            g = after[k]
+            assert g['legal'] == w['legal'], f"case {i} {k}: legal"
+            for col in ('regret', 'strategy'):
+                assert g[col] == w[col], f"case {i} {k}: {col} {g[col]} != {w[col]}"
+            for col in ('visit_count', 'strategy_visit_count'):
+                assert g[col] == w[col], f"case {i} {k}: {col}"

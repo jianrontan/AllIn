@@ -265,5 +265,6 @@ fn allin_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRiverCfr>()?;
     crate::py_engine::register(m)?;
     crate::py_buckets::register(m)?;
+    crate::py_train::register(m)?;
     Ok(())
 }

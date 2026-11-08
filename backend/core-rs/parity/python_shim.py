@@ -19,7 +19,8 @@ from src.evaluation.showdown_kernel import (  # noqa: E402
 
 __version__ = 'python-reference'
 COMPONENTS = ('eval_rank7', 'buckets', 'keys', 'engine',
-              'river_showdown', 'river_tree', 'river_cfr', 'river_gadget')
+              'river_showdown', 'river_tree', 'river_cfr', 'river_gadget',
+              'mccfr', 'mccfr_merge')
 
 
 def ported():
@@ -169,3 +170,80 @@ class RiverCFR:
 
     def gadget_regret(self):
         return self._c._g_regret
+
+
+# -- mccfr --------------------------------------------------------------------
+class Trainer:
+    """The Python BlueprintTrainer behind the Rust Trainer contract: deals and
+    the uniform stream are injected exactly as export_rust_fixtures records
+    them (buckets are recomputed by Python, so fine/post/raw are unused)."""
+
+    def __init__(self, menu_mode='control', alpha=1.5, gamma=1.0):
+        from src.cfr.blueprint_trainer import BlueprintTrainer
+        self._t = BlueprintTrainer(menu_mode=menu_mode)
+        self._t.alpha, self._t.gamma = alpha, gamma
+
+    @property
+    def num_info_sets(self):
+        return len(self._t.info_sets)
+
+    @property
+    def ev_sum(self):
+        return self._t.ev_sum
+
+    @property
+    def ev_count(self):
+        return self._t.ev_count
+
+    def run_fixture(self, deals, fine, post, raw, fine_to_coarse, uniforms, start_iteration=0):
+        import random
+        import src.cfr.blueprint_trainer as bt
+
+        class _Replay(random.Random):
+            pos = 0
+
+            def random(self):
+                v = uniforms[self.pos]
+                self.pos += 1
+                return v
+
+        cards = [[_FULL_DECK[i] for i in d] for d in deals]
+        feed = iter(cards)
+        self._t.deal_random_hand = lambda: (lambda d: (d[0:2], d[2:4], d[4:9]))(next(feed))
+        stream, saved = _Replay(0), bt.random
+        bt.random = stream
+        try:
+            for i in range(len(cards)):
+                self._t._run_iteration(start_iteration + i)
+        finally:
+            bt.random = saved
+        return stream.pos
+
+    def checkpoint(self, db_path, iteration):
+        from src.storage.blueprint_db import BlueprintDB
+        db = BlueprintDB(db_path)
+        n = len(self._t._dirty)
+        try:
+            self._t.checkpoint_to_db(db, iteration)
+        finally:
+            db.close()
+        return n
+
+
+def merge_round(glob, workers, alpha, gamma):
+    from src.cfr.information_set import InformationSet
+    from src.cfr.parallel_trainer import merge_round as _merge
+    info = {}
+    for k, v in glob.items():
+        i = InformationSet()
+        i.legal_actions = list(v['legal'])
+        i.cumulative_regrets = dict(v['regret'])
+        i.cumulative_strategy = dict(v['strategy'])
+        i.visit_count = v['visit_count']
+        i.strategy_visit_count = v['strategy_visit_count']
+        info[k] = i
+    touched = _merge(info, workers, alpha, gamma)
+    return ({k: {'legal': i.legal_actions, 'regret': i.cumulative_regrets,
+                 'strategy': i.cumulative_strategy, 'visit_count': i.visit_count,
+                 'strategy_visit_count': i.strategy_visit_count} for k, i in info.items()},
+            sorted(touched))

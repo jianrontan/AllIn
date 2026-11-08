@@ -41,7 +41,8 @@ from src.evaluation.showdown_kernel import (  # noqa: E402
     _FULL_DECK, _CARD_ID, build_board_arrays, showdown_measure, compatible_mass)
 
 COMPONENTS = ('eval_rank7', 'buckets', 'keys', 'engine',
-              'river_showdown', 'river_tree', 'river_cfr', 'river_gadget')
+              'river_showdown', 'river_tree', 'river_cfr', 'river_gadget',
+              'mccfr', 'mccfr_merge')
 DEFAULT_OUT = os.path.normpath(os.path.join(BOT, '..', 'core-rs', 'fixtures'))
 
 
@@ -434,6 +435,152 @@ def export_river_gadget(out, rng, quick):
 
 
 # ----------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
+# mccfr -- single-thread BlueprintTrainer under injected randomness
+# ----------------------------------------------------------------------------
+class _StreamRandom(random.Random):
+    """random.Random whose random() replays (and records) a numpy uniform
+    stream. Random.choices calls self.random(), so the trainer's opponent
+    sampling consumes exactly this stream. numpy's random() is k * 2**-53, like
+    CPython's, and JSON round-trips it exactly."""
+
+    def __init__(self, rng):
+        super().__init__(0)
+        self._rng = rng
+        self.drawn = []
+
+    def random(self):
+        v = float(self._rng.random())
+        self.drawn.append(v)
+        return v
+
+
+def _mccfr_run(out, rng, mode, gamma, n_iter):
+    import src.cfr.blueprint_trainer as bt
+    from src.abstractions.card_abstractions import FINE_TO_COARSE
+    from src.abstractions.postflop_features import rank7
+    from src.storage.blueprint_db import BlueprintDB
+
+    deals = [_deal(rng, 9) for _ in range(n_iter)]
+    trainer = bt.BlueprintTrainer(menu_mode=mode)
+    trainer.gamma = gamma
+    ca = trainer.game_adapter.card_abstractions
+    feed = iter(deals)
+    trainer.deal_random_hand = lambda: (lambda d: (d[0:2], d[2:4], d[4:9]))(next(feed))
+    stream = _StreamRandom(rng)
+    saved = bt.random
+    bt.random = stream
+    try:
+        for i in range(n_iter):
+            trainer._run_iteration(i)
+    finally:
+        bt.random = saved
+    name = f'mccfr_{mode}_g{gamma:g}'
+    db_path = os.path.join(out, f'{name}.db')
+    for suffix in ('', '-wal', '-shm'):
+        if os.path.exists(db_path + suffix):
+            os.remove(db_path + suffix)
+    db = BlueprintDB(db_path)
+    trainer.checkpoint_to_db(db, n_iter - 1)
+    db.conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+    db.close()
+    # Everything the Rust side needs to replay the run without the bucketing
+    # component: per-deal preflop fine buckets, postflop buckets per street, and
+    # the two 7-card ranks (every trainer showdown uses the full board).
+    rows = []
+    for d in deals:
+        holes, board = (d[0:2], d[2:4]), d[4:9]
+        rows.append({
+            'cards': _ids(d),
+            'fine': [int(ca.get_bucket(h, None).split('_')[1]) for h in holes],
+            'post': [[int(ca.get_bucket(h, board[:n])) for n in (3, 4, 5)] for h in holes],
+            'raw': [int(rank7(list(h) + list(board))) for h in holes],
+        })
+    _write_json(os.path.join(out, f'{name}.json'), {
+        'mode': mode, 'alpha': trainer.alpha, 'gamma': gamma, 'iterations': n_iter,
+        'fine_to_coarse': list(FINE_TO_COARSE), 'deals': rows, 'uniforms': stream.drawn,
+        'ev_sum': trainer.ev_sum, 'ev_count': trainer.ev_count,
+        'info_sets': len(trainer.info_sets), 'db': os.path.basename(db_path)})
+    return {'iterations': n_iter, 'info_sets': len(trainer.info_sets),
+            'uniforms': len(stream.drawn)}
+
+
+def export_mccfr(out, rng, quick):
+    n = 60 if quick else 600
+    return {f'{mode}_g{gamma:g}': _mccfr_run(out, rng, mode, gamma, n)
+            for mode, gamma in (('control', 1.0), ('capped', 1.0), ('control', 2.0))}
+
+
+# ----------------------------------------------------------------------------
+# mccfr_merge -- parallel_trainer.merge_round on synthetic worker deltas
+# ----------------------------------------------------------------------------
+def _rand_map(rng, actions, p_missing=0.25, neg=False):
+    out = {}
+    for a in actions:
+        if rng.random() < p_missing:
+            continue
+        v = float(rng.random() * 10.0 ** int(rng.integers(-2, 3)))
+        out[a] = -v if (neg and rng.random() < 0.3) else v
+    return out
+
+
+def export_mccfr_merge(out, rng, quick):
+    """merge_round is a pure function of (global info sets, worker deltas,
+    alpha, gamma); record inputs and outputs on random cases incl. keys absent
+    from the global table, actions absent from the baseline, regret increments
+    that go negative (master floor), clocks at t=1 and gamma=0."""
+    from src.cfr.information_set import InformationSet
+    from src.cfr.parallel_trainer import merge_round
+    from src.cfr.keys import ACTION_CHARS
+    names = list(ACTION_CHARS)
+    cases = []
+    for ci in range(20 if quick else 200):
+        keys = [f'pf_{ci}_{k}_ip_flop_' for k in range(int(rng.integers(1, 8)))]
+        # One action pool per key (a real node offers at most 8 actions; the
+        # Rust table caps an info set at 10 and errors beyond that).
+        pool = {k: list(rng.choice(names, size=int(rng.integers(2, 9)), replace=False))
+                for k in keys}
+        glob = {}
+        for k in keys:
+            if rng.random() < 0.3:
+                continue                      # brand-new key this round
+            acts = pool[k]
+            info = InformationSet()
+            info.legal_actions = acts
+            info.cumulative_regrets = _rand_map(rng, acts)
+            info.cumulative_strategy = _rand_map(rng, acts)
+            info.visit_count = int(rng.integers(0, 4))
+            info.strategy_visit_count = int(rng.integers(0, 4))
+            glob[k] = info
+        workers = []
+        for _w in range(int(rng.integers(1, 5))):
+            res = {'regret': {}, 'strategy': {}, 'legal': {}}
+            for k in keys:
+                if rng.random() < 0.4:
+                    continue
+                acts = (glob[k].legal_actions if k in glob else
+                        [a for a in pool[k] if rng.random() < 0.8] or pool[k][:1])
+                res['legal'][k] = list(acts)
+                if rng.random() < 0.7:
+                    res['regret'][k] = _rand_map(rng, acts)
+                if rng.random() < 0.7:
+                    res['strategy'][k] = _rand_map(rng, acts)
+            workers.append(res)
+        alpha = float(rng.choice([1.0, 1.5, 2.0]))
+        gamma = float(rng.choice([0.0, 1.0, 2.0]))
+
+        def dump(d):
+            return {k: {'legal': v.legal_actions, 'regret': v.cumulative_regrets,
+                        'strategy': v.cumulative_strategy, 'visit_count': v.visit_count,
+                        'strategy_visit_count': v.strategy_visit_count} for k, v in d.items()}
+        before = dump(glob)
+        touched = merge_round(glob, workers, alpha, gamma)
+        cases.append({'alpha': alpha, 'gamma': gamma, 'global': before, 'workers': workers,
+                      'after': dump(glob), 'touched': sorted(touched)})
+    _write_json(os.path.join(out, 'mccfr_merge.json'), {'cases': cases})
+    return {'cases': len(cases)}
+
+
 def _manifest(out, args, results, timings):
     from src.abstractions import postflop_features as pf
     hashes = {}
