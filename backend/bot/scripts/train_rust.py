@@ -14,6 +14,7 @@ Run from backend/bot/ (after `maturin develop --release` in backend/core-rs):
     python scripts/train_rust.py --iterations 50000000
     python scripts/train_rust.py --iterations 10000000 --resume blueprint_par_capped_rs_20261108_120000.db
     python scripts/train_rust.py --iterations 200000 --workers 1 --out-dir /tmp/bp   # single-thread
+    python scripts/train_rust.py --iterations 100000000 --checkpoint-every 5000000 --snapshot-every 5000000
 
 Ctrl+C stops at the next round boundary and checkpoints what completed.
 New blueprints land in analysis/blueprints_rs/ by default -- deliberately NOT
@@ -57,6 +58,26 @@ def _shape_line(trainer):
         return f"  [shape probe skipped: {type(e).__name__}: {e}]"
 
 
+def _snapshot(db_path, total):
+    """Consistent copy of the just-checkpointed blueprint (SQLite backup API, so
+    WAL contents are included) to <run>_snaps/snap_<total>.db. Never overwrites."""
+    import sqlite3
+    snap_dir = os.path.splitext(db_path)[0] + '_snaps'
+    os.makedirs(snap_dir, exist_ok=True)
+    dest = os.path.join(snap_dir, f'snap_{total}.db')
+    if os.path.exists(dest):
+        return f'skipped, {dest} exists'
+    from pathlib import Path
+    src = sqlite3.connect(Path(db_path).resolve().as_uri() + '?mode=ro', uri=True)
+    dst = sqlite3.connect(dest)
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    return dest
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument('--iterations', type=int, required=True)
@@ -67,6 +88,9 @@ def main():
                     help='1 = single-thread (per-iteration discount); >1 = parallel')
     ap.add_argument('--merge-every', type=int, default=2000, help='parallel: iterations per worker per round')
     ap.add_argument('--checkpoint-every', type=int, default=1_000_000)
+    ap.add_argument('--snapshot-every', type=int, default=0,
+                    help='also copy the blueprint to <run>_snaps/snap_<iter>.db each time the total '
+                         'crosses a multiple of this (0 = off); keep it a multiple of --checkpoint-every')
     ap.add_argument('--seed', type=int, default=None)
     ap.add_argument('--alpha', type=float, default=1.5)
     ap.add_argument('--gamma', type=float, default=1.0)
@@ -76,6 +100,8 @@ def main():
     args = ap.parse_args()
     if args.iterations <= 0 or args.checkpoint_every <= 0 or args.workers <= 0:
         ap.error('iterations, checkpoint-every and workers must be positive')
+    if args.snapshot_every < 0:
+        ap.error('snapshot-every must be >= 0')
 
     mode = 'parallel' if args.workers > 1 else 'single'
     seed = args.seed if args.seed is not None else random.randrange(1 << 62)
@@ -145,6 +171,9 @@ def main():
         print(f"Checkpoint: {n:,} info sets written ({trainer.num_info_sets:,} total) "
               f"at iteration {start + done:,}")
         print(_shape_line(trainer), flush=True)
+        total = start + done
+        if args.snapshot_every and total // args.snapshot_every > (total - s['iterations']) // args.snapshot_every:
+            print(f"Snapshot: {_snapshot(db_path, total)}", flush=True)
     print(f"\n{'Interrupted' if interrupted else 'Done'}: {done:,} iterations in {_fmt(time.time() - t0)} "
           f"-> {db_path} (total {start + done:,})")
 
