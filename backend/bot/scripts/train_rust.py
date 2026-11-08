@@ -60,22 +60,56 @@ def _shape_line(trainer):
 
 def _snapshot(db_path, total):
     """Consistent copy of the just-checkpointed blueprint (SQLite backup API, so
-    WAL contents are included) to <run>_snaps/snap_<total>.db. Never overwrites."""
+    WAL contents are included) to <run>_snaps/snap_<total>.db. Written to a temp
+    name and renamed into place, so a failed copy never leaves a partial
+    snap_<total>.db behind. Never overwrites."""
     import sqlite3
+    from pathlib import Path
     snap_dir = os.path.splitext(db_path)[0] + '_snaps'
     os.makedirs(snap_dir, exist_ok=True)
     dest = os.path.join(snap_dir, f'snap_{total}.db')
     if os.path.exists(dest):
         return f'skipped, {dest} exists'
-    from pathlib import Path
+    tmp = dest + '.partial'
+    if os.path.exists(tmp):
+        os.remove(tmp)
     src = sqlite3.connect(Path(db_path).resolve().as_uri() + '?mode=ro', uri=True)
-    dst = sqlite3.connect(dest)
     try:
-        src.backup(dst)
+        dst = sqlite3.connect(tmp)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+        os.replace(tmp, dest)
     finally:
-        dst.close()
         src.close()
+        if os.path.exists(tmp):
+            os.remove(tmp)
     return dest
+
+
+def _is_served_blueprint(path):
+    """True if `path` is (or links to) a served blueprint: any blueprint_final*
+    name in any letter case (APFS/NTFS are case-insensitive), or the same file as
+    one in analysis/blueprints/."""
+    if os.path.basename(path).lower().startswith('blueprint_final'):
+        return True
+    real = os.path.realpath(path)
+    if os.path.basename(real).lower().startswith('blueprint_final'):
+        return True
+    served_dir = os.path.join(BOT, 'analysis', 'blueprints')
+    try:
+        names = os.listdir(served_dir)
+    except OSError:
+        return False
+    for name in names:
+        if name.lower().startswith('blueprint_final'):
+            try:
+                if os.path.samefile(path, os.path.join(served_dir, name)):
+                    return True
+            except OSError:
+                pass
+    return False
 
 
 def main():
@@ -119,11 +153,11 @@ def main():
     if args.resume:
         if os.path.basename(args.resume) != args.resume:
             ap.error('--resume takes a file name inside --out-dir, not a path')
-        if args.resume.startswith('blueprint_final'):
-            ap.error('refusing to train into a served blueprint (blueprint_final*); copy it first')
         db_path = os.path.join(args.out_dir, args.resume)
         if not os.path.exists(db_path):
             ap.error(f'not found: {db_path}')
+        if _is_served_blueprint(db_path):
+            ap.error('refusing to train into a served blueprint (blueprint_final*); copy it first')
         start = trainer.resume(db_path, mode)
         print(f"Resumed {args.resume}: {trainer.num_info_sets:,} info sets, iteration {start:,}")
     else:
@@ -159,9 +193,14 @@ def main():
         eta = (args.iterations - done - d['iterations']) / max(overall, 1e-9)
         # (The trainer is busy inside train(); read totals from the callback dict.)
         ev = d['total_ev_sum'] / d['total_ev_count'] if d['total_ev_count'] else 0.0
-        print(f"  iter {it:>12,}/{total_target:,} | {rate:>8,.0f} it/s | info sets {d['info_sets']:>9,} | "
-              f"EV(cum{',lagged' if mode == 'parallel' else ''}) {ev:+.5f} | "
-              f"elapsed {_fmt(now - t0)} | ETA {_fmt(eta)}", flush=True)
+        try:
+            print(f"  iter {it:>12,}/{total_target:,} | {rate:>8,.0f} it/s | info sets {d['info_sets']:>9,} | "
+                  f"EV(cum{',lagged' if mode == 'parallel' else ''}) {ev:+.5f} | "
+                  f"elapsed {_fmt(now - t0)} | ETA {_fmt(eta)}", flush=True)
+        except Exception:                             # noqa: BLE001
+            # A display failure (closed pipe / terminal) must not abort training:
+            # an exception escaping the callback ends train() without a checkpoint.
+            pass
 
     interrupted = False
     while done < args.iterations and not interrupted:
@@ -177,7 +216,13 @@ def main():
         print(_shape_line(trainer), flush=True)
         total = start + done
         if args.snapshot_every and total // args.snapshot_every > (total - s['iterations']) // args.snapshot_every:
-            print(f"Snapshot: {_snapshot(db_path, total)}", flush=True)
+            try:
+                print(f"Snapshot: {_snapshot(db_path, total)}", flush=True)
+            except Exception as e:                    # noqa: BLE001
+                # The checkpoint is already safe in the DB; a failed copy (e.g. disk
+                # full) must not kill a multi-hour run.
+                print(f"  [snapshot at {total:,} FAILED, training continues: "
+                      f"{type(e).__name__}: {e}]", flush=True)
     print(f"\n{'Interrupted' if interrupted else 'Done'}: {done:,} iterations in {_fmt(time.time() - t0)} "
           f"-> {db_path} (total {start + done:,})")
 

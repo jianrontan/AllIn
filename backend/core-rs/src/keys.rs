@@ -148,6 +148,11 @@ mod tests {
     }
 
     #[test]
+    fn key_starting_stack_matches_engine() {
+        assert_eq!(KEY_STARTING_STACK, crate::engine::STARTING_STACK);
+    }
+
+    #[test]
     fn spr_buckets_follow_pot_types() {
         let f = KeyFormat::Spr5;
         assert_eq!(spr_bucket(f, 1, 4.0), Ok(Some(4)));

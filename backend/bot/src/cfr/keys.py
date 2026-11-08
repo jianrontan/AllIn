@@ -32,6 +32,30 @@ SPR_STREETS = (1, 2)                       # flop, turn
 _KEY_STARTING_STACK = 200                  # == poker_game.STARTING_STACK (test-guarded)
 
 
+def db_key_format(blueprint_db):
+    """The key format a blueprint DB was trained with (absent = 'v2'). Raises
+    ValueError on an unknown value so a hostile/corrupt stamp can't be misread."""
+    kf = blueprint_db.get_metadata('key_format', 'v2')
+    if kf not in KEY_FORMATS:
+        raise ValueError(f"blueprint has unknown key_format {kf!r}")
+    return kf
+
+
+def require_key_format(blueprint_db, supported, who):
+    """Fail closed: refuse a blueprint whose key format this reader can't build.
+    A reader that builds v2 keys against an spr5 blueprint would silently miss
+    every flop/turn lookup (falling back to uniform/defaults) instead of erroring.
+    `blueprint_db` may be None or a non-DB strategy source (skipped)."""
+    if blueprint_db is None or not hasattr(blueprint_db, 'get_metadata'):
+        return None
+    kf = db_key_format(blueprint_db)
+    if kf not in supported:
+        raise ValueError(
+            f"{who} builds {'/'.join(supported)} info-set keys, but this blueprint "
+            f"uses key_format={kf!r}; its flop/turn lookups would all miss.")
+    return kf
+
+
 def spr_bucket(key_format, street, street_pot):
     """The SPR bucket (0..4, 0 = jam zone) an info-set key carries, or None when the
     format/street has none (v2, preflop, river).
@@ -157,7 +181,7 @@ def make_info_set_key(street, position, preflop_bucket, postflop_strength, bet_p
                 f"{STREET_NAMES[street]}_{bet_pattern}")
     if street not in SPR_STREETS:
         raise ValueError(f"street {street} keys carry no SPR bucket")
-    if not (isinstance(spr, int) and 0 <= spr <= len(SPR_EDGES)):
+    if type(spr) is not int or not 0 <= spr <= len(SPR_EDGES):
         raise ValueError(f"SPR bucket must be an int in 0..{len(SPR_EDGES)}, got {spr!r}")
     return (f"{coarse}_{postflop_strength}_{position}_"
             f"{STREET_NAMES[street]}_r{spr}_{bet_pattern}")

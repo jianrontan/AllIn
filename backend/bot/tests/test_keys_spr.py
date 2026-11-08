@@ -148,3 +148,50 @@ def test_v2_trainer_writes_no_key_format():
         t.checkpoint_to_db(db, 49)
         assert db.get_metadata('key_format') is None
         db.close()
+
+
+def _spr5_db(d):
+    from src.cfr.blueprint_trainer import BlueprintTrainer
+    from src.storage.blueprint_db import BlueprintDB
+    t = BlueprintTrainer(menu_mode='capped', key_format='spr5')
+    for i in range(20):
+        t._run_iteration(i)
+    p = os.path.join(d, 'blueprint_spr.db')
+    db = BlueprintDB(p)
+    t.checkpoint_to_db(db, 19)
+    db.close()
+    return p
+
+
+def test_readers_refuse_spr5_blueprints():
+    """Fail closed: v2-only readers must refuse an spr5 blueprint instead of
+    silently missing every flop/turn lookup."""
+    from src.storage.blueprint_db import BlueprintDB
+    from src.game.bot_strategy import BlueprintStrategy
+    from src.evaluation.lbr import LBREvaluator
+    from src.evaluation.best_response import BestResponseEvaluator
+    from src.cfr.keys import require_key_format, db_key_format
+    with tempfile.TemporaryDirectory() as d:
+        db = BlueprintDB(_spr5_db(d), read_only=True)
+        assert db_key_format(db) == 'spr5'
+        for make in (lambda: BlueprintStrategy(db), lambda: LBREvaluator(db, seed=1),
+                     lambda: BestResponseEvaluator(db, seed=1)):
+            with pytest.raises(ValueError, match='key_format'):
+                make()
+        assert require_key_format(db, ('v2', 'spr5'), 't') == 'spr5'
+        assert require_key_format(None, ('v2',), 't') is None
+        db.close()
+
+
+def test_auto_resolution_skips_spr5(monkeypatch):
+    from src.config import resolve_blueprint_path
+    monkeypatch.delenv('ALLIN_BLUEPRINT_DB', raising=False)
+    with tempfile.TemporaryDirectory() as d:
+        _spr5_db(d)
+        with pytest.raises(FileNotFoundError):
+            resolve_blueprint_path(d)
+
+
+def test_bool_is_not_an_spr_bucket():
+    with pytest.raises(ValueError):
+        make_info_set_key(1, 'ip', 'pf_160', 5, 'k', True)

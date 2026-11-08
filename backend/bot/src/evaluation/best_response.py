@@ -79,6 +79,8 @@ from .showdown_kernel import (
 
 class BestResponseEvaluator:
     def __init__(self, blueprint_db, seed=None, menu_mode=None, purify_threshold=0.0):
+        from ..cfr.keys import require_key_format
+        require_key_format(blueprint_db, ('v2',), 'BestResponseEvaluator')
         self.db = blueprint_db
         # Strategy purification of the (villain) blueprint before the BR walk -- the
         # A/B knob for the purification experiment. 0.0 = off (default). The hero then

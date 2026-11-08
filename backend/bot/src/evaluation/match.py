@@ -84,6 +84,8 @@ class BlueprintPlayer:
     """Samples its abstract action from a blueprint at the bucketed info-set key."""
 
     def __init__(self, strategy_source, cards, rng, menu_mode='control'):
+        from ..cfr.keys import require_key_format
+        require_key_format(strategy_source, ('v2',), 'match')
         self.src = strategy_source
         self.cards = cards
         self.rng = rng

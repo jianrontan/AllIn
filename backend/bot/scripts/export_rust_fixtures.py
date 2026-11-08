@@ -534,9 +534,11 @@ def export_keys_spr(out, rng, quick):
     n = 2_000 if quick else 20_000
     pots += [float(x) for x in rng.uniform(2.0, 400.0, n)]
     cases = []
+    n_edge = 3 * len(SPR_EDGES)
     for i, pot in enumerate(pots):
         for kf in ('v2', 'spr5'):
-            street = int(rng.integers(0, 4))
+            # Edge pots are pinned to flop/turn so they are actually bucketed.
+            street = (1 + i % 2) if i < n_edge else int(rng.integers(0, 4))
             b = spr_bucket(kf, street, pot)
             pos = 'ip' if rng.random() < 0.5 else 'oop'
             fine = f"pf_{int(rng.integers(0, NUM_PREFLOP_BUCKETS))}"

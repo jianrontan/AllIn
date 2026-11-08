@@ -60,6 +60,8 @@ _FULL_DECK = [s + r for r in _RANKS for s in _SUITS]
 class LBREvaluator:
     def __init__(self, blueprint_db, seed=None, flop_runout_samples=120,
                  menu_mode=None):
+        from ..cfr.keys import require_key_format
+        require_key_format(blueprint_db, ('v2',), 'LBREvaluator')
         self.db = blueprint_db
         # The LBR victim model must MIRROR the deployed bot's action abstraction --
         # the same arm the blueprint was trained under -- or LBR scores the bot's

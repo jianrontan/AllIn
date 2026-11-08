@@ -143,6 +143,15 @@ self-play hands (17 s on 10 workers):
   `key_format` switch.
 - `cross_match` must build each side's keys in that side's format, so a v3
   blueprint can play v2 head-to-head.
+- **Key parsers by token position** misread the 7-token spr5 keys and must be
+  updated with the opponent-model re-fit: `exploitation/opponent_model.py`
+  (`_levels`: `pat = p[5]` would read `r3`), `scripts/build_opponent_model.py`,
+  `scripts/analyze_key_coverage.py`, `scripts/compare_jam_fingerprint.py`.
+- **Done (2026-11-09):** every blueprint reader now fails closed on a key format
+  it can't build (`keys.require_key_format`: API, `BlueprintStrategy` and so the
+  river solver, LBR, BR, match, cross_match), and auto-resolution
+  (`config.resolve_blueprint_path`) only picks v2 blueprints. Each reader is
+  switched to `('v2', 'spr5')` as it learns to build spr5 keys.
 - **River solver consumers.** The river solver itself is bucket-free (exact
   hands, real pot and stacks), but it reads the blueprint in three places, and
   all three must use the new keys:

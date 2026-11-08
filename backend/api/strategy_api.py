@@ -70,6 +70,8 @@ BLUEPRINT_MENU_MODE = 'control'
 try:
     _BLUEPRINT_PATH = make_blueprint_source().local_path()
     BLUEPRINT_DB = BlueprintDB(_BLUEPRINT_PATH, read_only=True)
+    from bot.src.cfr.keys import require_key_format
+    require_key_format(BLUEPRINT_DB, ('v2',), 'the strategy API')
     from bot.src.abstractions.sizing import db_menu_mode
     BLUEPRINT_MENU_MODE = db_menu_mode(BLUEPRINT_DB)
 except Exception as _bp_err:

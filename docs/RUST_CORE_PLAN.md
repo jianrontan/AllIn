@@ -318,3 +318,29 @@ updates). The trainer is pure interpreter overhead and should gain far more.
   proof run names.
 - Open (serving adapter): a river solve can't be cancelled mid-run — drive it
   in chunks against the time budget; never share one `RiverCFR` across threads.
+
+### 2026-11-09 — First 100M run, Phase 6 spr5 keys, pre-run reviews
+- **100M v2-format Rust run** (capped, α1.5, γ1, 12 workers): 45m44s at ~37–42k
+  it/s sustained (the ~68k quoted earlier was a short benchmark). Matched v2's
+  preflop shape at ~55M; later snapshots keep loosening (weak-hand SB fold 75% →
+  52%). Paired LBR on 40/55/70/85/100M vs v2: no snapshot significantly
+  different (best: 55M, −131 ± 135 mbb). Retraining the same abstraction
+  reproduces v2 → Phase 6.
+- **spr5 key format** (Phase 6 Arm A, `docs/PHASE6_ABSTRACTION_PLAN.md`): SPR
+  bucket on flop/turn keys in both trainers; parity extended (`keys_spr`,
+  `mccfr_spr`: a 600-iteration spr5 run writes a byte-identical DB); v2 output
+  unchanged.
+- **Three pre-run reviews** (subagents): spr5 correctness — clean (premise checked
+  at ~450k live decisions; extra parity on control/capped_no2/γ2). Security — no
+  panics/injection; fixed: readers fail closed on an unknown key format,
+  auto-resolution only picks v2, case-insensitive served-blueprint resume guard,
+  snapshot via temp file + failure no longer kills the run, bool spr rejected.
+  Long-run integrity — safe (no reachable overflow/NaN; memory bounded ~2 GB;
+  dirty set complete; snapshot byte-identical).
+- **Follow-ups (performance, results unaffected):** river-board cache default
+  100k < 134,459 canonical boards → pass `--river-cache-boards 140000` (~20%
+  faster); FxHash on packed keys ignores bits 58–63 (seat/street/SPR) → 5.3 keys
+  per slot on spr5 key sets, use a mixing hasher; merge runs serially on the main
+  thread (~30% of wall time, ~6.6 of 12 cores busy) → overlap/parallelise it;
+  workers maintain a `dirty` set they throw away. A fixed `--seed` does not
+  reproduce a parallel run (dynamic work split + per-worker flooring) — by design.

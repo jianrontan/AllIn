@@ -138,6 +138,8 @@ class CrossBot:
     betting. Holds no per-hand state across hands (patterns live in the match)."""
 
     def __init__(self, strategy_source, sizing, cards, rng):
+        from ..cfr.keys import require_key_format
+        require_key_format(strategy_source, ('v2',), 'cross_match')
         self.src = strategy_source
         self.sizing = sizing
         self.cards = cards
