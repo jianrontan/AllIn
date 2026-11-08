@@ -129,6 +129,41 @@ self-play hands (17 s on 10 workers):
   the pot types K4 merges. *This changes K from the signed-off 4 to 5 —
   needs confirmation.*
 
+**6.3/6.4 results (2026-11-09, overnight)** — 200M spr5 Rust run (1h00m,
+404k info sets, snapshots every 10M; scripts in the session scratchpad
+`overnight/`). Candidates vs served v2, with a same-abstraction control
+(Rust v2-format 55M) to show what plain retraining noise looks like:
+
+| vs v2 | SPR 50M | SPR 100M | SPR 150M | SPR 200M | control (v2-format 55M) |
+|---|---|---|---|---|---|
+| Head-to-head, AIVAT, 240k hands (mbb/hand, >0 = candidate wins) | −59 ± 34 | −31 ± 33 | −49 ± 33 | +47 ± 33 | +55 ± 34 |
+| Paired LBR, 10k hands (difference, lower = better) | −49 ± 141 | +185 ± 169 | +227 ± 179 | +221 ± 190 | +114 ± 101 |
+| Best response, 24 boards (total; v2 = 14,028) | — | 13,347 | — | 13,651 | — |
+
+- **Best response, 96 paired boards (4 seed blocks):** SPR 100M is **5.6% less
+  exploitable than v2** (−784 ± 72 mbb/hand; as SB −1.8%, **as BB −8.0%**),
+  lower in all 4 blocks. The control is **+1.8%** (slightly worse than v2), so SPR
+  100M beats plain retraining by ~1,035 mbb/hand. The gain is concentrated on
+  the BB/OOP side — the side whose BR had plateaued on the v2 abstraction.
+  Caveat: BR is exact on cards but restricted to the grid sizes, and measures
+  the blueprint table (not the river solver or guards).
+- **Head-to-head and LBR: no detectable difference** — every candidate,
+  including the control, is within the ±35 (H2H) / ±150 (LBR) noise band.
+- **BUG-027 is NOT fixed, and SPR buckets cannot fix it.** Under the capped menu
+  an all-in only arises from a stack clamp, so "facing a flop lead shove" only
+  occurs at low SPR: v2's key `pf_6_25_ip_flop_a` was already effectively a
+  4-bet-pot key. The spr5 blueprint reaches only `..._flop_r0_a` there and
+  learns the same 98–99% call. The real causes are the other two in BUG-027:
+  equity-vs-uniform strength buckets and humans shoving far narrower than the
+  equilibrium range — candidates for range-aware buckets or the exploitation
+  layer, not SPR. (Elsewhere the spr5 blueprint does call shoves by pot odds:
+  medium flop hands call 84% at SPR < 2 vs 36% at SPR > 40, against v2's
+  blended 62%.)
+- **Preflop drift:** weak-hand SB fold falls 74% → 40% over the run (v2 68%);
+  BR prefers 100M over 200M, so the ship candidate is **SPR 100M**.
+- **Gate (6.4):** BR improved ✔, LBR/H2H neutral ✔, BUG-027 fingerprint gone ✘ —
+  but that criterion rested on a wrong premise (above). Decision for the user.
+
 **6.2 Implement the key change, backward compatible.**
 - `make_info_set_key(..., spr_bucket=None)`; `None` keeps today's format, so
   v2 keeps working unchanged. The blueprint DB is stamped with a
