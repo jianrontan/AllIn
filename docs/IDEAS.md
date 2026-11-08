@@ -1,6 +1,6 @@
 # Ideas / Feature Backlog
 
-Last updated: 2026-06-11 (added §10 post-launch UX / robustness TODO)
+Last updated: 2026-09-23 (added Sentry error tracking to §10, after BUG-030)
 
 Speculative features and "could we…" explorations that aren't yet committed phases.
 The committed, sequenced work lives in [ROADMAP.md](ROADMAP.md); this file is the
@@ -435,6 +435,23 @@ phases) to pick up after the AWS deploy settles.
   time (`VITE_APP_VERSION` from `package.json` version or the git tag), not hardcoded, so it
   tracks releases. The backend already exposes the build `commit` via `/api/healthz`; a
   human-readable semver on the frontend complements it. Pairs with adopting git tags for releases.
+
+- **Sentry for backend error tracking** (observability, S). Captured 2026-09-23 after the
+  BUG-030 latency incident. Today an unhandled exception in `strategy_api` lands as a
+  traceback in the Lightsail container log and nothing else — no alert, no grouping, no
+  release tagging, and the log is awkward to search (100 events/page, `--filter-pattern`
+  only). Sentry's Flask integration is ~3 lines in `strategy_api.py` (`sentry_sdk.init(dsn=…,
+  integrations=[FlaskIntegration()], traces_sample_rate=<small>)`) and gives grouped
+  exceptions with request context plus a release tag — wire the release to `ALLIN_GIT_SHA`,
+  which healthz already reports, so an error points at the exact deploy. Gate it on an
+  `ALLIN_SENTRY_DSN` env var so it's a no-op when unset (local dev, CI, anyone running from a
+  clone). Free tier is ample at current volume. **Caveats:** scrub PII before sending —
+  `playerId` is a UUID and hand histories are gameplay data, so review `send_default_pii` and
+  the event scrubber; and keep `traces_sample_rate` low, since the box is 0.25 vCPU and the
+  SDK adds per-request work. **Why it's the right first addition:** the Sep-22 incident
+  needed *synthetics* (now covered by the origin-direct monitor) and *searchable logs*, not
+  metrics — Sentry is the cheapest step toward the second, and self-hosted Prometheus on a
+  1 GB box would cost more than the app it watches (see §10 notes / BUG-030).
 
 ## Cross-references
 - Committed phases & status: [ROADMAP.md](ROADMAP.md)
