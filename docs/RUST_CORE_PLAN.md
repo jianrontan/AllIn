@@ -66,6 +66,13 @@ ALLIN_PARITY_STRICT=1 ../../.venv/bin/python -m pytest parity -q        # gate: 
 ../../.venv/bin/python bench/bench_baseline.py   # Python baseline -> bench/python_baseline.json
 ../../.venv/bin/python bench/bench_rust.py       # Rust river, same spots, prints speedup
 cargo run --release --example river_profile      # kernel vs per-iteration breakdown
+../../.venv/bin/python bench/bench_buckets.py    # rank7 / bucket lookups
+../../.venv/bin/python bench/bench_train.py --workers 1,4,8,12   # training it/s
+../../.venv/bin/python bench/compare_blueprints.py A.db B.db ...  # strategy distance between blueprints
+
+# train with the Rust trainer (from backend/bot; same DB format as the Python trainer)
+../../.venv/bin/python scripts/train_rust.py --iterations 50000000            # parallel, all cores
+../../.venv/bin/python scripts/train_rust.py --iterations 1000000 --resume <file.db>
 ```
 
 Git-ignored assets (baked postflop tables, blueprints) are symlinked into the
@@ -82,9 +89,9 @@ If `cargo` isn't on PATH: Homebrew's rustup is keg-only — add
 | 0 | Scaffold + oracles | crate, fixtures, harness, baseline | ✅ harness 9/9 vs Python; mutation-tested |
 | 1 | River solver | `river_showdown`, `river_tree`, `river_cfr`, `river_gadget` | ✅ core: parity green (exact mode bit-identical), 7× measured. ⬜ serving: `ALLIN_RIVER_BACKEND` adapter + Docker Rust stage + local A/B |
 | 2 | Evaluator + bucketing | `eval_rank7`, `buckets` (preflop map; flop/turn `.npy` table lookup; river runtime equity + canonical-board cache) | ✅ exact on all fixtures (strict parity green); rank7 10×, river board 470× cold |
-| 3 | Betting engine + keys | `engine` (state-threaded, both menu modes), `keys` | exact on all fixtures |
-| 4 | Single-thread MCCFR + SQLite writer | `mccfr` (fixture TBD) | table identical to Python for N iters under a shared injected uniform stream |
-| 5 | Parallel trainer (M6) | shared table, all cores | BR/LBR matches a Python run at equal iterations; throughput measured |
+| 3 | Betting engine + keys | `engine` (state-threaded, both menu modes), `keys` | ✅ exact on all fixtures |
+| 4 | Single-thread MCCFR + SQLite writer | `mccfr` | ✅ checkpointed DB byte-identical to Python's (3 runs × 600 iters, control/capped, γ=1/2) under injected deals + uniforms; 30× single core |
+| 5 | Parallel trainer (M6) | `mccfr_merge` (block Linear-CFR, threads) | ✅ merge bit-exact (200 cases); ~68k it/s on 12 workers (~300× Python core); statistical agreement with Python parallel (progress log). ⬜ BR/LBR at equal iterations (expensive; run before the long run) |
 | 6 | Abstraction upgrade | SPR buckets, finer buckets | user signs off the spec |
 | 7 | Long run + v3 bundle | train, re-bake, re-fit opponent models | BR/LBR + human-like match; user approves cutover |
 
@@ -121,6 +128,29 @@ Phases 1, 2, 3 are independent (can run in parallel sessions/worktrees);
   trajectory (see memory: trainer-perf-improvements). Exact mode must reproduce
   numpy's reduction order; otherwise validate statistically (BR/LBR) instead.
 - Keep the DB schema identical so serving reads Rust-trained blueprints unchanged.
+- Done that way: the `mccfr` fixture records each deal, its buckets/ranks, and
+  every uniform Python's `random.choices` drew (a `random.Random` subclass
+  whose `random()` replays a numpy stream); Rust replays the same values and
+  must write a byte-identical blueprint DB (JSON text incl. float `repr` and
+  dict insertion order). Buckets come from the fixture, so trainer parity is
+  independent of bucketing parity.
+- Internals: info-set keys are packed into a `u64` (street, seat, bucket,
+  strength ≤ 1023, pattern ≤ 10 chars at 4 bits) and decoded to the Python
+  string only for the DB; per-key action maps are inline (≤ 10 actions,
+  insertion-ordered like a dict; overflow is an error, not a silent drop).
+
+### Phase 5 notes (parallel)
+- Same algorithm as `parallel_trainer.py` (workers with the discount off and
+  CFR+ flooring per write; master `merge_round` with one block discount per
+  round), ported bit-exactly and fixture-tested. Mechanical differences only:
+  threads share the round baseline read-only and copy an info set on first
+  touch (no pickling); iterations are handed out in blocks of 16 from an atomic
+  counter so performance and efficiency cores finish a round together;
+  randomness is seeded per iteration (seed, iteration index), so a deal doesn't
+  depend on which worker ran it. Parallel runs are not bit-reproducible (same as
+  Python); `--workers 1` is.
+- Training mode is stamped (`single` / `parallel`) and resume refuses a
+  mismatch, as in Python. Either trainer can resume the other's blueprint.
 
 ### Phase 6 notes (abstraction)
 - History: SPR buckets were once decided against (1.7–2.5× training for ~9% of
@@ -150,7 +180,8 @@ Phases 1, 2, 3 are independent (can run in parallel sessions/worktrees);
 | `rank7` | 1.28 M/s | 12.8 M/s via `rank_batch` incl. numpy marshalling (10×) | |
 | River buckets, one board × 1081 hands (`bench/bench_buckets.py`) | 45 ms | 0.095 ms cold / 0.009 ms cached | |
 | Flop / turn bucket lookup | 73 k/s / 68 k/s | 6.4 M/s / 1.8 M/s | |
-| Training, capped, single core (early run) | 227 it/s | (Phase 4) | |
+| Training, capped, single core (early run) | 227 it/s | 6,960 it/s (30.6×) | |
+| Training, capped, 12 workers (steady state, 1.2M iters) | — | ~68,000 it/s (~300× one Python core) | |
 
 The river solver was already numpy-vectorized, so ~7× is the honest ceiling of a
 straight port (per deep-tree iteration: ~2 ms showdown kernels, ~1.2 ms node
@@ -236,3 +267,51 @@ updates). The trainer is pure interpreter overhead and should gain far more.
 - Pure-Rust entry points for other phases: `crate::eval::rank(&[u8]) -> i32`,
   `crate::eval::rank_with`, `crate::buckets::fine_to_coarse() -> &'static [u8; 169]`,
   `crate::buckets::preflop_buckets`, `crate::buckets::Buckets::bucket`.
+
+### 2026-11-08 — Phases 3–5: engine, keys, MCCFR trainer, parallel trainer
+- `src/engine.rs` (state-threaded betting engine, control/capped/capped_no2),
+  `src/keys.rs`, bindings `src/py_engine.rs`: **exact** on the engine and keys
+  fixtures.
+- `src/mccfr/` (trainer, inline info-set table with packed `u64` keys,
+  Python-compatible JSON + SQLite writer, resume with all of Python's guards,
+  xoshiro RNG, parallel driver) + `src/py_train.rs` (`allin_core.Trainer`,
+  `merge_round`). New fixture groups `mccfr` (3 runs × 600 iterations,
+  control/capped, γ=1/2) and `mccfr_merge` (200 synthetic merges).
+- **Single-thread parity: the Rust-written blueprint DB is byte-identical to
+  Python's** (every row and column, plus metadata) under the injected deals and
+  uniforms. `merge_round` bit-exact on all 200 cases (action ORDER inside a
+  merged dict is not compared — Python's comes from set iteration).
+- Throughput (`bench/bench_train.py`, capped): single core 6,960 it/s vs
+  Python 227 (30.6×); 12 workers ~42k it/s on a short run, ~68k it/s steady
+  (1.2M iterations). Python's own 12-process parallel trainer on the same M6:
+  867 it/s. A 52.5M-iteration blueprint ≈ 13 min.
+- **Statistical agreement (Phase 5 gate, cheap form):** 240k iterations × 12
+  workers, two seeds each (`bench/compare_blueprints.py`, reach-weighted TV of
+  average strategies): Python-vs-Python 0.119, Rust-vs-Rust 0.119,
+  Python-vs-Rust 0.117–0.123 — within seed noise on every street. The
+  expensive BR/LBR comparison is still to run before a long training run.
+- CLI `backend/bot/scripts/train_rust.py` (defaults = the served v2: capped,
+  parallel, α=1.5, γ=1.0; writes to `analysis/blueprints_rs/`, git-ignored and
+  outside the serving auto-resolver; refuses to resume `blueprint_final*`).
+
+### 2026-11-08 — Security review + hardening
+- Read-only review (subagent) of the whole crate + CLI. Clean: no `unsafe`;
+  npz reader fuzzed (3,000 mutations, 0 panics); all SQL parameterised; cache
+  locking/poisoning; GIL release (all inputs copied first); dependencies.
+- Fixed (regression tests in `parity/test_robustness.py`, 22 cases):
+  river tree input limits (menu ≤ 8, max_aggressions ≤ 6, finite pot/stack,
+  20k-node budget with early stop — was a SIGSEGV on deep trees and an OOM on
+  wide ones); ≤ 1326 hands per board; NaN/inf/negative reach and non-finite
+  scalars rejected in the river bindings (were silently turned into uniform
+  strategies / NaN); `merge_every * workers` overflow (was an infinite loop);
+  engine refuses negative or over-stack costs and counter overflow, and
+  `utility` requires a full board for showdowns; `merge_round` is
+  all-or-nothing and the parallel driver always restores the table (failed
+  thread spawn = error, workers ≤ 1024); `overflow-checks = true` in release
+  (~3% cost); checkpoints refuse non-finite values (they made a DB
+  unresumable); DB paths can't be parsed as SQLite URIs (the bundled SQLite
+  enables URIs globally — relative paths get a `./` prefix); CLI safer
+  defaults (above), abstraction loaded before any DB is created, collision-
+  proof run names.
+- Open (serving adapter): a river solve can't be cancelled mid-run — drive it
+  in chunks against the time budget; never share one `RiverCFR` across threads.
