@@ -36,20 +36,36 @@ _BUSY_WINDOW_SECONDS = 300
 _DEFAULT_BLUEPRINT_DIR = Path(__file__).resolve().parents[1] / "analysis" / "blueprints"
 
 
-def _read_key_format(db_path):
-    """training_metadata.key_format of a blueprint DB ('v2' when absent), or None
-    if unreadable."""
+_UNREADABLE = object()
+
+
+def _read_metadata(db_path, key, default):
+    """training_metadata[key] of a blueprint DB (`default` when absent), or
+    _UNREADABLE if the DB can't be read."""
     try:
         conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         try:
             row = conn.execute(
-                "SELECT value FROM training_metadata WHERE key = 'key_format'"
+                "SELECT value FROM training_metadata WHERE key = ?", (key,)
             ).fetchone()
         finally:
             conn.close()
-        return json.loads(row[0]) if row else 'v2'
+        return json.loads(row[0]) if row else default
     except Exception:
-        return None
+        return _UNREADABLE
+
+
+def _read_key_format(db_path):
+    """training_metadata.key_format of a blueprint DB ('v2' when absent), or None
+    if unreadable."""
+    kf = _read_metadata(db_path, 'key_format', 'v2')
+    return None if kf is _UNREADABLE else kf
+
+
+def _servable_by_default(db_path):
+    """Auto-resolution candidates: v2 keys on the root (v2) abstraction."""
+    return (_read_key_format(db_path) == 'v2'
+            and _read_metadata(db_path, 'abstraction', None) is None)
 
 
 def _read_total_iterations(db_path):
@@ -104,12 +120,13 @@ def resolve_blueprint_path(blueprint_dir=None):
         return path
 
     blueprint_dir = Path(blueprint_dir) if blueprint_dir else _DEFAULT_BLUEPRINT_DIR
-    # Auto-resolution serves v2-format blueprints only: the serving path builds v2
-    # keys, so an spr5 (Phase 6) blueprint with more iterations must never be
+    # Auto-resolution serves v2-format blueprints on the root (v2) abstraction
+    # only: the serving path builds v2 keys with the root buckets, so an spr5
+    # (Phase 6) or v3-abstraction blueprint with more iterations must never be
     # auto-selected. Point ALLIN_BLUEPRINT_DB at one explicitly (and the readers'
-    # key-format guard decides whether it can be used).
+    # key-format and abstraction guards decide whether it can be used).
     candidates = [p for p in blueprint_dir.glob("blueprint_*.db")
-                  if _read_key_format(p) == 'v2']
+                  if _servable_by_default(p)]
     if not candidates:
         raise FileNotFoundError(
             f"No blueprint_*.db file found in {blueprint_dir}. "

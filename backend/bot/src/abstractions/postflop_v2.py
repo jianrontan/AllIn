@@ -33,7 +33,8 @@ import numpy as np
 from .canonical import canonical_key, canonical_board_perm
 from .postflop_features import (
     load_centroids, encode_situation, equity_distribution, assign,
-    board_winrates, centroid_hash, _CARD_IDX, _ABSTRACTIONS_DIR)
+    board_winrates, _CARD_IDX, _ABSTRACTIONS_DIR)
+from .abstraction_set import check_table_stamp, read_manifest
 
 _STREET = {3: 'flop', 4: 'turn', 5: 'river'}
 
@@ -94,7 +95,12 @@ class PostflopV2:
     # _RIVER_BOARD_CACHE above -- so a bucket-cache miss is now cheap.)
     _RIVER_CACHE_CAP = 500_000
 
-    def __init__(self, seed=0, lazy_runouts=120, lazy_opp=150):
+    def __init__(self, seed=0, lazy_runouts=120, lazy_opp=150, abstraction_dir=None):
+        # abstraction_dir: the directory of centroids + baked tables (None = the
+        # root v2 abstraction). Readers get it from the blueprint via
+        # abstraction_set.resolve_abstraction_dir, never pick it themselves.
+        self.dir = abstraction_dir or _ABSTRACTIONS_DIR
+        self._manifest = None
         self.rng = random.Random(seed)
         self.lazy_runouts = lazy_runouts
         self.lazy_opp = lazy_opp
@@ -105,12 +111,12 @@ class PostflopV2:
 
     def _centroid(self, street):
         if street not in self._centroids:
-            self._centroids[street] = load_centroids(street)
+            self._centroids[street] = load_centroids(street, self.dir)
         return self._centroids[street]
 
     def _table(self, street):
         if street not in self._tables:
-            path = os.path.join(_ABSTRACTIONS_DIR, f'postflop_table_{street}.npz')
+            path = os.path.join(self.dir, f'postflop_table_{street}.npz')
             if os.path.exists(path):
                 if os.environ.get('ALLIN_MMAP_POSTFLOP') == '1':
                     self._tables[street] = self._mmap_table(street, path)
@@ -128,8 +134,8 @@ class PostflopV2:
         member (verified at runtime) -- so extract the two members to sibling .npy files ONCE (a
         .npy IS mmap-able) and memory-map those. The one-time extraction needs ~one member resident;
         every load after pages from disk. The .npy are derived artifacts (git-ignored)."""
-        ids_npy = os.path.join(_ABSTRACTIONS_DIR, f'postflop_table_{street}.ids.npy')
-        bkt_npy = os.path.join(_ABSTRACTIONS_DIR, f'postflop_table_{street}.buckets.npy')
+        ids_npy = os.path.join(self.dir, f'postflop_table_{street}.ids.npy')
+        bkt_npy = os.path.join(self.dir, f'postflop_table_{street}.buckets.npy')
         d = np.load(npz_path)                       # NpzFile: lazy -- stamp reads only small members
         self._verify_stamp(street, d)               # propagate a stale-table hard error
         try:
@@ -152,30 +158,20 @@ class PostflopV2:
 
     def _verify_stamp(self, street, d):
         """Guard against a stale table: confirm it was baked from the centroids
-        in use (centroid hash) with the same K and bins (C2/M3). A legacy table
-        with no stamp warns once and proceeds (so pre-stamp bakes keep working
-        until the next re-bake); a stamp MISMATCH is a hard error."""
-        if 'centroid_hash' not in getattr(d, 'files', []):
+        in use (centroid hash), with the same K and bins (C2/M3), and -- for the
+        flop -- with the abstraction manifest's runout count. A legacy table with
+        no stamp warns once and proceeds (so pre-stamp bakes keep working until
+        the next re-bake); any MISMATCH is a hard error."""
+        if self._manifest is None:
+            self._manifest = read_manifest(self.dir)
+        centroids, bins = self._centroid(street)
+        if not check_table_stamp(street, d, centroids, bins, self._manifest):
             if street not in self._warned:
                 warnings.warn(
                     f"postflop_table_{street}.npz has no centroid stamp (legacy "
                     f"bake) -- cannot verify it matches the current centroids. "
                     f"Re-bake to enable the consistency check.")
                 self._warned.add(street)
-            return
-        centroids, bins = self._centroid(street)
-        want = centroid_hash(centroids, bins)
-        got = str(d['centroid_hash'])
-        if got != want:
-            raise ValueError(
-                f"postflop_table_{street}.npz was baked from DIFFERENT centroids "
-                f"(stamp {got[:8]}... != current {want[:8]}...). The table is stale; "
-                f"re-bake it: python scripts/bake_postflop_table.py --street {street}")
-        nb, tb = int(d['n_buckets']), int(d['bins'])
-        if nb != len(centroids) or tb != bins:
-            raise ValueError(
-                f"postflop_table_{street}.npz K/bins ({nb}/{tb}) != current centroids "
-                f"({len(centroids)}/{bins}); re-bake --street {street}.")
 
     # ------------------------------------------------------------------
     def bucket(self, hole, board):

@@ -14,6 +14,7 @@ A "strategy" here is any object exposing get_average_strategy(key) -> {action:
 prob} or None (i.e. a BlueprintDB, or a fake for testing). Both players act in
 the blueprint's abstract action set; the engine tracks real chips.
 """
+import os
 import random
 
 import numpy as np
@@ -168,14 +169,21 @@ class HeadToHeadMatch:
 
     def __init__(self, strat_a, strat_b, seed=None,
                  menu_mode_a='control', menu_mode_b='control'):
-        self.cards = CardAbstraction()
+        # Each side buckets with the abstraction its own blueprint was trained on
+        # (one shared instance when they agree -- the tables are large).
+        from ..abstractions.abstraction_set import resolve_abstraction_dir
+        dir_a = resolve_abstraction_dir(strat_a, 'match (A)')
+        dir_b = resolve_abstraction_dir(strat_b, 'match (B)')
+        cards_a = CardAbstraction(dir_a)
+        cards_b = cards_a if os.path.realpath(dir_a) == os.path.realpath(dir_b) \
+            else CardAbstraction(dir_b)
         self.evaluator = HandEvaluator()
         self.rng = random.Random(seed)
         # Each side can be a DIFFERENT arm (e.g. capped vs control head-to-head), so
         # menu_mode is per-player. A BlueprintDB strat exposes get_metadata; default
         # to control for a fake/pre-stamp source.
-        self.pa = BlueprintPlayer(strat_a, self.cards, self.rng, menu_mode=menu_mode_a)
-        self.pb = BlueprintPlayer(strat_b, self.cards, self.rng, menu_mode=menu_mode_b)
+        self.pa = BlueprintPlayer(strat_a, cards_a, self.rng, menu_mode=menu_mode_a)
+        self.pb = BlueprintPlayer(strat_b, cards_b, self.rng, menu_mode=menu_mode_b)
 
     def play_hand(self, seat_of_A, hand_a, hand_b, board, record=None):
         """Returns A's net chips. If `record` is a list, append a trajectory dict."""

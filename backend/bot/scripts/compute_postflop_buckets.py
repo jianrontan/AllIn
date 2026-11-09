@@ -115,6 +115,9 @@ def main():
                          "differently). Match them for any abstraction re-fit (e.g. the SPR-bucket v3).")
     ap.add_argument('--kmeans-iters', type=int, default=25)
     ap.add_argument('--seed', type=int, default=42)
+    ap.add_argument('--abstraction', default=None,
+                    help="Named abstraction to write into (analysis/abstractions/<name>/); "
+                         "default: the root (v2) abstraction.")
     args = ap.parse_args()
 
     import random
@@ -144,7 +147,8 @@ def main():
         print(f"  {b:>4} | {counts[b] / counts.sum():5.1%} | {mean_eq:6.3f} "
               f"| spread={spread:5.3f} {bar}")
 
-    out_dir = os.path.join(os.path.dirname(__file__), '..', 'analysis', 'abstractions')
+    from src.abstractions.abstraction_set import abstraction_dir
+    out_dir = abstraction_dir(args.abstraction)
     os.makedirs(out_dir, exist_ok=True)
     out = os.path.join(out_dir, f'postflop_centroids_{args.street}.npz')
     np.savez(out, centroids=centroids, bins=args.bins)

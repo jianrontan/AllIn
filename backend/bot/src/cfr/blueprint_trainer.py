@@ -658,5 +658,12 @@ class BlueprintTrainer:
                 f"{stored_kf!r}, but the run is configured for {self.key_format!r}. "
                 f"The formats build different info-set keys. Resume with "
                 f"key_format={stored_kf!r}, or start a fresh run.")
+        # The Python trainer buckets with the root (v2) abstraction only; a
+        # blueprint stamped with another abstraction (Rust CLI) must not continue here.
+        from ..abstractions.abstraction_set import (
+            ROOT, check_resume, abstraction_id)
+        check_resume(db.get_metadata('abstraction', None),
+                     db.get_metadata('abstraction_id', None),
+                     {'abstraction_id': abstraction_id(ROOT)}, 'BlueprintTrainer')
         print(f"Resumed: {len(self.info_sets)} info sets, continuing from iteration {start_iteration}")
         return start_iteration

@@ -56,6 +56,8 @@ class BlueprintStrategy(BotStrategy):
     def __init__(self, blueprint_db, purify_threshold=0.0):
         from ..cfr.keys import require_key_format
         require_key_format(blueprint_db, ('v2',), 'BlueprintStrategy')
+        from ..abstractions.abstraction_set import require_root_abstraction
+        require_root_abstraction(blueprint_db, 'BlueprintStrategy')
         self.db = blueprint_db
         # Inference-only strategy purification of the blueprint average (see
         # cfr/purification.py). 0.0 = off (default). Applied to the trained-key

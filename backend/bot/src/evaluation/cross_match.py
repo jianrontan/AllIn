@@ -19,6 +19,7 @@ only the abstraction (sizing + pattern perception) is per-player. Validated by:
 tests/run_cross_match.py (sizing-vs-native-engine, self-vs-self ~= 0, new-vs-new
 == match.py within noise, and a cross-perception unit check).
 """
+import os
 import random
 
 import numpy as np
@@ -242,11 +243,18 @@ class CrossMatch:
     """Play hands between two CrossBots (A and B). A's perspective; seat alternates."""
 
     def __init__(self, strat_a, sizing_a, strat_b, sizing_b, seed=None):
-        self.cards = CardAbstraction()
+        # Each side buckets with the abstraction its own blueprint was trained on
+        # (one shared instance when they agree -- the tables are large).
+        from ..abstractions.abstraction_set import resolve_abstraction_dir
+        dir_a = resolve_abstraction_dir(strat_a, 'cross match (A)')
+        dir_b = resolve_abstraction_dir(strat_b, 'cross match (B)')
+        cards_a = CardAbstraction(dir_a)
+        cards_b = cards_a if os.path.realpath(dir_a) == os.path.realpath(dir_b) \
+            else CardAbstraction(dir_b)
         self.evaluator = HandEvaluator()
         self.rng = random.Random(seed)
-        self.pa = CrossBot(strat_a, sizing_a, self.cards, self.rng)
-        self.pb = CrossBot(strat_b, sizing_b, self.cards, self.rng)
+        self.pa = CrossBot(strat_a, sizing_a, cards_a, self.rng)
+        self.pb = CrossBot(strat_b, sizing_b, cards_b, self.rng)
 
     def play_hand(self, seat_of_A, hand_a, hand_b, board, record=None):
         players = {seat_of_A: self.pa, 1 - seat_of_A: self.pb}

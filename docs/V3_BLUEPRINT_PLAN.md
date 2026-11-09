@@ -109,6 +109,48 @@ So, first:
   per process.
 - An unstamped DB means "v2, global dir".
 
+### V3.0 — done 2026-11-09
+
+Implemented in `backend/bot/src/abstractions/abstraction_set.py`
+(tests: `tests/test_abstraction_set.py`, 30 tests).
+
+**The fingerprint.**
+- `abstraction_id` = sha1 of the three centroid hashes plus the manifest's
+  `flop_runouts`. It does not depend on whether the git-ignored tables are present.
+- The root has no manifest; its default is `flop_runouts=200`.
+- The root hashes to `LEGACY_ABSTRACTION_ID` (`742b8dd4…`). An unstamped blueprint
+  means "the root as it was for v2", and is refused if the root ever stops hashing
+  to that value.
+
+**Where the stamp is written and checked.**
+- `scripts/train_rust.py` stamps every new run with `abstraction_id`, and with the
+  `abstraction` name for a named abstraction (`--abstraction NAME`).
+- It refuses a resume across abstractions.
+- It checks the tables' bake stamps before training (`verify_tables`); the Rust
+  loader only checks centroids.
+- The Python trainer doesn't stamp, which keeps its DBs byte-identical to the Rust
+  parity fixtures. It refuses to resume a named abstraction.
+
+**Bake and fit scripts.**
+- `bake_postflop_table.py` takes `--abstraction`, stamps the flop table with
+  `flop_runouts`, and takes the runout count from the manifest; a conflicting
+  `--flop-runouts` is refused.
+- `compute_postflop_buckets.py` takes `--abstraction`.
+- `PostflopV2` and `CardAbstraction` take `abstraction_dir`. A table whose
+  `flop_runouts` disagrees with the manifest is a hard error; a table from before
+  the field existed counts as 200.
+
+**Readers.**
+- The evaluation tools resolve each blueprint's own directory: LBR, best response,
+  `HeadToHeadMatch` and `CrossMatch` (per side, sharing one instance when the two
+  agree), and the SPR probe.
+- Serving fails closed on a named abstraction until V3.6: `BlueprintStrategy`
+  (so also the river solver), the strategy API, and auto-resolution, which skips
+  named-abstraction blueprints.
+
+**Rust.** No change was needed: `load_abstraction(dir)` already takes a directory,
+and its npz reader ignores the new `flop_runouts` member.
+
 ## Steps
 
 | Step | Work | Wall time | Gate |

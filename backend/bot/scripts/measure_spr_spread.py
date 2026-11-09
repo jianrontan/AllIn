@@ -85,7 +85,8 @@ class SelfPlaySampler:
                                   voluntary_allin=False)
         else:
             self.game = PokerGame()
-        self.cards = CardAbstraction()
+        from src.abstractions.abstraction_set import resolve_abstraction_dir
+        self.cards = CardAbstraction(resolve_abstraction_dir(db, 'SPR probe'))
         self.deck = [s + r for r in
                      ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A']
                      for s in ['H', 'D', 'C', 'S']]

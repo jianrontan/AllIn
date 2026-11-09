@@ -268,9 +268,11 @@ class CardAbstraction:
     # and postflop boards rarely repeat during training so evictions cost little.
     _CACHE_CAP = 500_000
 
-    def __init__(self):
+    def __init__(self, abstraction_dir=None):
+        # abstraction_dir: None = the root (v2) postflop abstraction. Readers bound
+        # to a blueprint pass abstraction_set.resolve_abstraction_dir(blueprint_db).
         self.hand_evaluator = HandEvaluator()
-        self.postflop = PostflopV2()
+        self.postflop = PostflopV2(abstraction_dir=abstraction_dir)
         self._bucket_cache = {}
 
     def get_bucket(self, hole_cards, community_cards=None):

@@ -103,7 +103,9 @@ class BestResponseEvaluator:
         else:
             self.game = PokerGame()
         self.menu_mode = mm
-        self.cards = CardAbstraction()
+        # Bucket with the abstraction the blueprint was trained on.
+        from ..abstractions.abstraction_set import resolve_abstraction_dir
+        self.cards = CardAbstraction(resolve_abstraction_dir(blueprint_db, 'best response'))
         self.evaluator = HandEvaluator()
         # Keep the raw seed (not just the RNG) so the serial and parallel paths can
         # both derive the SAME board list from it -> identical results either way.

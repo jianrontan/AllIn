@@ -107,11 +107,13 @@ def assign(feat, centroids):
     return int(np.argmin([emd(feat, c) for c in centroids]))
 
 
-def load_centroids(street):
-    """Load the Phase-A centroids for a street: returns (centroids, bins)."""
-    path = os.path.join(_ABSTRACTIONS_DIR, f'postflop_centroids_{street}.npz')
-    data = np.load(path)
-    return data['centroids'], int(data['bins'])
+def load_centroids(street, abstraction_dir=None):
+    """Load the Phase-A centroids for a street: returns (centroids, bins).
+    `abstraction_dir` = None is the root (v2) abstraction; see abstraction_set."""
+    path = os.path.join(abstraction_dir or _ABSTRACTIONS_DIR,
+                        f'postflop_centroids_{street}.npz')
+    with np.load(path) as data:
+        return data['centroids'], int(data['bins'])
 
 
 def centroid_hash(centroids, bins):

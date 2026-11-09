@@ -88,6 +88,38 @@ def _snapshot(db_path, total):
     return dest
 
 
+def _read_abstraction_stamp(db_path):
+    """(abstraction name, abstraction_id) stamped in a blueprint, None when absent."""
+    import json
+    import sqlite3
+    from pathlib import Path
+    conn = sqlite3.connect(Path(db_path).resolve().as_uri() + '?mode=ro', uri=True)
+    try:
+        out = []
+        for key in ('abstraction', 'abstraction_id'):
+            row = conn.execute("SELECT value FROM training_metadata WHERE key = ?",
+                               (key,)).fetchone()
+            out.append(json.loads(row[0]) if row else None)
+        return tuple(out)
+    finally:
+        conn.close()
+
+
+def _write_abstraction_stamp(db_path, meta):
+    """Stamp the blueprint with the abstraction it is trained on. The Rust trainer's
+    checkpoints use INSERT OR REPLACE per key, so these rows survive them."""
+    import json
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            for key, value in meta.items():
+                conn.execute("INSERT OR REPLACE INTO training_metadata (key, value) "
+                             "VALUES (?, ?)", (key, json.dumps(value)))
+    finally:
+        conn.close()
+
+
 def _is_served_blueprint(path):
     """True if `path` is (or links to) a served blueprint: any blueprint_final*
     name in any letter case (APFS/NTFS are case-insensitive), or the same file as
@@ -117,7 +149,12 @@ def main():
     ap.add_argument('--iterations', type=int, required=True)
     ap.add_argument('--resume', default=None, help='blueprint file name in --out-dir to continue')
     ap.add_argument('--out-dir', default=BLUEPRINTS)
-    ap.add_argument('--abstractions-dir', default=ABSTRACTIONS)
+    ap.add_argument('--abstractions-dir', default=ABSTRACTIONS,
+                    help='abstraction directory: analysis/abstractions (v2) or a direct '
+                         'subdirectory of it (see src/abstractions/abstraction_set.py)')
+    ap.add_argument('--abstraction', default=None,
+                    help='named abstraction (analysis/abstractions/<name>/); overrides '
+                         '--abstractions-dir')
     ap.add_argument('--workers', type=int, default=os.cpu_count() or 1,
                     help='1 = single-thread (per-iteration discount); >1 = parallel')
     ap.add_argument('--merge-every', type=int, default=2000, help='parallel: iterations per worker per round')
@@ -141,6 +178,16 @@ def main():
 
     mode = 'parallel' if args.workers > 1 else 'single'
     seed = args.seed if args.seed is not None else random.randrange(1 << 62)
+    from src.abstractions.abstraction_set import (
+        abstraction_dir, check_resume, stamp_for, verify_tables)
+    if args.abstraction is not None:
+        args.abstractions_dir = abstraction_dir(args.abstraction)
+    # Fingerprint the abstraction and check its tables' bake stamps before any DB
+    # exists: the Rust loader verifies the centroid stamp but not the bake settings.
+    abs_meta = stamp_for(args.abstractions_dir)
+    verified = verify_tables(args.abstractions_dir)
+    print(f"Abstraction {abs_meta.get('abstraction', 'root (v2)')} "
+          f"id {abs_meta['abstraction_id'][:12]}... (tables verified: {', '.join(verified) or 'none'})")
     trainer = allin_core.Trainer(args.menu_mode, args.alpha, args.gamma, key_format=args.key_format)
     # Load the abstraction FIRST, so a bad tables dir fails before any DB exists.
     print(f"Loading abstraction from {args.abstractions_dir} ...", flush=True)
@@ -158,6 +205,8 @@ def main():
             ap.error(f'not found: {db_path}')
         if _is_served_blueprint(db_path):
             ap.error('refusing to train into a served blueprint (blueprint_final*); copy it first')
+        stored = _read_abstraction_stamp(db_path)
+        check_resume(stored[0], stored[1], abs_meta, 'train_rust')
         start = trainer.resume(db_path, mode)
         print(f"Resumed {args.resume}: {trainer.num_info_sets:,} info sets, iteration {start:,}")
     else:
@@ -165,6 +214,8 @@ def main():
         tag = '' if args.menu_mode == 'control' else f"_{args.menu_mode.replace('_', '')}"
         if args.key_format != 'v2':
             tag += f"_{args.key_format}"
+        if 'abstraction' in abs_meta:
+            tag += f"_{abs_meta['abstraction']}"
         # Timestamp + random suffix: two runs started in the same second must
         # never share (and corrupt) one DB.
         name = (f"{prefix}{tag}_rs_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -174,6 +225,7 @@ def main():
             ap.error(f'refusing to overwrite {db_path}')
         print(f"New run: {db_path}")
     trainer.stamp_mode(db_path, mode)
+    _write_abstraction_stamp(db_path, abs_meta)
     print(f"menu={args.menu_mode} key_format={args.key_format} mode={mode} workers={args.workers} merge_every={args.merge_every} "
           f"alpha={args.alpha} gamma={args.gamma} seed={seed}")
 

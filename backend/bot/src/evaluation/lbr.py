@@ -80,7 +80,9 @@ class LBREvaluator:
                                   voluntary_allin=False)
         else:
             self.game = PokerGame()
-        self.cards = CardAbstraction()
+        # Bucket the bot with the abstraction its blueprint was trained on.
+        from ..abstractions.abstraction_set import resolve_abstraction_dir
+        self.cards = CardAbstraction(resolve_abstraction_dir(blueprint_db, 'LBR'))
         self.evaluator = HandEvaluator()
         self.rng = random.Random(seed)
         self._base_seed = seed

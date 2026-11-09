@@ -36,6 +36,7 @@ from src.abstractions.postflop_features import (   # noqa: E402
     DECK, STREET_BOARD, _CARD_IDX, _ABSTRACTIONS_DIR,
     board_winrates, assign, load_centroids, encode_situation, centroid_hash)
 from src.abstractions.canonical import canonical_key   # noqa: E402
+from src.abstractions.abstraction_set import abstraction_dir, read_manifest   # noqa: E402
 
 
 def _canonical_boards(nboard):
@@ -100,18 +101,22 @@ def _process_board(street, board, centroids, bins, flop_runouts):
         yield sid, assign(hist, centroids)
 
 
-def _save(street, ids, buckets):
-    os.makedirs(_ABSTRACTIONS_DIR, exist_ok=True)
+def _save(street, ids, buckets, adir=_ABSTRACTIONS_DIR, flop_runouts=None):
+    os.makedirs(adir, exist_ok=True)
     order = np.argsort(ids)
-    out = os.path.join(_ABSTRACTIONS_DIR, f'postflop_table_{street}.npz')
+    out = os.path.join(adir, f'postflop_table_{street}.npz')
     # Stamp the table with the centroids it was baked from (+ K, bins) so a load
-    # can detect a stale table after centroids are regenerated (C2/M3).
-    centroids, bins = load_centroids(street)
+    # can detect a stale table after centroids are regenerated (C2/M3), and the
+    # flop table with its runout count, checked against the abstraction manifest.
+    centroids, bins = load_centroids(street, adir)
+    extra = {}
+    if street == 'flop':
+        extra['flop_runouts'] = np.array(int(flop_runouts))
     np.savez(out, ids=np.asarray(ids, np.int64)[order],
              buckets=np.asarray(buckets, np.uint8)[order],
              centroid_hash=np.array(centroid_hash(centroids, bins)),
              n_buckets=np.array(len(centroids)),
-             bins=np.array(int(bins)))
+             bins=np.array(int(bins)), **extra)
     return out
 
 
@@ -120,15 +125,28 @@ def main():
     p.add_argument('--street', choices=['flop', 'turn', 'river'], required=True)
     p.add_argument('--save-every', type=int, default=500, help="Checkpoint every N boards.")
     p.add_argument('--limit-boards', type=int, default=0, help="Smoke: N boards, no save.")
-    p.add_argument('--flop-runouts', type=int, default=200,
-                   help="Sampled turn+river runouts per flop board (0 = enumerate all 1176).")
+    p.add_argument('--flop-runouts', type=int, default=None,
+                   help="Sampled turn+river runouts per flop board (0 = enumerate all 1176). "
+                        "Default: the abstraction manifest's value (200 for the root); a "
+                        "different value is refused -- edit the manifest instead.")
+    p.add_argument('--abstraction', default=None,
+                   help="Named abstraction to bake into (analysis/abstractions/<name>/); "
+                        "default: the root (v2) abstraction.")
     p.add_argument('--seed', type=int, default=42,
                    help="(unused) the flop runout sample is now seeded deterministically "
                         "per board (#8); kept for CLI back-compat.")
     args = p.parse_args()
 
-    centroids, bins = load_centroids(args.street)
-    print(f"Baking {args.street}: K={len(centroids)} buckets, bins={bins}")
+    adir = abstraction_dir(args.abstraction)
+    manifest = read_manifest(adir)
+    if args.flop_runouts is None:
+        args.flop_runouts = manifest['flop_runouts']
+    elif args.flop_runouts != manifest['flop_runouts']:
+        p.error(f"--flop-runouts {args.flop_runouts} != the manifest's "
+                f"{manifest['flop_runouts']} in {adir}; edit its abstraction.json")
+    centroids, bins = load_centroids(args.street, adir)
+    print(f"Baking {args.street} into {adir}: K={len(centroids)} buckets, bins={bins}"
+          + (f", flop_runouts={args.flop_runouts}" if args.street == 'flop' else ''))
     boards = _canonical_boards(STREET_BOARD[args.street])
     print(f"canonical {args.street} boards: {len(boards)}")
 
@@ -150,14 +168,15 @@ def main():
             print(f"  board {n}/{len(boards)} | {len(ids)} sits | "
                   f"{el/60:.1f}m elapsed | ETA {eta:.0f}m", flush=True)
             if not args.limit_boards:
-                _save(args.street, ids, buckets)
+                _save(args.street, ids, buckets, adir, args.flop_runouts)
 
     print(f"\n{len(ids)} canonical situations in {(time.time()-t0)/60:.1f}m")
     print("bucket distribution:", (counts / max(1, counts.sum())).round(3).tolist())
     if args.limit_boards:
         print("(--limit-boards: smoke run, not saved)")
     else:
-        print(f"saved -> {os.path.relpath(_save(args.street, ids, buckets))}  ({len(ids)} entries)")
+        out = _save(args.street, ids, buckets, adir, args.flop_runouts)
+        print(f"saved -> {os.path.relpath(out)}  ({len(ids)} entries)")
 
 
 if __name__ == '__main__':
