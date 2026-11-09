@@ -307,6 +307,60 @@ python scripts/check_abstraction.py --abstraction v3
   re-seeding and final labels, and that a partial checkpoint is refused in
   Python and Rust.
 
+### V3.4 — done 2026-11-10
+
+Both arms ran with `train_rust.py --iterations 150000000 --workers 12
+--merge-every 2000 --alpha 1.5 --gamma 1.0 --menu-mode capped_pj --key-format spr5
+--snapshot-every 10000000 --river-cache-boards 140000 --seed 20261110`, arm C adding
+`--abstraction v3`. `check_abstraction.py --abstraction v3` printed `OK` first.
+
+| Arm | DB (`analysis/blueprints_rs/`) | Wall time | Info sets |
+|---|---|---|---|
+| A — spr5 + cap jam, v2 buckets | `blueprint_par_cappedpj_spr5_rs_20261110_004432_c58d21.db` | 52m39s (~47k it/s) | 416,453 |
+| C — all four changes | `blueprint_par_cappedpj_spr5_v3_rs_20261110_013712_8d0598.db` | 53m27s (~47k it/s) | 443,759 |
+
+Snapshots every 10M are in each DB's `_snaps/` dir. For scale, the SPR run had
+404,066 info sets at 150M. The extra keys are the cap-jam nodes, plus the 20 river
+buckets in C.
+
+**Strategy shape (gate): clean at every checkpoint in both arms.** No "never fold"
+collapse; BB folds 94% facing a 5BB open at 150M. The weak-hand open fold drifts
+down with iterations, the same loosening the 100M and SPR runs showed:
+
+| | 10M | 50M | 100M | 150M |
+|---|---|---|---|---|
+| A | 72% | 63% | 55% | 50% |
+| C | 74% | 61% | 54% | 54% |
+| SPR run (no jam) | — | — | 52% | 46% |
+
+So V3.5 picks the ship snapshot by evaluation, not by iteration count.
+
+**The cap jam is used.** A visit-weighted probe of every preflop node facing a
+4-bet, and facing the 5-bet jam (scratchpad `v34_capjam_probe.py`; V3.5 moves the
+full BUG-027 replay into `scripts/`):
+
+| Facing a 4-bet: fold / call / jam | SPR 100M (no jam) | A 150M | C 150M |
+|---|---|---|---|
+| All hands | 40 / 60 / — | 55 / 26 / 18.5 | 54.5 / 27 / 18.5 |
+| AA | 2 / 98 / — | 1 / 29 / 70 | 1 / 29 / 70 |
+| KK | 3 / 97 / — | 2 / 15 / 83 | 2 / 15 / 83 |
+| AKo | 4 / 96 / — | 4 / 7 / 90 | 4 / 7 / 90 |
+| A5s | 17 / 83 / — | 27 / 39 / 34 | 26 / 40 / 35 |
+| J9s | 18 / 82 / — | 27 / 54 / 19 | 28 / 53 / 19 |
+| J9o | 28 / 72 / — | 53 / 39 / 8.5 | 54 / 37 / 9 |
+| 72o | 77 / 23 / — | 87.5 / 7.5 / 5 | 87 / 8 / 5 |
+
+- Facing the jam, premiums call 96–99%. J9s calls 54%, J9o 34%, 72o 13%
+  (overall 60% fold).
+- AA keeps a ~29% flat; the rest of the top range mostly jams.
+- A and C are almost identical preflop. That is expected: the card changes are
+  postflop.
+- The numbers barely move from 50M to 150M (AA jam 76 → 70%, overall jam
+  24 → 18.5%).
+
+These are aggregates over every 4-bet line. Gate 1's per-line checks (the BUG-027
+line, the flop lead-shove range, J9's call EV) are V3.5's replay.
+
 ## Steps
 
 | Step | Work | Wall time | Gate |
