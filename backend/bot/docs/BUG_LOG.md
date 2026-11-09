@@ -100,7 +100,34 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 |---|---|
 | **Date** | 2026-06-22 |
 | **Area** | Abstraction (`cfr/keys.make_info_set_key` postflop key + equity-vs-uniform postflop buckets) |
-| **Severity** | Medium (real EV leak in big pots) · **Status** | Open — abstraction limit; fix = SPR buckets (ROADMAP item 8) |
+| **Severity** | Medium (real EV leak in big pots) · **Status** | Open — root cause re-diagnosed 2026-11-09 (see Update): missing preflop 5-bet jam; fix planned in v3 (`docs/V3_BLUEPRINT_PLAN.md`) |
+
+> **Update 2026-11-09 — the root cause below is wrong; SPR buckets do NOT fix this.** Three
+> checks on branch rust-core:
+> - **No code bug.** The live bot, the Python trainer, the Rust trainer and an exhaustive
+>   recompute all give bucket 25. On Q♠9♣3♣, bucket 25 is a clean second-pair bucket (A9–98,
+>   JJ/TT, Q2), below weak top pair (26), AQ/KK/AA (27), two pair (28) and sets (29).
+> - **Not under-training.** The node is visited at the 95th percentile of flop keys, the
+>   call has been stable at 0.97–0.99 from 10M to 200M iterations, and fold regret is ~0.
+> - **The call is correct inside the trained game.** J9 has 63–66% equity against the
+>   blueprint villain's lead-shove range, so calling gains about +100 chips over folding.
+>   That range is 51–57% no-pair hands and 5–8% top pair; AA/KK/QQ/AQ mostly check.
+> - **Why that range is so wide: the trained preflop tree has no 5-bet.** The cap is
+>   open → 3-bet → 4-bet, and facing a 4-bet the only legal actions are `['fold', 'call']`
+>   in both menus. So 4-bets carry bluffs (J9s), the 3-bettor calls 4-bets with JTo 84%,
+>   KTo 85% and AA 98%, and 4-bet-pot flops start with wide, weak ranges.
+> - **Against a realistic human range the call loses.** Against Qx, sets and club draws, J9
+>   has ~20% equity and calling loses ~74 chips.
+> - **SPR doesn't change the key.** Under the capped menu, a flop lead becomes all-in only at
+>   SPR ≤ 2, so v2's `_a` key was already a low-SPR key. The spr5 blueprint's `r0_a` key
+>   still calls 98–99%.
+> - **Side findings.** v2's flop keys pool all SPRs, so the opponent model reads a ~6% shove
+>   frequency where the spr5 keys give ~25%. The flop table is baked from only 200 of 1,176
+>   runouts, which puts ~20% of hands in a different bucket than an exhaustive bake would.
+>
+> **Fix:** add a jam-or-fold option at the preflop raise cap, plus SPR keys and an exhaustive
+> flop bake (see the v3 plan). Scripts and outputs are in that session's scratchpad
+> (`bug027/{range_ev,buckets,convergence}`).
 
 **Summary.** In a 100BB **4-bet pot**, the bot held 9♥J♥ on a Q♠9♣3♣ flop (2nd pair) and **called a 75BB all-in 98%** (blueprint `call 98% / fold 2%`), stacking off ~75BB with ~15-20% equity. Vivid instance of the postflop key being blind to pot history / SPR.
 

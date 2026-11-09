@@ -244,3 +244,5 @@ publish `assets-v3`, Docker/CI, live A/B, cutover.
 2. Touch served Python code on this branch behind the `key_format` switch (no
    behaviour change for v2 blueprints)?
 3. Arm B deferred until Arm A is scored?
+
+**Next:** [V3_BLUEPRINT_PLAN.md](V3_BLUEPRINT_PLAN.md). The BUG-027 investigation (2026-11-09) found that the root cause is the missing preflop 5-bet jam, not SPR; v3 combines SPR with a cap jam, an exhaustive flop bake and river K=20.
