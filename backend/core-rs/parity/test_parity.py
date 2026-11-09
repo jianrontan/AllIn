@@ -88,6 +88,28 @@ def test_buckets():
         assert bad.size == 0, f"{street}: {bad.size}/{len(got)} bucket mismatches, rows {bad[:5]}"
 
 
+def test_buckets_v3():
+    """A named abstraction (v3: exhaustive flop table, K=20 river)."""
+    core = need('buckets_v3', 'buckets_v3.npz')
+    import os
+    from conftest import BOT
+    d = np.load(fixture_path('buckets_v3.npz'))
+    adir = os.path.join(BOT, 'analysis', 'abstractions', 'v3')
+    import sys
+    sys.path.insert(0, BOT)
+    from src.abstractions.abstraction_set import abstraction_id
+    assert abstraction_id(adir) == str(d['abstraction_id']), \
+        "v3 abstraction changed since the fixture was exported: re-export buckets_v3"
+    b = core.Buckets(adir)
+    assert [b.n_buckets(s) for s in range(3)] == d['n_buckets'].tolist()
+    for street in ('flop', 'turn', 'river'):
+        cards = d[f'{street}_cards']
+        assert np.array_equal(b.situation_ids(cards), d[f'{street}_sid']), f"{street} situation ids"
+        got = np.asarray(b.bucket_batch(cards))
+        bad = np.flatnonzero(got != d[f'{street}_bucket'])
+        assert bad.size == 0, f"{street}: {bad.size}/{len(got)} bucket mismatches, rows {bad[:5]}"
+
+
 # ----------------------------------------------------------------------------
 # keys -- contract: make_info_set_key(street, position, preflop_bucket, strength|None,
 #                   pattern) -> str ;  action_char(action) -> str

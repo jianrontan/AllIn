@@ -267,6 +267,46 @@ v3`, 400k iterations on 4 workers:
 
 The full pytest suite passes (523).
 
+**Rebuilding the v3 tables** (git-ignored) on a fresh clone or another machine,
+from `backend/bot/` with the root tables in place:
+
+```bash
+cp -L analysis/abstractions/postflop_table_turn.npz analysis/abstractions/v3/
+python scripts/bake_postflop_table.py --abstraction v3 --street flop
+python scripts/check_abstraction.py --abstraction v3
+```
+
+- The turn table is a plain copy because v3 keeps the root's turn centroids; its
+  stamp checks against them. A turn re-bake takes hours.
+- The flop bake takes ~33 min on one core.
+- `check_abstraction.py` takes under a minute and must print `OK`.
+- `train_on_cloud.sh` only builds the root abstraction. V3.4 trains on this
+  machine; extend the script before training a named abstraction in the cloud.
+
+**Review fixes (2026-11-09).**
+- **k-means.** `kmeans_emd` now re-seeds a cluster that empties during the fit,
+  on the point worst served by its own centroid (`_reseed`). Before, the cluster
+  was left in place, empty.
+  - The returned labels now come from a final assignment against the returned
+    centroids. Before, they came from the last pass, which ran against the
+    previous centroids, so the empty-bucket guard could pass a dead bucket.
+  - Re-running the v3 river fit reproduces the committed centroids byte for
+    byte.
+- **Incomplete bakes.** The bake's periodic checkpoints are stamped `complete=0`,
+  and the final save `complete=1`. Python's `check_table_stamp` and Rust's table
+  loader refuse `complete=0`. Tables baked before the field existed count as
+  complete. Each save also writes to `postflop_table_<street>.partial.npz` and
+  renames it, so a crash mid-write can't leave a truncated table.
+- **Parity.** New component `buckets_v3`: 20k flop, 20k turn and 2.4k river
+  situations under v3, checked against Rust's `Buckets(v3)` (K = 30/24/20). The
+  fixture records the abstraction id, so a re-baked dir shows up as stale.
+  Strict parity passes 43/43, and the Python shim passes too.
+- **Gate script.** `scripts/check_abstraction.py` (above) replaces the scratchpad
+  checks.
+- **Tests.** The distinct-starts test now forces a repeat. New tests cover
+  re-seeding and final labels, and that a partial checkpoint is refused in
+  Python and Rust.
+
 ## Steps
 
 | Step | Work | Wall time | Gate |

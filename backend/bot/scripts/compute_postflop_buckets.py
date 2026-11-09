@@ -73,7 +73,8 @@ def _distinct_starts(feats, idx, rng):
             out.append(i)
     if len(out) == len(idx):
         return list(idx)
-    rest = [i for i in range(len(feats)) if i not in set(idx)]
+    chosen = set(idx)
+    rest = [i for i in range(len(feats)) if i not in chosen]
     rng.shuffle(rest)
     for i in rest:
         if len(out) == len(idx):
@@ -87,26 +88,54 @@ def _distinct_starts(feats, idx, rng):
     return out
 
 
+def _assign_all(feats, centroids):
+    """Nearest centroid (EMD) of every feature, and the distance to it."""
+    labels = np.empty(len(feats), dtype=int)
+    dist = np.empty(len(feats))
+    for i, f in enumerate(feats):
+        d = [emd(f, c) for c in centroids]
+        labels[i] = int(np.argmin(d))
+        dist[i] = d[labels[i]]
+    return labels, dist
+
+
+def _reseed(feats, dist, centroids, taken):
+    """A new centre for an empty cluster: the point worst served by its own
+    centroid that isn't already a centre (or used by another re-seed this pass).
+    None if every point coincides with a centre."""
+    used = {c.tobytes() for c in centroids}
+    for i in np.argsort(-dist, kind='stable'):
+        if int(i) not in taken and feats[i].tobytes() not in used:
+            taken.add(int(i))
+            return feats[i].copy()
+    return None
+
+
 def kmeans_emd(feats, k, iters, rng):
+    feats = np.asarray(feats)
     n = len(feats)
     idx = _distinct_starts(feats, rng.sample(range(n), k), rng)
     centroids = [feats[i].copy() for i in idx]
-    labels = np.zeros(n, dtype=int)
     for _ in range(iters):
-        # assign
-        for i, f in enumerate(feats):
-            labels[i] = int(np.argmin([emd(f, c) for c in centroids]))
-        # update (mean histogram is a standard, cheap EMD-centroid approximation)
-        moved = 0.0
+        labels, dist = _assign_all(feats, centroids)
+        # update (mean histogram is a standard, cheap EMD-centroid approximation).
+        # A cluster that lost every member is re-seeded instead of left in place,
+        # where it would stay empty and become a bucket no hand can reach. Fits
+        # in which no cluster ever empties are unchanged by this.
+        moved, taken = 0.0, set()
         for c in range(k):
-            members = feats[labels == c] if isinstance(feats, np.ndarray) else \
-                np.array([feats[i] for i in range(n) if labels[i] == c])
-            if len(members):
-                new = members.mean(axis=0)
-                moved += emd(new, centroids[c])
-                centroids[c] = new
+            members = feats[labels == c]
+            new = members.mean(axis=0) if len(members) else \
+                _reseed(feats, dist, centroids, taken)
+            if new is None:
+                continue
+            moved += emd(new, centroids[c])
+            centroids[c] = new
         if moved < 1e-6:
             break
+    # Labels of the centroids actually returned: the loop's last assignment ran
+    # against the previous centroids, which differ if it stopped at `iters`.
+    labels, _ = _assign_all(feats, centroids)
     # order clusters by mean equity so bucket index is monotonic-ish
     bin_centers = (np.arange(len(centroids[0])) + 0.5) / len(centroids[0])
     order = np.argsort([float((c * bin_centers).sum()) for c in centroids])

@@ -232,6 +232,27 @@ def test_bake_save_stamps_runouts_and_verify_tables_reads_them(roots):
         PostflopV2(abstraction_dir=v3)._table('flop')
 
 
+def test_a_partial_bake_checkpoint_is_refused(roots):
+    """The bake checkpoints a partial table every --save-every boards; an
+    interrupted bake must not leave a table the loaders accept."""
+    _, v3 = roots
+    bake = _load_script('bake_postflop_table')
+    bake._save('turn', [3, 1, 2], [0, 1, 2], v3, 0)
+    bake._save('flop', [3, 1], [0, 1], v3, 0, complete=False)
+    assert not os.path.exists(os.path.join(v3, 'postflop_table_flop.partial.npz'))  # renamed
+    with pytest.raises(ValueError, match='partial checkpoint'):
+        A.verify_tables(v3)
+    from src.abstractions.postflop_v2 import PostflopV2
+    with pytest.raises(ValueError, match='partial checkpoint'):
+        PostflopV2(abstraction_dir=v3)._table('flop')
+    core = pytest.importorskip('allin_core')
+    with pytest.raises(ValueError, match='partial checkpoint'):
+        core.Buckets(v3).preload()
+    bake._save('flop', [3, 1, 2], [0, 1, 2], v3, 0)                # the final save
+    assert A.verify_tables(v3) == ['flop', 'turn']
+    core.Buckets(v3).preload()
+
+
 def test_named_abstractions_are_strict_about_tables(roots):
     root, v3 = roots
     from src.abstractions.postflop_v2 import PostflopV2
@@ -342,3 +363,30 @@ def test_kmeans_starts_are_distinct():
     rng, ref = random.Random(5), random.Random(5)
     assert m._distinct_starts(feats, [3, 9, 27], rng) == [3, 9, 27]
     assert rng.random() == ref.random()
+    # A start that does repeat: rows 0-3 are the same spike.
+    out = m._distinct_starts(spikes, [0, 1, 4], random.Random(0))
+    assert out[:2] == [0, 4] and len(out) == 3
+    assert len({spikes[i].tobytes() for i in out}) == 3
+
+
+def test_kmeans_reseeds_empty_clusters_and_returns_final_labels():
+    import random
+    m = _load_script('compute_postflop_buckets')
+    # An empty cluster is re-seeded on the point farthest from its centre that
+    # isn't a centre already.
+    feats = np.eye(4)[[0, 0, 1, 3]]
+    cents = [feats[0], feats[2]]
+    dist = np.array([0.0, 0.0, 0.5, 0.9])
+    got = m._reseed(feats, dist, cents, set())
+    assert np.array_equal(got, feats[3])
+    assert m._reseed(feats, dist, list(feats), set()) is None   # every point is a centre
+    # Any seed, k = the number of distinct points: no bucket is left empty.
+    spikes = np.eye(6)[[0] * 40 + [1] * 3 + [2] * 3 + [3] + [4] + [5] * 20]
+    for seed in range(20):
+        _, labels = m.kmeans_emd(spikes, 6, 25, random.Random(seed))
+        assert sorted(set(labels.tolist())) == list(range(6)), seed
+    # Labels describe the returned centroids even when the fit stops at `iters`.
+    feats = np.random.default_rng(2).dirichlet(np.ones(8), 300)
+    cents, labels = m.kmeans_emd(feats, 5, 1, random.Random(1))
+    want, _ = m._assign_all(feats, list(cents))
+    assert np.array_equal(labels, want)

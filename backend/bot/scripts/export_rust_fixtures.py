@@ -42,7 +42,8 @@ from src.evaluation.showdown_kernel import (  # noqa: E402
 
 COMPONENTS = ('eval_rank7', 'buckets', 'keys', 'engine',
               'river_showdown', 'river_tree', 'river_cfr', 'river_gadget',
-              'mccfr', 'mccfr_merge', 'keys_spr', 'mccfr_spr', 'engine_pj', 'mccfr_pj')
+              'mccfr', 'mccfr_merge', 'keys_spr', 'mccfr_spr', 'engine_pj', 'mccfr_pj',
+              'buckets_v3')
 DEFAULT_OUT = os.path.normpath(os.path.join(BOT, '..', 'core-rs', 'fixtures'))
 
 
@@ -108,8 +109,6 @@ def export_eval_rank7(out, rng, quick):
 def export_buckets(out, rng, quick):
     from itertools import combinations
     from src.abstractions.card_abstractions import CardAbstraction, FINE_TO_COARSE
-    from src.abstractions.canonical import canonical_key
-    from src.abstractions.postflop_features import encode_situation
     ca = CardAbstraction()
     pv2 = ca.postflop
 
@@ -125,6 +124,15 @@ def export_buckets(out, rng, quick):
 
     res = {'pf_cards': pf_cards, 'pf_fine': pf_fine, 'pf_coarse': pf_coarse}
     counts = {'preflop': len(combos)}
+    _postflop_bucket_rows(pv2, rng, quick, res, counts)
+    np.savez_compressed(os.path.join(out, 'buckets.npz'), **res)
+    return counts
+
+
+def _postflop_bucket_rows(pv2, rng, quick, res, counts):
+    """Random flop/turn/river situations with their canonical ids and buckets."""
+    from src.abstractions.canonical import canonical_key
+    from src.abstractions.postflop_features import encode_situation
     # flop/turn are baked-table lookups (cheap); river is runtime equity -> fewer,
     # and several holes per board so the per-board cache path is exercised.
     plan = {'flop': (3, 2_000 if quick else 20_000, 1),
@@ -144,7 +152,22 @@ def export_buckets(out, rng, quick):
         res[f'{street}_bucket'] = np.array(buckets, dtype=np.int32)
         res[f'{street}_sid'] = np.array(sids, dtype=np.int64)
         counts[street] = len(rows)
-    np.savez_compressed(os.path.join(out, 'buckets.npz'), **res)
+
+
+def export_buckets_v3(out, rng, quick):
+    """The named v3 abstraction (exhaustive flop table, K=20 river): Rust must
+    bucket it exactly like Python, at a K other than the root's. The fixture
+    records the abstraction id, so a re-baked dir is caught as stale."""
+    from src.abstractions.abstraction_set import abstraction_dir, abstraction_id, verify_tables
+    from src.abstractions.postflop_v2 import PostflopV2
+    adir = abstraction_dir('v3')
+    verify_tables(adir)
+    pv2 = PostflopV2(abstraction_dir=adir)
+    res = {'abstraction_id': np.array(abstraction_id(adir)),
+           'n_buckets': np.array([len(pv2._centroid(s)[0]) for s in ('flop', 'turn', 'river')])}
+    counts = {}
+    _postflop_bucket_rows(pv2, rng, quick, res, counts)
+    np.savez_compressed(os.path.join(out, 'buckets_v3.npz'), **res)
     return counts
 
 

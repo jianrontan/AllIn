@@ -20,7 +20,7 @@ from src.evaluation.showdown_kernel import (  # noqa: E402
 __version__ = 'python-reference'
 COMPONENTS = ('eval_rank7', 'buckets', 'keys', 'engine',
               'river_showdown', 'river_tree', 'river_cfr', 'river_gadget',
-              'mccfr', 'mccfr_merge', 'keys_spr', 'mccfr_spr')
+              'mccfr', 'mccfr_merge', 'keys_spr', 'mccfr_spr', 'buckets_v3')
 
 
 def ported():
@@ -57,8 +57,18 @@ def preflop_buckets(cards):
 
 
 class Buckets:
-    def __init__(self, abstractions_dir):
-        self.dir = abstractions_dir          # the Python path resolves its own dir
+    def __init__(self, abstractions_dir, river_cache_boards=None):
+        from src.abstractions.abstraction_set import is_root
+        from src.abstractions.postflop_v2 import PostflopV2
+        self.dir = abstractions_dir
+        # The root shares the cached CardAbstraction; a named abstraction gets its own.
+        self._pv2 = None if is_root(abstractions_dir) else PostflopV2(abstraction_dir=abstractions_dir)
+
+    def _postflop(self):
+        return self._pv2 if self._pv2 is not None else _ca().postflop
+
+    def n_buckets(self, street):
+        return len(self._postflop()._centroid(('flop', 'turn', 'river')[street])[0])
 
     def situation_ids(self, cards):
         from src.abstractions.canonical import canonical_key
@@ -67,7 +77,7 @@ class Buckets:
                          for r in cards], dtype=np.int64)
 
     def bucket_batch(self, cards):
-        pv2 = _ca().postflop
+        pv2 = self._postflop()
         return np.array([pv2.bucket(_cards(r[:2]), _cards(r[2:])) for r in cards], dtype=np.int32)
 
 

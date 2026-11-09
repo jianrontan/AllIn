@@ -179,6 +179,12 @@ def check_table_stamp(street, d, centroids, bins, manifest, allow_legacy=True):
         raise ValueError(
             f"postflop_table_{street}.npz has no centroid stamp; a named abstraction "
             f"needs stamped tables -- re-bake it with scripts/bake_postflop_table.py")
+    # The bake checkpoints a partial table as it goes (complete=0) and stamps the
+    # final save complete=1. Tables baked before the field existed are complete.
+    if 'complete' in files and not int(d['complete']):
+        raise ValueError(
+            f"postflop_table_{street}.npz is a partial checkpoint from an interrupted "
+            f"bake; re-run python scripts/bake_postflop_table.py --street {street}")
     want = centroid_hash(centroids, bins)
     got = str(d['centroid_hash'])
     if got != want:

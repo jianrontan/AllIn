@@ -36,6 +36,7 @@ pub const PORTED: &[&str] = &[
     "mccfr_spr",
     "engine_pj",
     "mccfr_pj",
+    "buckets_v3",
 ];
 
 /// Crate version, surfaced to Python for diagnostics.

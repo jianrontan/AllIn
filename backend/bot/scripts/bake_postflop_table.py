@@ -101,22 +101,28 @@ def _process_board(street, board, centroids, bins, flop_runouts):
         yield sid, assign(hist, centroids)
 
 
-def _save(street, ids, buckets, adir=_ABSTRACTIONS_DIR, flop_runouts=None):
+def _save(street, ids, buckets, adir=_ABSTRACTIONS_DIR, flop_runouts=None, complete=True):
     os.makedirs(adir, exist_ok=True)
     order = np.argsort(ids)
     out = os.path.join(adir, f'postflop_table_{street}.npz')
     # Stamp the table with the centroids it was baked from (+ K, bins) so a load
     # can detect a stale table after centroids are regenerated (C2/M3), and the
     # flop table with its runout count, checked against the abstraction manifest.
+    # `complete` is 0 on the periodic checkpoints, so the loaders refuse a table
+    # left behind by an interrupted bake.
     centroids, bins = load_centroids(street, adir)
     extra = {}
     if street == 'flop':
         extra['flop_runouts'] = np.array(int(flop_runouts))
-    np.savez(out, ids=np.asarray(ids, np.int64)[order],
+    # Write beside the table and rename, so a crash mid-write never leaves a
+    # truncated table at the real path.
+    tmp = os.path.join(adir, f'postflop_table_{street}.partial.npz')
+    np.savez(tmp, ids=np.asarray(ids, np.int64)[order],
              buckets=np.asarray(buckets, np.uint8)[order],
              centroid_hash=np.array(centroid_hash(centroids, bins)),
              n_buckets=np.array(len(centroids)),
-             bins=np.array(int(bins)), **extra)
+             bins=np.array(int(bins)), complete=np.array(int(complete)), **extra)
+    os.replace(tmp, out)
     return out
 
 
@@ -169,7 +175,7 @@ def main():
             print(f"  board {n}/{len(boards)} | {len(ids)} sits | "
                   f"{el/60:.1f}m elapsed | ETA {eta:.0f}m", flush=True)
             if not args.limit_boards:
-                _save(args.street, ids, buckets, adir, args.flop_runouts)
+                _save(args.street, ids, buckets, adir, args.flop_runouts, complete=False)
 
     print(f"\n{len(ids)} canonical situations in {(time.time()-t0)/60:.1f}m")
     print("bucket distribution:", (counts / max(1, counts.sum())).round(3).tolist())

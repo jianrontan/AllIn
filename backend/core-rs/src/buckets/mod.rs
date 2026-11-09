@@ -246,6 +246,14 @@ impl Buckets {
         // _verify_stamp
         let c = &self.centroids[street];
         if z.has("centroid_hash") {
+            // A partial checkpoint from an interrupted bake (complete=0); tables
+            // baked before the field existed are complete.
+            if z.has("complete") && z.read("complete")?.scalar_i64()? == 0 {
+                return Err(format!(
+                    "postflop_table_{name}.npz is a partial checkpoint from an interrupted \
+                     bake; re-run python scripts/bake_postflop_table.py --street {name}"
+                ));
+            }
             let got = z.read("centroid_hash")?.scalar_str()?;
             let want = c.hash();
             if got != want {
