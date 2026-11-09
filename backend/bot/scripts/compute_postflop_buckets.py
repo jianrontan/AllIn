@@ -59,9 +59,37 @@ from src.abstractions.postflop_features import (   # noqa: E402
 # EMD k-means (1-D histograms)
 # ----------------------------------------------------------------------
 
+def _distinct_starts(feats, idx, rng):
+    """Replace starting points that repeat an earlier one. River features are
+    spikes on `bins` points, so a random start often picks the same histogram
+    twice; the copy then never wins a hand (ties go to the lower index) and its
+    bucket stays empty. A start with no repeats is returned as is, without
+    touching `rng`, so such fits are unchanged."""
+    seen, out = set(), []
+    for i in idx:
+        key = feats[i].tobytes()
+        if key not in seen:
+            seen.add(key)
+            out.append(i)
+    if len(out) == len(idx):
+        return list(idx)
+    rest = [i for i in range(len(feats)) if i not in set(idx)]
+    rng.shuffle(rest)
+    for i in rest:
+        if len(out) == len(idx):
+            break
+        key = feats[i].tobytes()
+        if key not in seen:
+            seen.add(key)
+            out.append(i)
+    if len(out) < len(idx):
+        raise ValueError(f"only {len(out)} distinct features for K={len(idx)}")
+    return out
+
+
 def kmeans_emd(feats, k, iters, rng):
     n = len(feats)
-    idx = rng.sample(range(n), k)
+    idx = _distinct_starts(feats, rng.sample(range(n), k), rng)
     centroids = [feats[i].copy() for i in idx]
     labels = np.zeros(n, dtype=int)
     for _ in range(iters):
@@ -146,6 +174,9 @@ def main():
         bar = '#' * int(40 * counts[b] / max(1, counts.sum()))
         print(f"  {b:>4} | {counts[b] / counts.sum():5.1%} | {mean_eq:6.3f} "
               f"| spread={spread:5.3f} {bar}")
+    if (counts == 0).any():
+        raise SystemExit(f"empty buckets {np.flatnonzero(counts == 0).tolist()}: no hand "
+                         "would ever be assigned to them; not saving")
 
     from src.abstractions.abstraction_set import abstraction_dir
     out_dir = abstraction_dir(args.abstraction)

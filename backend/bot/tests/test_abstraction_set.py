@@ -323,3 +323,22 @@ def test_train_rust_stamp_round_trip(tmp_path):
     assert tr._read_abstraction_stamp(path) == (None, None)
     tr._write_abstraction_stamp(path, {'abstraction': 'v3', 'abstraction_id': 'a' * 40})
     assert tr._read_abstraction_stamp(path) == ('v3', 'a' * 40)
+
+
+def test_kmeans_starts_are_distinct():
+    """River features are spikes, so a random start can repeat a point; the copy
+    then never wins a hand and its bucket stays empty (V3.3's first K=20 fit)."""
+    import random
+    m = _load_script('compute_postflop_buckets')
+    spikes = np.eye(5)[[0, 0, 0, 0, 1, 2, 3, 4] * 25]          # 5 distinct, many repeats
+    rng = random.Random(0)
+    _, labels = m.kmeans_emd(spikes, 5, 10, rng)
+    assert sorted(set(labels.tolist())) == [0, 1, 2, 3, 4]
+    with pytest.raises(ValueError):
+        m.kmeans_emd(spikes, 6, 10, random.Random(0))
+    # A start without repeats is kept as is and draws nothing from the RNG, so
+    # fits that never hit a repeat (flop/turn) are unchanged.
+    feats = np.random.default_rng(1).random((50, 4))
+    rng, ref = random.Random(5), random.Random(5)
+    assert m._distinct_starts(feats, [3, 9, 27], rng) == [3, 9, 27]
+    assert rng.random() == ref.random()

@@ -37,6 +37,9 @@ backend/bot/analysis/opponent_models/
 backend/bot/analysis/abstractions/postflop_table_*.npz
 # .npy mmap extracts (ALLIN_MMAP_POSTFLOP=1): derived from the .npz at runtime, mmap-able.
 backend/bot/analysis/abstractions/postflop_table_*.npy
+# The same for named abstractions (analysis/abstractions/<name>/, e.g. v3/).
+backend/bot/analysis/abstractions/*/postflop_table_*.npz
+backend/bot/analysis/abstractions/*/postflop_table_*.npy
 
 # Seed-compare baseline snapshot: a binary tied to the exact code+abstraction, so
 # it goes stale on any abstraction change (sizing/bake/evaluator) and a check

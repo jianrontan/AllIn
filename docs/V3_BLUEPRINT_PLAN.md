@@ -214,6 +214,59 @@ Strict parity passes 42/42.
 
 **Tests:** `tests/test_preflop_cap_jam.py`, 47 tests.
 
+### V3.2–V3.3 — done 2026-11-09
+
+The v3 abstraction lives in `backend/bot/analysis/abstractions/v3/`,
+`abstraction_id` `676871128fe5d97fe1acd32df732e273fb9ebf34`. Its contents:
+- `abstraction.json`: `{"flop_runouts": 0}`.
+- `postflop_centroids_flop.npz`, `postflop_centroids_turn.npz`: copies of the root
+  (v2) centroids, K = 30 / 24.
+- `postflop_centroids_river.npz`: new, K = 20.
+- `postflop_table_flop.npz`: re-baked over all 1,176 runouts.
+- `postflop_table_turn.npz`: copied from the root (already exhaustive).
+
+The centroids and manifest are committed. The tables are git-ignored like the
+root ones; `.gitignore` now covers `abstractions/*/postflop_table_*`.
+
+**V3.2: exhaustive flop bake.** `bake_postflop_table.py --abstraction v3 --street
+flop` took 33 min on one core, half the estimate.
+- The table has 1,286,792 entries, the same situations as v2, and its stamp says
+  `flop_runouts=0`. `verify_tables` accepts it.
+- Against v2's 200-runout table, 21.1% of situations change bucket. In
+  centroid-equity terms the mean move is 0.0115; 10.97% move more than 0.05, and
+  the largest move is 0.232. This matches the audit's estimate of ~20%.
+- An independent bucketing over all 1,176 runouts, on Q♠9♣3♣ plus 10 random
+  flops (12,936 hands), agrees with the table on every hand, both through the
+  Python lookup and through Rust's `Buckets(v3)`.
+
+**V3.3: river K = 20.** Ran `compute_postflop_buckets.py --abstraction v3
+--street river --buckets 20 --situations 10000 --opp-samples 0`.
+- **The first fit left bucket 16 empty.** River features are single spikes on
+  the 30 equity bins, so the random k-means start picked the same point twice.
+  The copy never wins a hand, because ties go to the lower index.
+  `kmeans_emd` now replaces repeated starting points (`_distinct_starts`). A
+  start with no repeats is untouched and draws nothing from the RNG, so flop and
+  turn fits are unchanged. The script also refuses to save a fit with an empty
+  bucket. Test: `test_kmeans_starts_are_distinct`.
+- All 20 buckets are occupied, holding 2–9% of hands each. The shares are lumpy
+  because 30 bins give at most 30 distinct river values; more bins would be a
+  separate change.
+- 18 of the 20 buckets sit inside one v2 bucket; buckets 5 and 10 straddle two.
+  The split is uneven: v2's buckets 8 and 9 (the strongest hands) split into four
+  and three buckets.
+- **Rust needs no change.** It reads K and bins from the centroid file and builds
+  its numerator → bucket lookup from them. On 20,000 random river spots, Python
+  and Rust agree on every bucket. No code anywhere assumes 10 river buckets.
+
+**Smoke.** `train_rust.py --menu-mode capped_pj --key-format spr5 --abstraction
+v3`, 400k iterations on 4 workers:
+- ~25k it/s and 396k info sets;
+- the DB is stamped `abstraction=v3` with the id above;
+- river keys use all 20 buckets, and 12,168 cap-jam keys appear;
+- the strategy-shape check is OK.
+
+The full pytest suite passes (523).
+
 ## Steps
 
 | Step | Work | Wall time | Gate |
