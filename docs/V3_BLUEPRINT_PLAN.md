@@ -148,6 +148,32 @@ Implemented in `backend/bot/src/abstractions/abstraction_set.py`
   (so also the river solver), the strategy API, and auto-resolution, which skips
   named-abstraction blueprints.
 
+**Review fixes (2026-11-09).**
+- **Named abstractions are strict.** A missing flop/turn table or an unstamped table
+  is an error in `PostflopV2` and `verify_tables`. Before, a missing table fell back
+  silently to 120-runout Monte Carlo bucketing, unlike the Rust trainer, which
+  refuses.
+- **One way to say "all runouts".** `flop_runouts` must be in [0, 1176), with 0
+  meaning all.
+- **`--flop-runouts` only binds flop bakes**, so turn and river bakes no longer
+  reject it.
+- **The training CLI's guards are tested end to end** through `train_rust.main()`.
+
+**Carried forward from the review:**
+- **V3.6: make the abstraction impossible to forget.** Abstraction safety is still
+  opt-in per reader: `CardAbstraction()` defaults to the root. The blueprint should
+  hand out its verified directory (e.g. `BlueprintDB.abstraction_dir`), and every
+  serving reader (`GameSession`, `game_adapter`, the river solver's
+  `_postflop_means`, the range tracker) should build its card abstraction from it.
+- **Phase 7: the opponent-model guard compares only bucket counts** (read from the
+  root). Models must record the `abstraction_id` they were fit on, and the guard
+  must compare it. `fit_opponent_models.py` must bucket with the target blueprint's
+  abstraction. Arm C keeps the flop/turn bucket counts but re-buckets ~20% of flop
+  hands, so a count check can't catch it.
+- **Known limit:** a root flop table baked exhaustively with the old CLI, before the
+  `flop_runouts` field existed, would pass as a 200-runout v2 table. It can't be told
+  apart from the file alone. Only matters if someone did that.
+
 **Rust.** No change was needed: `load_abstraction(dir)` already takes a directory,
 and its npz reader ignores the new `flop_runouts` member.
 

@@ -89,7 +89,8 @@ def test_name_round_trip(roots, tmp_path):
 
 
 @pytest.mark.parametrize('manifest', [{'flop_runouts': -1}, {'flop_runouts': True},
-                                      {'flop_runouts': '0'}, {'other': 1}, [0]])
+                                      {'flop_runouts': '0'}, {'other': 1}, [0],
+                                      {'flop_runouts': 1176}, {'flop_runouts': 5000}])
 def test_bad_manifests_are_refused(roots, manifest):
     _, v3 = roots
     with open(os.path.join(v3, A.MANIFEST), 'w') as f:
@@ -207,21 +208,64 @@ def test_table_stamp_checks_flop_runouts(roots):
     assert A.check_table_stamp('turn', dt, ct, bt, exhaustive) is True  # turn: no runouts
 
 
+def _load_script(name):
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(os.path.dirname(__file__), '..', 'scripts', f'{name}.py'))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def test_bake_save_stamps_runouts_and_verify_tables_reads_them(roots):
     _, v3 = roots
-    spec = importlib.util.spec_from_file_location(
-        'bake_postflop_table', os.path.join(os.path.dirname(__file__), '..', 'scripts',
-                                            'bake_postflop_table.py'))
-    bake = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(bake)
+    bake = _load_script('bake_postflop_table')
     bake._save('flop', [3, 1, 2], [0, 1, 2], v3, 0)
-    assert A.verify_tables(v3) == ['flop']
+    with pytest.raises(ValueError, match='missing postflop_table_turn'):
+        A.verify_tables(v3)                                      # named: turn required
+    bake._save('turn', [3, 1, 2], [0, 1, 2], v3, 0)
+    assert A.verify_tables(v3) == ['flop', 'turn']
     bake._save('flop', [3, 1, 2], [0, 1, 2], v3, 200)
     with pytest.raises(ValueError, match='flop_runouts'):
         A.verify_tables(v3)
     from src.abstractions.postflop_v2 import PostflopV2
     with pytest.raises(ValueError, match='flop_runouts'):
         PostflopV2(abstraction_dir=v3)._table('flop')
+
+
+def test_named_abstractions_are_strict_about_tables(roots):
+    root, v3 = roots
+    from src.abstractions.postflop_v2 import PostflopV2
+    # Missing flop/turn table: the root falls back lazily, a named abstraction refuses.
+    assert PostflopV2(abstraction_dir=root)._table('flop') is None
+    with pytest.raises(FileNotFoundError, match='missing'):
+        PostflopV2(abstraction_dir=v3)._table('flop')
+    assert PostflopV2(abstraction_dir=v3)._table('river') is None    # never baked
+    # Unstamped table: the root warns, a named abstraction refuses.
+    np.savez(os.path.join(v3, 'postflop_table_turn.npz'),
+             ids=np.array([1], np.int64), buckets=np.array([0], np.uint8))
+    with pytest.raises(ValueError, match='no centroid stamp'):
+        PostflopV2(abstraction_dir=v3)._table('turn')
+    shutil.copy(os.path.join(v3, 'postflop_table_turn.npz'),
+                os.path.join(root, 'postflop_table_turn.npz'))
+    with pytest.warns(UserWarning, match='no centroid stamp'):
+        assert PostflopV2(abstraction_dir=root)._table('turn') is not None
+    d, c, b = _table('turn', v3)
+    del d['centroid_hash']
+    with pytest.raises(ValueError, match='no centroid stamp'):
+        A.check_table_stamp('turn', d, c, b, A.read_manifest(v3), allow_legacy=False)
+
+
+def test_bake_runout_flag_only_binds_the_flop(roots, monkeypatch):
+    root, _ = roots
+    bake = _load_script('bake_postflop_table')
+    monkeypatch.setattr(bake, '_canonical_boards', lambda n: [])     # nothing to bake
+    monkeypatch.setattr(sys, 'argv', ['bake', '--street', 'turn', '--flop-runouts', '0',
+                                      '--limit-boards', '1'])
+    bake.main()                                                      # irrelevant: accepted
+    monkeypatch.setattr(sys, 'argv', ['bake', '--street', 'flop', '--flop-runouts', '0',
+                                      '--limit-boards', '1'])
+    with pytest.raises(SystemExit):
+        bake.main()                                                  # root manifest says 200
 
 
 # ---------------------------------------------------------------------- resume
@@ -247,12 +291,33 @@ def test_python_trainer_refuses_to_resume_a_named_abstraction(roots, tmp_path):
     db.close()
 
 
+def test_train_rust_stamps_and_refuses_cross_abstraction_resume(tmp_path, monkeypatch):
+    """End to end through train_rust.main(): a new run is stamped, the stamp survives
+    checkpoints, and resuming a blueprint stamped with another abstraction is refused
+    before any training."""
+    pytest.importorskip('allin_core')
+    for street in ('flop', 'turn'):
+        if not os.path.exists(os.path.join(REAL_ROOT, f'postflop_table_{street}.npz')):
+            pytest.skip('baked root tables not present')
+    tr = _load_script('train_rust')
+    out = str(tmp_path / 'out')
+    monkeypatch.setattr(sys, 'argv', ['train_rust', '--iterations', '2000', '--workers', '1',
+                                      '--checkpoint-every', '1000', '--out-dir', out,
+                                      '--seed', '1'])
+    tr.main()
+    (name,) = [f for f in os.listdir(out) if f.endswith('.db')]
+    path = os.path.join(out, name)
+    assert tr._read_abstraction_stamp(path) == (None, A.LEGACY_ABSTRACTION_ID)
+    tr._write_abstraction_stamp(path, {'abstraction': 'v3', 'abstraction_id': '0' * 40})
+    monkeypatch.setattr(sys, 'argv', ['train_rust', '--iterations', '1000', '--workers', '1',
+                                      '--out-dir', out, '--resume', name])
+    with pytest.raises(ValueError, match='resume abstraction mismatch'):
+        tr.main()
+
+
 def test_train_rust_stamp_round_trip(tmp_path):
     pytest.importorskip('allin_core')
-    spec = importlib.util.spec_from_file_location(
-        'train_rust', os.path.join(os.path.dirname(__file__), '..', 'scripts', 'train_rust.py'))
-    tr = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(tr)
+    tr = _load_script('train_rust')
     path = str(tmp_path / 'bp.db')
     BlueprintDB(path).close()
     assert tr._read_abstraction_stamp(path) == (None, None)

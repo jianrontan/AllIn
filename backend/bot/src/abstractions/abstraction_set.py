@@ -36,10 +36,14 @@ MANIFEST = 'abstraction.json'
 # Bake settings a manifest may set, with the legacy values the root was built with.
 # The v2 flop table was baked from 200 sampled turn+river runouts per board.
 MANIFEST_DEFAULTS = {'flop_runouts': 200}
+FLOP_RUNOUTS_ALL = 1176          # C(49, 2) turn+river runouts on a flop
 # abstraction_id(ROOT) for the v2 abstraction (30/24/10 centroids, 200-runout flop
 # bake). Unstamped blueprints were trained on exactly this, so they refuse to load
 # if the root ever stops hashing to it.
 LEGACY_ABSTRACTION_ID = '742b8dd454cbd7294f747a716db4aa36524ca1e7'
+
+# Streets whose baked table a named abstraction must ship (the river is never baked).
+REQUIRED_TABLES = ('flop', 'turn')
 
 _NAME_RE = re.compile(r'^[a-z0-9_]{1,32}$')
 _ID_RE = re.compile(r'^[0-9a-f]{40}$')
@@ -85,8 +89,10 @@ def read_manifest(adir):
     if unknown:
         raise ValueError(f"{path}: unknown manifest keys {sorted(unknown)}")
     fr = data.get('flop_runouts', m['flop_runouts'])
-    if type(fr) is not int or fr < 0:
-        raise ValueError(f"{path}: flop_runouts must be an int >= 0 (0 = all 1176), got {fr!r}")
+    if type(fr) is not int or not 0 <= fr < FLOP_RUNOUTS_ALL:
+        # >= 1176 would bake the same exhaustive table as 0 under a different id.
+        raise ValueError(f"{path}: flop_runouts must be an int in [0, {FLOP_RUNOUTS_ALL}) "
+                         f"(0 = all {FLOP_RUNOUTS_ALL}), got {fr!r}")
     m['flop_runouts'] = fr
     return m
 
@@ -124,23 +130,6 @@ def _read_stamp(blueprint_db):
     return (name or None), sid
 
 
-def check_stamp_matches(name, sid, adir, who):
-    """Raise unless a blueprint stamped (name, sid) -- both None for a legacy
-    blueprint -- was trained on the abstraction in `adir`."""
-    want_dir = os.path.realpath(abstraction_dir(name))
-    if os.path.realpath(adir) != want_dir:
-        raise ValueError(
-            f"{who}: the blueprint was trained on abstraction "
-            f"{name or 'root (v2)'!r} ({want_dir}), not {adir}")
-    want = sid if sid is not None else LEGACY_ABSTRACTION_ID
-    got = abstraction_id(adir)
-    if got != want:
-        raise ValueError(
-            f"{who}: abstraction {name or 'root (v2)'!r} has changed since the blueprint "
-            f"was trained (abstraction_id {got[:12]}... != stamped {want[:12]}...). "
-            f"Its centroids or bake settings differ; restore them or retrain.")
-
-
 def resolve_abstraction_dir(blueprint_db, who='reader'):
     """The verified abstraction directory a blueprint must be bucketed with.
     `blueprint_db` may be None or a non-DB strategy source: those get the root."""
@@ -150,30 +139,46 @@ def resolve_abstraction_dir(blueprint_db, who='reader'):
     adir = abstraction_dir(name)
     if not os.path.isdir(adir):
         raise ValueError(f"{who}: the blueprint's abstraction {name!r} is missing ({adir})")
-    check_stamp_matches(name, sid, adir, who)
+    want = sid if sid is not None else LEGACY_ABSTRACTION_ID   # legacy = the v2 root
+    got = abstraction_id(adir)
+    if got != want:
+        raise ValueError(
+            f"{who}: abstraction {name or 'root (v2)'!r} has changed since the blueprint "
+            f"was trained (abstraction_id {got[:12]}... != stamped {want[:12]}...). "
+            f"Its centroids or bake settings differ; restore them or retrain.")
     return adir
+
+
+def is_root(adir):
+    """True for the root (v2) abstraction directory."""
+    return os.path.realpath(adir) == os.path.realpath(ROOT)
 
 
 def require_root_abstraction(blueprint_db, who):
     """Fail closed for readers that can only bucket with the root (v2) abstraction
     -- the serving path until v3 serving (V3.6) lands."""
     adir = resolve_abstraction_dir(blueprint_db, who)
-    if os.path.realpath(adir) != os.path.realpath(ROOT):
+    if not is_root(adir):
         raise ValueError(
             f"{who} only supports the root (v2) abstraction, but this blueprint was "
             f"trained on {abstraction_name(adir)!r}")
     return adir
 
 
-def check_table_stamp(street, d, centroids, bins, manifest):
+def check_table_stamp(street, d, centroids, bins, manifest, allow_legacy=True):
     """Verify a loaded table (an NpzFile or dict) was baked from these centroids and
-    the manifest's bake settings. Returns False for a legacy table with no stamp
-    (the caller warns), True when verified; raises on any mismatch."""
+    the manifest's bake settings. Returns True when verified and False for a legacy
+    table with no stamp (the caller warns) -- allowed only when `allow_legacy`
+    (the root). Raises on any mismatch, and on an unstamped table otherwise."""
     files = getattr(d, 'files', None)
     if files is None:
         files = list(d.keys())
     if 'centroid_hash' not in files:
-        return False
+        if allow_legacy:
+            return False
+        raise ValueError(
+            f"postflop_table_{street}.npz has no centroid stamp; a named abstraction "
+            f"needs stamped tables -- re-bake it with scripts/bake_postflop_table.py")
     want = centroid_hash(centroids, bins)
     got = str(d['centroid_hash'])
     if got != want:
@@ -199,18 +204,21 @@ def check_table_stamp(street, d, centroids, bins, manifest):
 
 def verify_tables(adir):
     """Check every baked table present in `adir` against its centroids and manifest
-    (for callers that hand the directory to the Rust loader). Returns the streets
-    whose table was verified."""
+    (for callers that hand the directory to the Rust loader). A named abstraction
+    must have stamped flop and turn tables. Returns the streets verified."""
     import numpy as np
     manifest = read_manifest(adir)
+    root = is_root(adir)
     ok = []
     for street in STREETS:
         path = os.path.join(adir, f'postflop_table_{street}.npz')
         if not os.path.exists(path):
+            if not root and street in REQUIRED_TABLES:
+                raise ValueError(f"named abstraction {adir} is missing {os.path.basename(path)}")
             continue
         c, b = load_centroids(street, adir)
         with np.load(path) as d:
-            if check_table_stamp(street, d, c, b, manifest):
+            if check_table_stamp(street, d, c, b, manifest, allow_legacy=root):
                 ok.append(street)
     return ok
 

@@ -139,7 +139,8 @@ def main():
 
     adir = abstraction_dir(args.abstraction)
     manifest = read_manifest(adir)
-    if args.flop_runouts is None:
+    if args.flop_runouts is None or args.street != 'flop':
+        # Only the flop bake samples runouts; turn/river ignore the flag.
         args.flop_runouts = manifest['flop_runouts']
     elif args.flop_runouts != manifest['flop_runouts']:
         p.error(f"--flop-runouts {args.flop_runouts} != the manifest's "

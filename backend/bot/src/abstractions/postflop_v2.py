@@ -34,7 +34,7 @@ from .canonical import canonical_key, canonical_board_perm
 from .postflop_features import (
     load_centroids, encode_situation, equity_distribution, assign,
     board_winrates, _CARD_IDX, _ABSTRACTIONS_DIR)
-from .abstraction_set import check_table_stamp, read_manifest
+from .abstraction_set import REQUIRED_TABLES, check_table_stamp, is_root, read_manifest
 
 _STREET = {3: 'flop', 4: 'turn', 5: 'river'}
 
@@ -100,6 +100,11 @@ class PostflopV2:
         # root v2 abstraction). Readers get it from the blueprint via
         # abstraction_set.resolve_abstraction_dir, never pick it themselves.
         self.dir = abstraction_dir or _ABSTRACTIONS_DIR
+        # A named abstraction is strict: its flop/turn tables must exist and carry a
+        # stamp. The lazy Monte Carlo fallback (and unstamped legacy tables) are a
+        # root-only allowance -- elsewhere they would bucket differently from the
+        # tables the blueprint was trained on, and the Rust trainer refuses them too.
+        self._strict = not is_root(self.dir)
         self._manifest = None
         self.rng = random.Random(seed)
         self.lazy_runouts = lazy_runouts
@@ -124,6 +129,12 @@ class PostflopV2:
                     d = np.load(path)
                     self._verify_stamp(street, d)
                     self._tables[street] = (d['ids'], d['buckets'])
+            elif self._strict and street in REQUIRED_TABLES:
+                raise FileNotFoundError(
+                    f"{path} is missing; a named abstraction must be bucketed with its "
+                    f"baked table (bake it with scripts/bake_postflop_table.py "
+                    f"--abstraction {os.path.basename(os.path.realpath(self.dir))} "
+                    f"--street {street})")
             else:
                 self._tables[street] = None
         return self._tables[street]
@@ -165,7 +176,8 @@ class PostflopV2:
         if self._manifest is None:
             self._manifest = read_manifest(self.dir)
         centroids, bins = self._centroid(street)
-        if not check_table_stamp(street, d, centroids, bins, self._manifest):
+        if not check_table_stamp(street, d, centroids, bins, self._manifest,
+                                 allow_legacy=not self._strict):
             if street not in self._warned:
                 warnings.warn(
                     f"postflop_table_{street}.npz has no centroid stamp (legacy "
