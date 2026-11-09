@@ -200,6 +200,9 @@ pub struct Engine {
     pub voluntary_allin: bool,
     /// Raises allowed beyond the opening bet (f64 so live play can pass inf).
     pub max_raises_per_street: f64,
+    /// v3 `capped_pj`: facing the preflop raise cap (a 4-bet) the player may also
+    /// go all-in (a 5-bet jam) when that commits more than a call.
+    pub preflop_cap_jam: bool,
 }
 
 impl Engine {
@@ -216,24 +219,28 @@ impl Engine {
                 menu: base,
                 voluntary_allin: true,
                 max_raises_per_street: 2.0,
+                preflop_cap_jam: false,
             },
-            "capped" => {
+            "capped" | "capped_pj" => {
                 let mut m = base;
                 m.push((Size::Overbet2, 2.0));
                 Engine {
                     menu: m,
                     voluntary_allin: false,
                     max_raises_per_street: 2.0,
+                    preflop_cap_jam: mode == "capped_pj",
                 }
             }
             "capped_no2" => Engine {
                 menu: base,
                 voluntary_allin: false,
                 max_raises_per_street: 2.0,
+                preflop_cap_jam: false,
             },
             _ => {
                 return Err(format!(
-                    "menu_mode must be 'control', 'capped', or 'capped_no2', got {mode:?}"
+                    "menu_mode must be 'control', 'capped', 'capped_no2', or 'capped_pj', \
+                     got {mode:?}"
                 ));
             }
         })
@@ -348,8 +355,16 @@ impl Engine {
         if Self::round_complete(st) {
             return;
         }
-        if st.allin_seen || (st.num_br as f64) >= self.max_raises_per_street + 1.0 {
+        if st.allin_seen {
             out.extend([Action::Fold, Action::Call]);
+            return;
+        }
+        if (st.num_br as f64) >= self.max_raises_per_street + 1.0 {
+            out.extend([Action::Fold, Action::Call]);
+            // Preflop cap jam (Python state_legal_actions): the 5-bet shove.
+            if street == 0 && self.preflop_cap_jam && stack_cp > Self::to_call(st, cp) {
+                out.push(Action::AllIn);
+            }
             return;
         }
         let lk = st.last_kind;
@@ -612,7 +627,7 @@ mod tests {
     /// trained aggression cap.
     #[test]
     fn walks_conserve_chips_and_terminate() {
-        for mode in ["control", "capped", "capped_no2"] {
+        for mode in ["control", "capped", "capped_no2", "capped_pj"] {
             let e = Engine::for_mode(mode).unwrap();
             let mut seed = 12345u64;
             let mut rnd = |n: usize| {
@@ -664,7 +679,14 @@ mod tests {
                         "{mode}: pot {} vs {total}",
                         st.pot
                     );
-                    assert!(st.num_br <= 3);
+                    // 3 aggressions per street, plus the preflop cap jam (a 4th,
+                    // all-in, preflop only) under capped_pj.
+                    assert!(
+                        st.num_br <= 3
+                            || (e.preflop_cap_jam && street == 0 && st.num_br == 4 && st.allin_seen),
+                        "{mode}: street {street} num_br {}",
+                        st.num_br
+                    );
                 }
             }
         }

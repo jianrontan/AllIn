@@ -78,13 +78,9 @@ class SelfPlaySampler:
         # trained on (control vs capped) -- else a capped blueprint is sampled
         # through a control engine that re-introduces the voluntary all-in it never
         # trained, skewing the very SPR fingerprint this script measures.
-        from src.abstractions.sizing import db_menu_mode, postflop_menu_for, is_capped_mode
+        from src.abstractions.sizing import db_menu_mode, game_kwargs
         mm = db_menu_mode(db)
-        if is_capped_mode(mm):
-            self.game = PokerGame(postflop_menu=postflop_menu_for(mm),
-                                  voluntary_allin=False)
-        else:
-            self.game = PokerGame()
+        self.game = PokerGame(**game_kwargs(mm))
         from src.abstractions.abstraction_set import resolve_abstraction_dir
         self.cards = CardAbstraction(resolve_abstraction_dir(db, 'SPR probe'))
         self.deck = [s + r for r in

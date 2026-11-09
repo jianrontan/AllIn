@@ -74,6 +74,8 @@ try:
     require_key_format(BLUEPRINT_DB, ('v2',), 'the strategy API')
     from bot.src.abstractions.abstraction_set import require_root_abstraction
     require_root_abstraction(BLUEPRINT_DB, 'the strategy API')
+    from bot.src.abstractions.sizing import SERVING_MENU_MODES, require_menu_mode
+    require_menu_mode(BLUEPRINT_DB, SERVING_MENU_MODES, 'the strategy API')
     from bot.src.abstractions.sizing import db_menu_mode
     BLUEPRINT_MENU_MODE = db_menu_mode(BLUEPRINT_DB)
 except Exception as _bp_err:

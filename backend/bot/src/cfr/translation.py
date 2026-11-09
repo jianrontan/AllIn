@@ -31,10 +31,11 @@ POSTFLOP_GRID_CAPPED = [('s', 0.33), ('m', 0.66), ('l', 1.0), ('o', 1.5), ('2', 
 
 
 def postflop_grid_for(menu_mode):
-    """The default postflop translation grid for a menu_mode. Only 'capped' has the
-    2.0x ('2') point; 'control' and 'capped_no2' both top out at 1.5x ('o'), so they
-    use the base grid."""
-    return list(POSTFLOP_GRID_CAPPED if menu_mode == 'capped' else POSTFLOP_GRID)
+    """The default postflop translation grid for a menu_mode. 'capped' and
+    'capped_pj' (same postflop menu) have the 2.0x ('2') point; 'control' and
+    'capped_no2' both top out at 1.5x ('o'), so they use the base grid."""
+    return list(POSTFLOP_GRID_CAPPED if menu_mode in ('capped', 'capped_pj')
+                else POSTFLOP_GRID)
 
 
 def eff_fraction(total_add, to_call, pot):

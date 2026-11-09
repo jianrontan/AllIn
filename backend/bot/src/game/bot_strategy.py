@@ -58,6 +58,9 @@ class BlueprintStrategy(BotStrategy):
         require_key_format(blueprint_db, ('v2',), 'BlueprintStrategy')
         from ..abstractions.abstraction_set import require_root_abstraction
         require_root_abstraction(blueprint_db, 'BlueprintStrategy')
+        from ..abstractions.sizing import SERVING_MENU_MODES, require_menu_mode
+        if hasattr(blueprint_db, 'get_metadata'):
+            require_menu_mode(blueprint_db, SERVING_MENU_MODES, 'BlueprintStrategy')
         self.db = blueprint_db
         # Inference-only strategy purification of the blueprint average (see
         # cfr/purification.py). 0.0 = off (default). Applied to the trained-key

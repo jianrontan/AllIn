@@ -38,7 +38,7 @@ class PokerGame:
     """
 
     def __init__(self, postflop_menu=None, voluntary_allin=True,
-                 max_raises_per_street=2):
+                 max_raises_per_street=2, preflop_cap_jam=False):
         """
         max_raises_per_street : raises allowed per street beyond the opening bet
                           (default 2 → 1 bet + 2 raises = 3 aggressions, the cap the
@@ -66,7 +66,13 @@ class PokerGame:
                           proposal/response split. The emergent shove still maps to
                           char 'a' (key consistency: two physically identical all-ins
                           share one key regardless of which tier produced them).
-        Both are an ABSTRACTION choice: a blueprint trained under one menu/flag is
+        preflop_cap_jam : when True (the v3 'capped_pj' arm) the player facing the
+                          preflop raise cap -- a 4-bet, the 3rd aggression -- may also
+                          go ALL-IN (a 5-bet jam), if that commits more than a call.
+                          Facing the jam: fold/call. When False (default) the cap node
+                          is fold/call only, so the trained tree has no 5-bet at all.
+                          Postflop cap nodes are unchanged either way.
+        All three are an ABSTRACTION choice: a blueprint trained under one menu/flag is
         incompatible with another. They are constructor args (not the sizing SOT) so
         the control and capped arms can be trained from the same code for the C
         measurement.
@@ -79,6 +85,7 @@ class PokerGame:
         self.BET_MULTIPLIERS = dict(postflop_menu if postflop_menu is not None
                                     else POSTFLOP_BET_MULT)
         self.voluntary_allin = voluntary_allin
+        self.preflop_cap_jam = preflop_cap_jam
         self._calc_cache = {}
 
     def _acting_player(self, action_index, street):
@@ -109,6 +116,13 @@ class PokerGame:
                 result = ['fold', 'call']
             elif bet_and_raise_count >= self.max_raises_per_street + 1:
                 result = ['fold', 'call']
+                if street == 0 and self.preflop_cap_jam:
+                    allin = self._allin_amount(history, street, starting_pot,
+                                               current_player, p0_prev, p1_prev)
+                    call = self.get_call_amount_from_history(
+                        street, history, starting_pot, p0_prev, p1_prev)
+                    if allin > call:
+                        result = ['fold', 'call', 'allin']
             elif street == 0:
                 result = self.get_preflop_legal_actions(
                     street, history, starting_pot, current_player,
@@ -560,6 +574,10 @@ class PokerGame:
         if st['allin_seen']:
             return ['fold', 'call']
         if st['num_br'] >= self.max_raises_per_street + 1:
+            # Preflop cap jam (mirror of get_legal_actions): a 5-bet shove facing the
+            # 4-bet, when it commits more than a call.
+            if street == 0 and self.preflop_cap_jam and stack_cp > self._ns_to_call(st, cp):
+                return ['fold', 'call', 'allin']
             return ['fold', 'call']
         lk, num_br = st['last_kind'], st['num_br']
         if street == 0:

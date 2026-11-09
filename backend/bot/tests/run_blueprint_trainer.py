@@ -166,7 +166,7 @@ if __name__ == "__main__":
                    help="Seed Python's RNG (single-thread reproducibility only).")
     p.add_argument('--gamma', type=float, default=None,
                    help="Override the strategy-sum discount exponent.")
-    p.add_argument('--menu-mode', choices=['control', 'capped', 'capped_no2'],
+    p.add_argument('--menu-mode', choices=['control', 'capped', 'capped_no2', 'capped_pj'],
                    default='control',
                    help="Action-abstraction arm: 'control' (current 4-size menu + "
                         "voluntary all-in, the A/B baseline); 'capped' (Fix-#4: 5-size "

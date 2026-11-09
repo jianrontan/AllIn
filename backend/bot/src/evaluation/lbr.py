@@ -48,6 +48,13 @@ from ..abstractions.hand_evaluator import HandEvaluator
 
 SB, BB = 1, 2
 MAX_AGGR_PER_STREET = 3   # 1 bet + 2 raises, matching PokerGame.max_raises_per_street
+
+
+def _cap_jam_open(cap_jam, street, num_aggr, to_call, stack):
+    """The capped_pj preflop cap jam (mirror of PokerGame.get_legal_actions): facing
+    the 4-bet -- the 3rd preflop aggression -- a shove that commits more than a call."""
+    return (cap_jam and street == 0 and num_aggr == MAX_AGGR_PER_STREET
+            and to_call > 0 and stack > to_call)
 # LBR's bet menu as fractions of (pot + amount-to-call). 0.5/1.5 are OFF-TREE
 # (the blueprint trains 0.33/0.66/1.0); 1.0 overlaps. Plus an explicit all-in.
 LBR_BET_FRACTIONS = [0.5, 1.0, 1.5]
@@ -71,15 +78,14 @@ class LBREvaluator:
         # responses against the wrong menu (the BUG-008 drift class). Auto-read from
         # the DB (control for a pre-stamp DB) unless forced.
         from ..abstractions.sizing import (
-            db_menu_mode, postflop_menu_for, is_capped_mode)
+            db_menu_mode, postflop_menu_for, is_capped_mode, has_preflop_cap_jam,
+            game_kwargs)
         self.menu_mode = menu_mode or db_menu_mode(blueprint_db)
         self._postflop_menu = postflop_menu_for(self.menu_mode)
         self._voluntary_allin = not is_capped_mode(self.menu_mode)
-        if is_capped_mode(self.menu_mode):           # 'capped' | 'capped_no2'
-            self.game = PokerGame(postflop_menu=self._postflop_menu,
-                                  voluntary_allin=False)
-        else:
-            self.game = PokerGame()
+        # Preflop cap jam (capped_pj): facing a 4-bet either side may 5-bet jam.
+        self._cap_jam = has_preflop_cap_jam(self.menu_mode)
+        self.game = PokerGame(**game_kwargs(self.menu_mode))
         # Bucket the bot with the abstraction its blueprint was trained on.
         from ..abstractions.abstraction_set import resolve_abstraction_dir
         self.cards = CardAbstraction(resolve_abstraction_dir(blueprint_db, 'LBR'))
@@ -249,6 +255,11 @@ class LBREvaluator:
             cands.append(self._value_aggressive(
                 lbr_seat, lbr_hand, vis, street, invested, stack, committed,
                 to_call, num_aggr, pattern, botrange, bot_seat, stack[lbr_seat], True))
+        elif _cap_jam_open(self._cap_jam, street, num_aggr, to_call, stack[lbr_seat]):
+            # capped_pj: the exploiter may 5-bet jam facing the 4-bet, as the bot can.
+            cands.append(self._value_aggressive(
+                lbr_seat, lbr_hand, vis, street, invested, stack, committed,
+                to_call, num_aggr, pattern, botrange, bot_seat, stack[lbr_seat], True))
 
         best = max(cands, key=lambda c: c[0])
         return best[1], best[2], best[3]
@@ -372,6 +383,8 @@ class LBREvaluator:
             legal += sized
             if self._voluntary_allin:
                 legal += ['allin']
+        elif _cap_jam_open(self._cap_jam, street, num_aggr, to_call, stack[bot_seat]):
+            legal += ['allin']                       # capped_pj: 5-bet jam facing the 4-bet
 
         pos = self._pos(bot_seat)
         if street == 0:

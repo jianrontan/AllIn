@@ -113,13 +113,9 @@ class GameSession:
         # stopgap until the Phase-4 deep-raise solver. See PokerGame.__init__.
         # max_raises_per_street defaults to inf (LIVE serving — uncapped re-raises);
         # tests pass the trained cap (2) to exercise the capped-engine invariants.
-        from ..abstractions.sizing import postflop_menu_for, is_capped_mode
-        if is_capped_mode(menu_mode):                # 'capped' | 'capped_no2'
-            self.game = PokerGame(postflop_menu=postflop_menu_for(menu_mode),
-                                  voluntary_allin=False,
-                                  max_raises_per_street=max_raises_per_street)
-        else:
-            self.game = PokerGame(max_raises_per_street=max_raises_per_street)
+        from ..abstractions.sizing import game_kwargs
+        self.game = PokerGame(**game_kwargs(menu_mode),
+                              max_raises_per_street=max_raises_per_street)
         self.menu_mode = menu_mode
         self.cards = CardAbstraction()
         self.evaluator = HandEvaluator()

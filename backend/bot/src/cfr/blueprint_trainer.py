@@ -65,16 +65,10 @@ class BlueprintTrainer:
         # round (see parallel_trainer.merge_round). Single-thread keeps it True
         # so its behaviour is unchanged / bit-identical.
         self.discount_enabled = True
-        from ..abstractions.sizing import postflop_menu_for, is_capped_mode
-        if menu_mode == 'control':
-            self.game = PokerGame()                  # default menu + voluntary all-in
-        elif is_capped_mode(menu_mode):              # 'capped' | 'capped_no2'
-            self.game = PokerGame(postflop_menu=postflop_menu_for(menu_mode),
-                                  voluntary_allin=False)
-        else:
-            raise ValueError(
-                f"menu_mode must be 'control', 'capped', or 'capped_no2', "
-                f"got {menu_mode!r}")
+        from ..abstractions.sizing import MENU_MODES, game_kwargs
+        if menu_mode not in MENU_MODES:
+            raise ValueError(f"menu_mode must be one of {MENU_MODES}, got {menu_mode!r}")
+        self.game = PokerGame(**game_kwargs(menu_mode))
         self.game_adapter = GameAdapter()
         self.deck = self.create_deck()
 

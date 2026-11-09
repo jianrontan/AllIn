@@ -165,7 +165,7 @@ def main():
     ap.add_argument('--seed', type=int, default=None)
     ap.add_argument('--alpha', type=float, default=1.5)
     ap.add_argument('--gamma', type=float, default=1.0)
-    ap.add_argument('--menu-mode', choices=['control', 'capped', 'capped_no2'], default='capped')
+    ap.add_argument('--menu-mode', choices=['control', 'capped', 'capped_no2', 'capped_pj'], default='capped')
     ap.add_argument('--key-format', choices=['v2', 'spr5'], default='v2',
                     help="info-set key format: v2 (served) or spr5 (Phase 6 SPR buckets on flop/turn)")
     ap.add_argument('--river-cache-boards', type=int, default=None,

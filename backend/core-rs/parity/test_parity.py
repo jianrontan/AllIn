@@ -116,9 +116,9 @@ def test_keys():
 #            p0_inv, p1_inv, final_pot, p0_total) -> float   (P0 perspective)
 # State dicts must equal Python's EXACTLY (same keys, same float values).
 # ----------------------------------------------------------------------------
-@pytest.mark.parametrize('mode', ['control', 'capped'])
+@pytest.mark.parametrize('mode', ['control', 'capped', 'capped_pj'])
 def test_engine(mode):
-    core = need('engine', f'engine_{mode}.json')
+    core = need('engine_pj' if mode == 'capped_pj' else 'engine', f'engine_{mode}.json')
     with open(fixture_path(f'engine_{mode}.json')) as f:
         d = json.load(f)
     eng = core.Engine(mode)
@@ -306,9 +306,9 @@ def _db_rows(path):
 
 
 @pytest.mark.parametrize('name', ['mccfr_control_g1', 'mccfr_capped_g1', 'mccfr_control_g2',
-                                  'mccfr_capped_spr5_g1'])
+                                  'mccfr_capped_spr5_g1', 'mccfr_capped_pj_spr5_g1'])
 def test_mccfr(name, tmp_path):
-    component = 'mccfr_spr' if 'spr' in name else 'mccfr'
+    component = 'mccfr_pj' if '_pj_' in name else 'mccfr_spr' if 'spr' in name else 'mccfr'
     core = need(component, f'{name}.json', f'{name}.db')
     with open(fixture_path(f'{name}.json')) as f:
         d = json.load(f)
@@ -332,6 +332,10 @@ def test_mccfr(name, tmp_path):
     assert got_meta.get('key_format') == want_meta.get('key_format')
     if d.get('key_format', 'v2') != 'v2':
         assert any(re.search(r'_(flop|turn)_r[0-4]_', r[0]) for r in got), 'spr5 run produced no SPR keys'
+    if d['mode'] == 'capped_pj':
+        # The 5-bet jam: three preflop aggressions, then 'a'.
+        assert any(re.match(r'pf_\d+_(ip|oop)_c?[smlx][sml]{2}a$', r[0]) for r in got), \
+            'capped_pj run never reached the preflop cap jam'
 
 
 # ----------------------------------------------------------------------------

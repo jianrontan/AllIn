@@ -177,6 +177,43 @@ Implemented in `backend/bot/src/abstractions/abstraction_set.py`
 **Rust.** No change was needed: `load_abstraction(dir)` already takes a directory,
 and its npz reader ignores the new `flop_runouts` member.
 
+### V3.1 — done 2026-11-09
+
+**The new arm.**
+- `menu_mode='capped_pj'` is the capped arm plus a jam at the preflop raise cap.
+  Facing the 4-bet, the legal actions are `['fold', 'call', 'allin']` when the shove
+  commits more than a call. Facing the jam: fold/call.
+- Postflop cap nodes, and live uncapped play, are unchanged.
+- In the info-set key the jam is `a` as the 4th preflop char (e.g. `smma`).
+
+**Python.**
+- `PokerGame(preflop_cap_jam=...)` implements it on both legal-action paths (the
+  history path and the state-threaded trainer path).
+- `sizing.game_kwargs(menu_mode)` is now the one way to build an engine for an arm.
+  The trainer, `GameSession`, LBR, best response and the SPR probe all use it.
+- `postflop_menu_for` raises on an unknown arm; it used to fall back to control
+  silently.
+- `translation.postflop_grid_for('capped_pj')` gets the capped grid.
+
+**Evaluation mirrors.** LBR's victim model and exploiter, and the head-to-head
+match's legal actions, offer the cap jam too.
+
+**Serving.** `BlueprintStrategy` and the strategy API refuse `capped_pj` until
+V3.6 (`sizing.SERVING_MENU_MODES`).
+
+**Rust.** `Engine.preflop_cap_jam` with the `"capped_pj"` mode. New parity
+components:
+- `engine_pj`: 3,000 walks, 1,558 cap-jam nodes;
+- `mccfr_pj`: 600 iterations of capped_pj + spr5, a DB byte-identical to Python's.
+
+Strict parity passes 42/42.
+
+**Training CLIs.** `train_rust.py` and `run_blueprint_trainer.py` accept
+`--menu-mode capped_pj`. A 400k-iteration smoke run (spr5, 4 workers) ran at about
+22k it/s with a clean strategy shape.
+
+**Tests:** `tests/test_preflop_cap_jam.py`, 47 tests.
+
 ## Steps
 
 | Step | Work | Wall time | Gate |

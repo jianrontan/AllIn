@@ -42,7 +42,7 @@ from src.evaluation.showdown_kernel import (  # noqa: E402
 
 COMPONENTS = ('eval_rank7', 'buckets', 'keys', 'engine',
               'river_showdown', 'river_tree', 'river_cfr', 'river_gadget',
-              'mccfr', 'mccfr_merge', 'keys_spr', 'mccfr_spr')
+              'mccfr', 'mccfr_merge', 'keys_spr', 'mccfr_spr', 'engine_pj', 'mccfr_pj')
 DEFAULT_OUT = os.path.normpath(os.path.join(BOT, '..', 'core-rs', 'fixtures'))
 
 
@@ -256,6 +256,20 @@ def export_engine(out, rng, quick):
         counts[mode] = {'games': len(games),
                         'nodes': sum(len(gm['nodes']) for gm in games)}
     return counts
+
+
+def export_engine_pj(out, rng, quick):
+    """capped_pj (v3): the capped engine plus the preflop cap jam. Walks must reach
+    the jam, or the fixture proves nothing."""
+    n = 300 if quick else 3_000
+    games = _engine_games('capped_pj', n, seed=int(rng.integers(1 << 31)))
+    jams = sum(1 for gm in games for nd in gm['nodes']
+               if nd.get('street') == 0 and nd['st']['num_br'] >= 3 and 'allin' in nd['legal'])
+    if not jams:
+        raise RuntimeError('capped_pj engine walks never reached the preflop cap jam')
+    _write_json(os.path.join(out, 'engine_capped_pj.json'), {'mode': 'capped_pj', 'games': games})
+    return {'games': len(games), 'nodes': sum(len(gm['nodes']) for gm in games),
+            'cap_jam_nodes': jams}
 
 
 # ----------------------------------------------------------------------------
@@ -516,6 +530,12 @@ def export_mccfr(out, rng, quick):
 def export_mccfr_spr(out, rng, quick):
     n = 60 if quick else 600
     return {'capped_spr5_g1': _mccfr_run(out, rng, 'capped', 1.0, n, key_format='spr5')}
+
+
+def export_mccfr_pj(out, rng, quick):
+    """The v3 tree: spr5 keys + the capped_pj preflop cap jam."""
+    n = 60 if quick else 600
+    return {'capped_pj_spr5_g1': _mccfr_run(out, rng, 'capped_pj', 1.0, n, key_format='spr5')}
 
 
 # ----------------------------------------------------------------------------

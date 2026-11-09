@@ -87,24 +87,51 @@ SIZE_CHAR = {'small': 's', 'medium': 'm', 'large': 'l', 'xlarge': 'x', 'overbet'
              'overbet2': '2'}
 
 
+# Action-abstraction arms. 'capped_pj' (v3, docs/V3_BLUEPRINT_PLAN.md) is the
+# capped arm plus a JAM at the preflop raise cap: facing a 4-bet (the 3rd preflop
+# aggression) the player may fold, call or go all-in. Without it the trained tree
+# has no 5-bet at all, so 4-bets carry bluffs and get flat-called by everything
+# (BUG-027). Postflop it is identical to 'capped'.
+MENU_MODES = ('control', 'capped', 'capped_no2', 'capped_pj')
+
+
 def postflop_menu_for(menu_mode):
-    """The postflop bet/raise size dict for a menu_mode
-    ('control' | 'capped' | 'capped_no2'). One place to resolve the arm so every
-    consumer (engine, BR, LBR, the API grid) selects the same dict instead of
-    hard-coding POSTFLOP_BET_MULT."""
-    if menu_mode == 'capped':
+    """The postflop bet/raise size dict for a menu_mode (one of MENU_MODES). One
+    place to resolve the arm so every consumer (engine, BR, LBR, the API grid)
+    selects the same dict instead of hard-coding POSTFLOP_BET_MULT. An unknown arm
+    is an error (it used to fall back to the control menu silently)."""
+    if menu_mode in ('capped', 'capped_pj'):
         return POSTFLOP_BET_MULT_CAPPED
     if menu_mode == 'capped_no2':
         return POSTFLOP_BET_MULT_CAPPED_NO2
-    return POSTFLOP_BET_MULT
+    if menu_mode == 'control':
+        return POSTFLOP_BET_MULT
+    raise ValueError(f"unknown menu_mode {menu_mode!r} (want one of {MENU_MODES})")
 
 
-# menu_modes that drop the free-standing voluntary all-in (Fix #4 family). Both
+# menu_modes that drop the free-standing voluntary all-in (Fix #4 family). All
 # capped variants do; 'control' keeps the voluntary jam. One predicate so the
 # engine builders (trainer, GameSession, BR, LBR) agree on which arms are
 # voluntary_allin=False.
 def is_capped_mode(menu_mode):
-    return menu_mode in ('capped', 'capped_no2')
+    return menu_mode in ('capped', 'capped_no2', 'capped_pj')
+
+
+def has_preflop_cap_jam(menu_mode):
+    """True for arms that offer all-in at the preflop raise cap (facing a 4-bet)."""
+    return menu_mode == 'capped_pj'
+
+
+def game_kwargs(menu_mode):
+    """PokerGame keyword arguments for a menu_mode -- the ONE way to build an
+    engine for an arm, so no builder can drop a tree feature (e.g. the preflop cap
+    jam) by hand-assembling postflop_menu / voluntary_allin. Callers add their own
+    max_raises_per_street (live play passes inf)."""
+    if menu_mode == 'control':
+        return {}                                   # PokerGame() defaults, byte-identical
+    return {'postflop_menu': postflop_menu_for(menu_mode),
+            'voluntary_allin': not is_capped_mode(menu_mode),
+            'preflop_cap_jam': has_preflop_cap_jam(menu_mode)}
 
 
 def db_menu_mode(blueprint_db):
@@ -118,6 +145,22 @@ def db_menu_mode(blueprint_db):
         return blueprint_db.get_metadata('menu_mode', 'control') or 'control'
     except Exception:
         return 'control'
+
+
+def require_menu_mode(blueprint_db, supported, who):
+    """Fail closed: refuse a blueprint trained under an arm this reader can't play
+    (e.g. the serving path and 'capped_pj' until v3 serving lands). Returns the arm."""
+    mm = db_menu_mode(blueprint_db)
+    if mm not in supported:
+        raise ValueError(
+            f"{who} supports menu_mode {'/'.join(supported)}, but this blueprint was "
+            f"trained under {mm!r}")
+    return mm
+
+
+# Arms the live serving path can play. 'capped_pj' needs the V3.6 serving work
+# (5-bet translation onto the trained jam, guards at the new cap).
+SERVING_MENU_MODES = ('control', 'capped', 'capped_no2')
 
 
 def preflop_open_chips():

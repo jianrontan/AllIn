@@ -34,6 +34,8 @@ pub const PORTED: &[&str] = &[
     "mccfr_merge",
     "keys_spr",
     "mccfr_spr",
+    "engine_pj",
+    "mccfr_pj",
 ];
 
 /// Crate version, surfaced to Python for diagnostics.

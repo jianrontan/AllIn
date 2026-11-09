@@ -94,14 +94,9 @@ class BestResponseEvaluator:
         # pre-stamp DB); 'control'/'capped' force it. BR is otherwise menu-agnostic
         # -- it walks game.get_legal_actions and groups by blueprint key -- so the
         # only thing that needs the menu is the PokerGame it walks.
-        from ..abstractions.sizing import (
-            db_menu_mode, postflop_menu_for, is_capped_mode)
+        from ..abstractions.sizing import db_menu_mode, game_kwargs
         mm = menu_mode or db_menu_mode(blueprint_db)
-        if is_capped_mode(mm):                        # 'capped' | 'capped_no2'
-            self.game = PokerGame(postflop_menu=postflop_menu_for(mm),
-                                  voluntary_allin=False)
-        else:
-            self.game = PokerGame()
+        self.game = PokerGame(**game_kwargs(mm))
         self.menu_mode = mm
         # Bucket with the abstraction the blueprint was trained on.
         from ..abstractions.abstraction_set import resolve_abstraction_dir

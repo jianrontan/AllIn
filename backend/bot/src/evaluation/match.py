@@ -39,7 +39,7 @@ def _legal_actions(street, to_call, num_aggr, stack, pot, menu_mode='control'):
         xlarge);  preflop 3-bet/4-bet (num_aggr>=1) -> raise_* (3 pot-relative sizes);
       * postflop first-in -> bet_* incl overbet;  facing a bet -> raise_* incl overbet.
     Voluntary all-in is always available when a shove is a genuine raise."""
-    from ..abstractions.sizing import postflop_menu_for, is_capped_mode
+    from ..abstractions.sizing import postflop_menu_for, is_capped_mode, has_preflop_cap_jam
     postflop_sizes = list(postflop_menu_for(menu_mode))   # incl overbet2 iff 'capped'
     can_aggr = num_aggr < MAX_AGGR_PER_STREET and stack > max(0, to_call)
     if to_call > 0:
@@ -60,6 +60,9 @@ def _legal_actions(street, to_call, num_aggr, stack, pot, menu_mode='control'):
         # the free-standing anchor (all-in still emerges via the stack clamp in act()).
         if not is_capped_mode(menu_mode):
             legal += ['allin']
+    elif (has_preflop_cap_jam(menu_mode) and street == 0 and num_aggr == MAX_AGGR_PER_STREET
+          and to_call > 0 and stack > to_call):
+        legal += ['allin']          # capped_pj: 5-bet jam facing the 4-bet (engine mirror)
     return legal
 
 
