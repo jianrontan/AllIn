@@ -361,6 +361,103 @@ full BUG-027 replay into `scripts/`):
 These are aggregates over every 4-bet line. Gate 1's per-line checks (the BUG-027
 line, the flop lead-shove range, J9's call EV) are V3.5's replay.
 
+### V3.5 — evaluated 2026-11-11, ship decision pending
+
+Overnight run, 00:27–06:36. Scripts are in the session scratchpad `v35/`
+(`run_v35.sh`, `h2h.py`, `lbr_paired.py`, `summary.py`); the BUG-027 replay moved
+into the repo as `scripts/bug027_replay.py`.
+
+**How the matches were played.**
+- `h2h.py` is `run_match.py` (AIVAT) plus one rule. A capped-menu player (v2, SPR,
+  or the human model) facing a capped_pj 5-bet jam has no trained key there, and
+  `match.py` would coin-flip (folding AA half the time). Instead it plays the
+  deployed guard's rule (`_facing_deep_raise_guard`, uninformed preflop read): call
+  iff equity vs the top 20% of hands ≥ pot odds. That is what prod v2 does.
+  Trained nodes are untouched.
+- The **human model** is the fitted population model
+  (`/Users/ron/Projects/AllIn/backend/bot/analysis/opponent_models`, v2 keys) as a
+  player. Blueprint vs model only: no river solver, guards, or range tracker. Its
+  play at cap-jam nodes is that guard rule, not observed behaviour, because v2-era
+  humans never faced a cap jam.
+- LBR and BR reuse the Phase 6 setups. A rerun of v2's paired LBR on today's code
+  reproduced the Nov 9 per-hand results exactly, so v2's and SPR 100M's old BR
+  runs (same boards) are reused.
+
+**Results** (mbb/hand; A = spr5 + cap jam on v2 buckets, C = also the v3 buckets):
+
+| | A 50M | A 100M | A 150M | C 50M | C 100M | C 150M | SPR 100M | v2 |
+|---|---|---|---|---|---|---|---|---|
+| H2H vs v2, 240k AIVAT (>0 = wins) | +67 ± 30 | +68 ± 30 | **+106 ± 30** | +45 ± 30 | **+128 ± 30** | **+105 ± 30** | −31 ± 33 | — |
+| Vs human model, 240k AIVAT (bot's win) | — | +120 ± 38 | **+179 ± 38** | — | +142 ± 38 | **+186 ± 38** | −11 ± 41 | +135 ± 40 |
+| … minus v2 | — | −15 ± 56 | +45 ± 55 | — | +7 ± 55 | +52 ± 55 | **−146 ± 57** | — |
+| Paired LBR 10k, minus v2 (lower = better) | +125 ± 141 | −54 ± 175 | +3 ± 186 | +37 ± 146 | +25 ± 176 | +101 ± 184 | +185 ± 169 | — |
+| BR, 96 paired boards (total) | — | **12,550** | 12,774 | — | 12,781 | 13,036 | 13,157 | 13,941 |
+
+- **BR, paired.**
+  - A 100M − SPR 100M = −607 ± 27 (−4.6%; as BB −7.2%): the jam's effect. BR of the
+    capped_pj game vs the capped game measures slightly different games, so treat it
+    as indicative.
+  - C − A = +231 ± 42 at 100M and +262 ± 52 at 150M (+1.8 / +2.1%, t ≈ 5). C is
+    better as SB (−2%) and worse as BB (+4.6 / +5.0%).
+  - Versus v2: A 100M −10.0%, C 100M −8.3%, C 150M −6.5%.
+  - 100M beats 150M in both arms (~+230), the same "later = looser = more
+    exploitable" drift as the earlier runs.
+- **C vs A head-to-head** (same tree): C wins +43 ± 30 at 100M and +75 ± 30 at
+  150M (z 1.4 / 2.5).
+- **Cap jams** happen in 1.3–1.7% of hands against v2. v2's guard called 55–60%
+  of them.
+- **SPR 100M (no jam) loses 146 ± 57 to v2 against the human model** (z −2.6),
+  though it was neutral in H2H and LBR. Both jam arms recover that.
+
+**BUG-027 replay** (`scripts/bug027_replay.py`; on v2 it reproduces the Nov 9
+analysis: call EV +107.4 vs +106.9 chips):
+
+| Exact line | v2 | SPR 100M | A 100M | A 150M | C 100M | C 150M |
+|---|---|---|---|---|---|---|
+| BB vs the 4-bet: fold / call / jam | 27 / 73 / – | 28 / 72 / – | 43 / 22 / 36 | 43 / 23 / 34 | 42 / 23 / 35 | 43 / 24 / 33 |
+| AA jam / KK jam | – | – | 30 / 81 | 42 / 82 | 61 / 78 | 50 / 83 |
+| Bot 4-bets here with J9s / J9o | 10 / 8 | 19 / 8 | 5 / 2 | 4 / 3 | 4 / 2 | 3 / 2 |
+| BB flop lead-shove frequency | 6% | 25% | 25% | 25% | 26% | 27% |
+| Top pair or better in the shove range | 6% | 10.5% | 18% | 23.5% | 14% | 17% |
+| J9hh equity vs the shove (needs 0.39) | 0.66 | 0.63 | 0.60 | 0.57 | 0.64 | 0.60 |
+| J9hh call EV, chips | +107 | +96 | +85 | +70 | +99 | +83 |
+
+J9hh's equity against human-style shove ranges is unchanged: 0.20 against top
+pair, sets and nut flush draws.
+
+**Gates.**
+1. **BUG-027 replay: partly.**
+   - ✔ The BB now jams 33–36% and folds 42% facing the 4-bet, and KK+ mostly jams.
+     AA keeps a 40–70% flat, a slow-play mix.
+   - ✔ The shove range has 2–4× more top pair+ than v2.
+   - ✘ J9's call is still +EV against the blueprint's own shove range, so the bot
+     still calls (~99%). But J9 reaches the spot 2–6× less often, because it
+     4-bets 2–5% here instead of 8–19%.
+   - The remaining gap is humans shoving far narrower than equilibrium. That is the
+     exploitation layer's job (Phase 7 re-fit); no blueprint fixes it.
+2. **Card changes don't hurt BR: ✘.** C is ~2% more exploitable than A at equal
+   iterations (worse as BB, better as SB), although C beats A head-to-head. The v3
+   buckets are not a clear improvement.
+3. **No regression vs v2: ✔.** Every candidate wins H2H (A 150M and C 100M/150M at
+   z > 3.5), and LBR is neutral everywhere (|z| < 1).
+4. **Vs the human model, v3 ≥ v2 within noise: ✔.** The best are C 150M (+52 ± 55)
+   and A 150M (+45 ± 55); the 100M snapshots are level with v2.
+
+**Reading.**
+- The jam (change 1) carries the measurable gain: BR −4.6% vs SPR, H2H +100 over
+  SPR's result, and SPR's human-model regression reversed.
+- The v3 card changes (2 and 3) win H2H against A but lose BR. They also cost a
+  second abstraction dir and a 33-min bake, and need the bucket-cache fix below.
+- Snapshot: 100M wins BR in both arms, while 150M scores higher against the human
+  model (+45 to +60, about 1σ) and against v2 for A. The two signals disagree, and
+  neither is decisive.
+
+**Found for V3.6:** `range_tracker._PF_BUCKET_CACHE` / `_POSTFLOP_BUCKET_CACHE` are
+process-global and keyed by board only, not by abstraction. One process tracking
+ranges under two abstractions (v2 + v3 sessions on one gunicorn worker) would reuse
+the first one's buckets. The replay clears them between blueprints. Serving must key
+them by abstraction id before a named abstraction is served.
+
 ## Steps
 
 | Step | Work | Wall time | Gate |
