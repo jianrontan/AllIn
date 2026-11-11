@@ -153,8 +153,8 @@ Phases 1, 2, 3 are independent (can run in parallel sessions/worktrees);
   mismatch, as in Python. Either trainer can resume the other's blueprint.
 
 ### Phase 6 notes (abstraction)
-- **Spec: [PHASE6_ABSTRACTION_PLAN.md](PHASE6_ABSTRACTION_PLAN.md)** (draft,
-  awaiting sign-off). Motivation: the first 100M Rust run reproduced v2 and no
+- **Spec: [PHASE6_ABSTRACTION_PLAN.md](PHASE6_ABSTRACTION_PLAN.md)** (signed off
+  and done; the work continues in [V3_BLUEPRINT_PLAN.md](V3_BLUEPRINT_PLAN.md)). Motivation: the first 100M Rust run reproduced v2 and no
   snapshot beat it on paired LBR, so the remaining error is the abstraction.
 - History: SPR buckets were once decided against (1.7–2.5× training for ~9% of
   decisions low-SPR); ROADMAP item 8 later revived turn-only SPR buckets

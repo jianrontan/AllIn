@@ -43,7 +43,7 @@ class ManiacPlayer:
         self.profile = profile
 
     def act(self, seat, hand, vis, street, legal, pattern, street_pot,
-            pot=None, to_call=None, stack=None):
+            pot=None, to_call=None, stack=None, state=None):
         sized = [a for a in legal if a.startswith(('bet_', 'raise_'))]
         med = next((a for a in sized if a.endswith('_medium')), None)
         aggr = [a for a in (med, 'allin' if 'allin' in legal else None) if a]

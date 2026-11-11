@@ -164,14 +164,19 @@ class BestResponseEvaluator:
         return showdown_measure(ba, rv, final_pot, hero_total)
 
     @staticmethod
-    def _accumulate_gain(gain_acc, street, ba, gain):
+    def _accumulate_gain(gain_acc, street, ba, gain, hero_seat):
         """Add per-hero-hand BR gain into gain_acc[(street, bucket)] -- bucket = the
-        hero hand's fine preflop bucket (street 0) else its strength bucket. The leak
-        attribution: which (street, bucket) the exploiter extracts the most from."""
+        hero hand's fine preflop bucket (street 0) else its strength bucket -- and the
+        per-seat street total into gain_acc[('seat', hero_seat, street)]. `gain` is
+        already weighted by the hero's blueprint reach, so summed over every hero node
+        it equals the BR value minus the blueprint's value (the telescoping identity),
+        in the same measure units as the BR vector."""
         buckets = np.asarray(ba['pf'] if street == 0 else ba['strg'][street])
         for bk in np.unique(buckets):
             key = (street, bk.item() if hasattr(bk, 'item') else bk)
             gain_acc[key] = gain_acc.get(key, 0.0) + float(gain[buckets == bk].sum())
+        sk = ('seat', hero_seat, street)
+        gain_acc[sk] = gain_acc.get(sk, 0.0) + float(gain.sum())
 
     def _board_value(self, hero_seat, board, ba, br_streets=None, gain_acc=None):
         """
@@ -245,7 +250,9 @@ class BestResponseEvaluator:
             return self._showdown_measure(ba, rv, final_pot, hero_total)
 
         def walk(history, street, starting_pot, p0_inv, p1_inv,
-                 p0_stack, p1_stack, pattern, rv, depth):
+                 p0_stack, p1_stack, pattern, rv, depth, hr=None):
+            # hr: the hero's BLUEPRINT reach per hero hand (only tracked when logging
+            # gains; None otherwise, keeping the scoreboard path unchanged).
             if depth > 50 or street > 3:
                 return terminal_value(history, street, starting_pot, p0_inv, p1_inv, rv)
             if self.game.is_terminal(history, street):
@@ -268,39 +275,44 @@ class BestResponseEvaluator:
                     new_p1_inv = p1_inv + p1_this
                     return walk([], street + 1, new_pot, new_p0_inv, new_p1_inv,
                                 STARTING_STACK - new_p0_inv, STARTING_STACK - new_p1_inv,
-                                '', rv, depth + 1)
+                                '', rv, depth + 1, hr)
                 return terminal_value(history, street, starting_pot, p0_inv, p1_inv, rv)
 
             legal_t = tuple(legal)
 
-            def child(action, child_rv):
+            def child(action, child_rv, child_hr=None):
                 cost = self.game._action_cost(
                     action, street, history, starting_pot, current_player, p0_inv, p1_inv)
                 nh = history + [action]
                 npat = pattern + action_char(action)
                 if current_player == 0:
                     return walk(nh, street, starting_pot, p0_inv, p1_inv,
-                                p0_stack - cost, p1_stack, npat, child_rv, depth + 1)
+                                p0_stack - cost, p1_stack, npat, child_rv, depth + 1,
+                                child_hr)
                 return walk(nh, street, starting_pot, p0_inv, p1_inv,
-                            p0_stack, p1_stack - cost, npat, child_rv, depth + 1)
+                            p0_stack, p1_stack - cost, npat, child_rv, depth + 1, child_hr)
 
             if current_player == hero_seat:
                 # Same villain reach down every hero branch (the hero's action does
                 # not change villain reach), so compute each branch once.
-                vals = [child(a, rv) for a in legal]
+                if gain_acc is None or hr is None:
+                    vals = [child(a, rv) for a in legal]
+                else:
+                    hp = probs_matrix(street, pattern, legal_t, hero_pos, starting_pot)
+                    vals = [child(a, rv, hr * hp[:, ai]) for ai, a in enumerate(legal)]
                 if br_streets is None or street in br_streets:
                     # Hero best-responds (elementwise max over actions).
                     if gain_acc is None:
                         return np.maximum.reduce(vals)
                     valmat = np.stack(vals, axis=1)            # [H, A]
                     out = valmat.max(axis=1)
-                    hp = probs_matrix(street, pattern, legal_t, hero_pos, starting_pot)
                     gain = out - (valmat * hp).sum(axis=1)     # best - blueprint-weighted
-                    self._accumulate_gain(gain_acc, street, ba, gain)
+                    self._accumulate_gain(gain_acc, street, ba, gain * hr, hero_seat)
                     return out
                 # Restricted: hero plays the BLUEPRINT on this off-target street, so
                 # the value isolates the leak reachable only on its BR streets.
-                hp = probs_matrix(street, pattern, legal_t, hero_pos, starting_pot)
+                if gain_acc is None or hr is None:
+                    hp = probs_matrix(street, pattern, legal_t, hero_pos, starting_pot)
                 total = np.zeros(H)
                 for ai in range(len(legal)):
                     total = total + vals[ai] * hp[:, ai]
@@ -310,12 +322,13 @@ class BestResponseEvaluator:
             probs = probs_matrix(street, pattern, legal_t, villain_pos, starting_pot)
             total = np.zeros(H)
             for ai, a in enumerate(legal):
-                total = total + child(a, rv * probs[:, ai])
+                total = total + child(a, rv * probs[:, ai], hr)
             return total
 
         rv0 = np.ones(H)  # unit reach per villain hand; normalise by _COMPATIBLE later
+        hr0 = np.ones(H) if gain_acc is not None else None
         return walk([], 0, 3, 0.0, 0.0,
-                    STARTING_STACK - 1, STARTING_STACK - 2, '', rv0, 0)
+                    STARTING_STACK - 1, STARTING_STACK - 2, '', rv0, 0, hr0)
 
     # ------------------------------------------------------------------
     # Top-level estimate
@@ -340,7 +353,11 @@ class BestResponseEvaluator:
                              log_gain=True, seed=None):
         """Leak attribution run (parallel). Returns the standard exploitability dict
         PLUS `gain` -- a {(street, bucket): summed_gain} dict when log_gain (per-bucket
-        attribution). `br_streets` restricts the hero's BR streets (a set; None=all;
+        attribution, both seats; multiply by `gain_mbb_to` for mbb/hand) and
+        `gain_mbb_by_seat_street` -- {(seat, street): mbb/hand}. Each hero node's gain
+        is weighted by the hero's blueprint reach, so with br_streets=None a seat's
+        street gains sum to its BR minus the blueprint's own value there (both seats
+        together: the exploitability). `br_streets` restricts the hero's BR streets (a set; None=all;
         empty set = pure blueprint -> ~0, a sanity baseline). Same board sampling as
         evaluate_parallel, so a fixed seed gives comparable runs across br_streets."""
         import os
@@ -362,7 +379,13 @@ class BestResponseEvaluator:
                 for k, v in g.items():
                     gain[k] = gain.get(k, 0.0) + v
         res = self._finalize(b0, b1, num_samples)
-        res['gain'] = gain
+        # Measure units -> mbb/hand: a board's BR is sum(vec) / (H * _COMPATIBLE), with
+        # H = C(47, 2) hero hands on every 5-card board; / num_samples; chips -> mbb.
+        to_mbb = 1000.0 / 2.0 / (1081 * _COMPATIBLE * num_samples)
+        res['gain'] = {k: v for k, v in gain.items() if k[0] != 'seat'}
+        res['gain_mbb_by_seat_street'] = {
+            (k[1], k[2]): v * to_mbb for k, v in gain.items() if k[0] == 'seat'}
+        res['gain_mbb_to'] = to_mbb      # multiply a `gain` entry by this for mbb/hand
         return res
 
     @staticmethod

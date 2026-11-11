@@ -7,10 +7,10 @@ Two modes (both reuse the parallel BR walk in best_response.py):
 
   * default -- ONE full-BR pass with per-hero-node GAIN logging. The gain at a node
     = best-action value minus the blueprint-weighted value, per hero hand, summed by
-    (street, hero bucket). Summed by STREET -> the per-street leak share; by BUCKET
-    within a street -> which buckets the exploiter milks most. The gain is hero-reach-
-    UNWEIGHTED, so read it as a HEURISTIC ranking (the --restricted numbers are the
-    clean per-street cross-check).
+    (street, hero bucket), weighted by the hero's blueprint reach to the node, so the
+    gains telescope: summed over everything they equal the exploitability. Summed by
+    STREET -> the per-street leak share; by BUCKET within a street -> which buckets
+    the exploiter milks most (the --restricted numbers are an independent cross-check).
 
   * --restricted -- the clean per-street cross-check (~5x the cost): a RESTRICTED best
     response per street -- the hero may deviate ONLY on street S, blueprint elsewhere,

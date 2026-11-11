@@ -1,4 +1,4 @@
-# v3 blueprint — PLAN, awaiting sign-off
+# v3 blueprint — plan and progress log (V3.0–V3.5 done; ship decision and V3.6 pending)
 
 Branch `rust-core`. Written 2026-11-09 after the BUG-027 investigation.
 Follows [PHASE6_ABSTRACTION_PLAN.md](PHASE6_ABSTRACTION_PLAN.md) (SPR buckets built,
@@ -493,11 +493,10 @@ BUG-027 numbers stand. Fixed in 07f73ad:
 - **Training path: no bug.** Key packing fits K=20, all 20 river buckets are
   distinct keys, Rust == Python bucketing under v3, and the cap jam is correct.
 
-**Found for V3.6:** `range_tracker._PF_BUCKET_CACHE` / `_POSTFLOP_BUCKET_CACHE` are
-process-global and keyed by board only, not by abstraction. One process tracking
-ranges under two abstractions (v2 + v3 sessions on one gunicorn worker) would reuse
-the first one's buckets. The replay clears them between blueprints. Serving must key
-them by abstraction id before a named abstraction is served.
+**Fixed in 07f73ad (was "found for V3.6"):** `range_tracker`'s postflop bucket cache
+was process-global and keyed by board only, so one process tracking ranges under two
+abstractions would reuse the first one's buckets. It is now keyed by
+(abstraction dir, board); the replay no longer clears it by hand.
 
 ## Steps
 

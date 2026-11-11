@@ -20,7 +20,7 @@ through a **Flask** API, and exposes it in an interactive **React** platform.
   opponent actions, walking one trajectory through the game tree instead of the
   full exponential tree — making millions of training iterations tractable.
 - **Discounted CFR+ (Linear-CFR-style)**: time-discounted updates — regret discount
-  **α = 1.5**, strategy-sum discount **γ = 1.0** (a Linear-CFR uniform time-average) — for
+  **α = 1.5**, strategy-sum discount **γ = 1.0** (Linear-CFR averaging: iteration t weighs ∝ t) — for
   stable convergence toward a Nash equilibrium. (CFR+ with a `((t-1)/t)^α` discount on
   floored regrets and a `t^γ`-weighted average strategy — not the canonical DCFR α/β/γ scheme.)
 - **Self-play reinforcement learning**: no human data and no hand-crafted
@@ -107,7 +107,8 @@ SQLite checkpoint → automatic active-blueprint selection → API inference
 ## Key Features
 
 ### Strategy Engine
-- **Fast inference**: direct blueprint lookup from SQLite, no per-decision search.
+- **Fast inference**: direct blueprint lookup from SQLite preflop through the turn, plus an
+  exact real-time river subgame solver (with a safe re-solving gadget) on the river.
 - **Distribution-aware abstractions**: lossless 169-fine/10-coarse decoupled preflop +
   potential-aware postflop buckets (served v2 = 30/24/10; earlier v1 = 20/16/10;
   EMD-clustered equity distributions).
@@ -216,9 +217,13 @@ python tests/run_evaluation.py --samples 1000   # exploitability in mbb/hand (lo
   gunicorn), DynamoDB session/leaderboard/hand-recap stores, Cognito + Google auth,
   Cloudflare edge (DNS/CDN/WAF), Cloudflare Pages frontend, global +EV leaderboard,
   unrestricted human bet sizing
-- **Planned** — **Continual re-solving turn/flop**: revive the shelved depth-limited solver
-  with blueprint counterfactual values as the leaf function (the path that unlocks the bot's
-  own flop/turn overbets and 5-bets)
+- **Deferred** — **Turn/flop re-solving**: a depth-limited turn solver with a blueprint
+  counterfactual-value leaf was measured and shelved (it lost −66 mbb/hand: the leaf models
+  the blueprint river while the bot plays the river solver). Reviving it needs a
+  range-conditional value net, or exact solves of small low-SPR turn trees.
+- **In progress (branch rust-core)** — a Rust trainer (~300× the Python core) and the v3
+  blueprint: SPR-bucketed flop/turn keys, a preflop 5-bet jam, an exhaustive flop table and
+  20 river buckets. See docs/RUST_CORE_PLAN.md and docs/V3_BLUEPRINT_PLAN.md.
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for detail, and
 [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) for the architecture.

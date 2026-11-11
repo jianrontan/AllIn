@@ -63,9 +63,13 @@ def _read_key_format(db_path):
 
 
 def _servable_by_default(db_path):
-    """Auto-resolution candidates: v2 keys on the root (v2) abstraction."""
+    """Auto-resolution candidates: v2 keys on the root (v2) abstraction, under a menu
+    mode the serving path accepts (an unstamped DB is 'control'). Anything else would
+    be selected and then refused by BlueprintStrategy, leaving the API degraded."""
+    from .abstractions.sizing import SERVING_MENU_MODES
     return (_read_key_format(db_path) == 'v2'
-            and _read_metadata(db_path, 'abstraction', None) is None)
+            and _read_metadata(db_path, 'abstraction', None) is None
+            and (_read_metadata(db_path, 'menu_mode', None) or 'control') in SERVING_MENU_MODES)
 
 
 def _read_total_iterations(db_path):

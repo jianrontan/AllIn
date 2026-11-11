@@ -85,12 +85,12 @@ class RecordingSolver(RiverSubgameSolver):
             self.deep_jam_fires += 1
         return super()._route_dropped_allin(weights, stored, legal_actions)
 
-    def _facing_deep_raise_guard(self, key, legal, ps):
+    def _facing_deep_raise_guard(self, key, legal, ps, allow_river=False):
         if self.cripple_guard2:
             to_call = float(ps.get('to_call') or 0.0)
             if to_call >= _bot_stack(ps) - 1e-6:
                 return None      # pre-#2: punt the faced-all-in to the blueprint
-        return super()._facing_deep_raise_guard(key, legal, ps)
+        return super()._facing_deep_raise_guard(key, legal, ps, allow_river=allow_river)
 
     def decide(self, key, legal, public):
         trans = (public or {}).get('translation')

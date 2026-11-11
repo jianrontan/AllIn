@@ -96,8 +96,9 @@ class BlueprintTrainer:
         # NOT a code bug (the parallel gamma-clock was audited clean; H1 averaging is
         # correct -- Kuhn-verified in tests/h1_kuhn_check.py). A less aggressive discount
         # retains the earlier, more-mixed play. ===> CHANGED 2026-06-14 to gamma = 1.0
-        # (true Linear-CFR) for the next retrain, so the average is a stable uniform
-        # time-average rather than recent-weighted -- the tail should flatten (BR-sweep to
+        # (true Linear-CFR) for the next retrain: iteration t then weighs ~t (linear, less
+        # recent-weighted than gamma=2's t**2; a uniform average would be gamma=0) -- the
+        # tail should flatten (BR-sweep to
         # confirm; still serve the BEST snapshot). Override per-run with --gamma. See
         # analysis/training_curve + the U-curve probe (2026-06-10).
         self.gamma = 1.0

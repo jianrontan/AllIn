@@ -88,15 +88,16 @@ def _snapshot(db_path, total):
     return dest
 
 
-def _read_abstraction_stamp(db_path):
-    """(abstraction name, abstraction_id) stamped in a blueprint, None when absent."""
+def _read_abstraction_stamp(db_path, keys=('abstraction', 'abstraction_id')):
+    """The blueprint's training_metadata values for `keys` (default: abstraction name
+    and abstraction_id), None when absent."""
     import json
     import sqlite3
     from pathlib import Path
     conn = sqlite3.connect(Path(db_path).resolve().as_uri() + '?mode=ro', uri=True)
     try:
         out = []
-        for key in ('abstraction', 'abstraction_id'):
+        for key in keys:
             row = conn.execute("SELECT value FROM training_metadata WHERE key = ?",
                                (key,)).fetchone()
             out.append(json.loads(row[0]) if row else None)
@@ -207,6 +208,14 @@ def main():
             ap.error('refusing to train into a served blueprint (blueprint_final*); copy it first')
         stored = _read_abstraction_stamp(db_path)
         check_resume(stored[0], stored[1], abs_meta, 'train_rust')
+        if mode == 'parallel':
+            (old_round,) = _read_abstraction_stamp(db_path, ('merge_round_size',))
+            if old_round is not None and old_round != args.workers * args.merge_every:
+                print(f"WARNING: this run was trained with {old_round:,}-iteration merge rounds; "
+                      f"--workers {args.workers} x --merge-every {args.merge_every} = "
+                      f"{args.workers * args.merge_every:,}. The discount clocks tick once per "
+                      f"round, so each tick now weighs a different number of iterations.",
+                      flush=True)
         start = trainer.resume(db_path, mode)
         print(f"Resumed {args.resume}: {trainer.num_info_sets:,} info sets, iteration {start:,}")
     else:
@@ -226,6 +235,17 @@ def main():
         print(f"New run: {db_path}")
     trainer.stamp_mode(db_path, mode)
     _write_abstraction_stamp(db_path, abs_meta)
+    if mode == 'parallel':
+        round_size = args.workers * args.merge_every
+        _write_abstraction_stamp(db_path, {'merge_round_size': round_size})
+        if args.checkpoint_every % round_size:
+            # Each train() call ends in a partial round that still advances the discount
+            # clocks a full tick (the trainer can't carry a remainder across calls).
+            fixed = max(round_size, args.checkpoint_every // round_size * round_size)
+            print(f"WARNING: --checkpoint-every {args.checkpoint_every:,} is not a multiple of "
+                  f"the {round_size:,}-iteration merge round, so every checkpoint chunk ends in "
+                  f"a partial round weighted as a full one. Use e.g. --checkpoint-every "
+                  f"{fixed:,} (or adjust --workers / --merge-every).", flush=True)
     print(f"menu={args.menu_mode} key_format={args.key_format} mode={mode} workers={args.workers} merge_every={args.merge_every} "
           f"alpha={args.alpha} gamma={args.gamma} seed={seed}")
 

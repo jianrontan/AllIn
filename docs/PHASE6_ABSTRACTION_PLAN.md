@@ -1,8 +1,10 @@
-# Phase 6 — abstraction upgrade (v3 blueprint) — PLAN, awaiting sign-off
+# Phase 6 — abstraction upgrade (SPR buckets) — plan and results
 
-Branch `rust-core`. Status 2026-11-09: **signed off (Arm A, served-code
-changes behind `key_format`, Arm B deferred); 6.1 measured — see "6.1
-results"; bucket count (4 → 5) awaiting confirmation.**
+Branch `rust-core`. Status 2026-11-11: **done.** Signed off (Arm A, served-code
+changes behind `key_format`, Arm B deferred); 5 SPR buckets (`spr5`) confirmed,
+built, trained and scored (see "6.3/6.4 results"). Its BUG-027 conclusion is
+superseded by [V3_BLUEPRINT_PLAN.md](V3_BLUEPRINT_PLAN.md) (root cause: no
+preflop 5-bet jam), and the serving work moved to V3.6 there.
 Parent plan: [RUST_CORE_PLAN.md](RUST_CORE_PLAN.md) (Phases 0–5 done).
 
 ## Why now
@@ -41,7 +43,7 @@ key: SPR = effective stack ÷ pot when the street begins.
   fixed blinds), so every caller that has the history can compute it — no new
   state to thread through `GameSession`.
 - **Key format:** one new token before the pattern, e.g.
-  `pf_6_25_ip_flop_r3_a` (`r0..r3`). The Rust packed key has 3 spare bits
+  `pf_6_25_ip_flop_r3_a` (`r0..r4` as built). The Rust packed key has 3 spare bits
   (61 of 64 used), enough for up to 7 buckets.
 - **Size:** flop + turn are 148k of v2's 195k keys. Worst case ×4 on that
   slice → ~640k keys (3.3×). Real count is lower (not every bucket is
@@ -165,9 +167,9 @@ self-play hands (17 s on 10 workers):
   but that criterion rested on a wrong premise (above). Decision for the user.
 
 **6.2 Implement the key change, backward compatible.**
-- `make_info_set_key(..., spr_bucket=None)`; `None` keeps today's format, so
+- `make_info_set_key(..., spr=None)` (as built); `None` keeps today's format, so
   v2 keeps working unchanged. The blueprint DB is stamped with a
-  `key_format` metadata value (`v2` | `spr4`), and every reader builds keys in
+  `key_format` metadata value (`v2` | `spr5` as built), and every reader builds keys in
   the format of the blueprint it opened.
 - Same change in Rust `keys.rs` + key packing, one new parity fixture.
 - Python callers (14 sites): trainer, `game_adapter`, `game_session`,

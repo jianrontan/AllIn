@@ -21,8 +21,18 @@ from src.exploitation.opponent_model import HumanModel
 from src.storage.blueprint_db import BlueprintDB
 
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_MODEL_DIR = os.path.join(_HERE, 'analysis', 'opponent_models')
-_DB = os.path.join(_HERE, 'analysis', 'blueprints', 'snapshots', 'snap_52500000.db')
+_MODEL_DIR = os.environ.get('ALLIN_OPPONENT_MODEL_DIR') or os.path.join(
+    _HERE, 'analysis', 'opponent_models')
+# The models were fit under the 30/24/10 abstraction: the June snapshot, or the served v2
+# blueprint (same abstraction) when the snapshot is absent.
+_DB = next((p for p in (
+    os.path.join(_HERE, 'analysis', 'blueprints', 'snapshots', 'snap_52500000.db'),
+    os.path.join(_HERE, 'analysis', 'blueprints', 'blueprint_final_v2.db'))
+    if os.path.exists(p)), None)
+
+
+def _artifacts_present():
+    return bool(_DB) and os.path.exists(os.path.join(_MODEL_DIR, 'model_population.json'))
 _XY = '2a1a069d-d241-4e3f-9321-418ebf516c47'        # XYyyyy: verified preflop over-limper
 _LEGAL = ('fold', 'call', 'bet_small', 'bet_medium', 'bet_large', 'bet_xlarge')   # preflop open menu
 _KEY = 'pf_8_ip_'                                   # XYyyyy limps ~always here; GTO raises ~18%
@@ -39,8 +49,8 @@ def _valid(v):
 
 
 def run():
-    if not (os.path.exists(_DB) and os.path.exists(os.path.join(_MODEL_DIR, 'model_population.json'))):
-        print("  SKIP: opponent-model artifacts / snapshot DB not present")
+    if not _artifacts_present():
+        print("  SKIP: opponent-model artifacts / 30-24-10 blueprint not present")
         return True
     db = BlueprintDB(_DB, read_only=True)
     hm = HumanModel(_MODEL_DIR, db)
@@ -78,6 +88,10 @@ def run():
 
 
 def test_human_model():
+    if not _artifacts_present():
+        import pytest
+        pytest.skip(f'needs {_MODEL_DIR}/model_population.json and a 30/24/10 blueprint '
+                    '(set ALLIN_OPPONENT_MODEL_DIR)')
     assert run()
 
 

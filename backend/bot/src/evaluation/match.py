@@ -47,7 +47,8 @@ def _legal_actions(street, to_call, num_aggr, stack, pot, menu_mode='control'):
       * preflop OPEN (street 0, num_aggr==0) -> bet_* on the 4-size BB ladder (incl
         xlarge);  preflop 3-bet/4-bet (num_aggr>=1) -> raise_* (3 pot-relative sizes);
       * postflop first-in -> bet_* incl overbet;  facing a bet -> raise_* incl overbet.
-    Voluntary all-in is always available when a shove is a genuine raise."""
+    A voluntary all-in only on the control arm; capped arms get an all-in only from a
+    stack clamp (not mirrored here), and capped_pj adds the preflop cap jam."""
     from ..abstractions.sizing import postflop_menu_for, is_capped_mode, has_preflop_cap_jam
     postflop_sizes = list(postflop_menu_for(menu_mode))   # incl overbet2 iff 'capped'
     can_aggr = num_aggr < MAX_AGGR_PER_STREET and stack > max(0, to_call)
@@ -129,7 +130,10 @@ class BlueprintPlayer:
         n = len(legal)
         probs = None
         if stored:
-            w = np.array([max(0.0, stored.get(a, 0.0)) for a in legal])
+            from ..game.bot_strategy import route_dropped_allin
+            weights = route_dropped_allin({a: max(0.0, stored.get(a, 0.0)) for a in legal},
+                                          stored, legal)
+            w = np.array([weights[a] for a in legal])
             t = w.sum()
             if t > 1e-12:
                 probs = w / t
@@ -142,11 +146,11 @@ class BlueprintPlayer:
         return probs
 
     def act(self, seat, hand, vis, street, legal, pattern, street_pot,
-            pot=None, to_call=None, stack=None):
+            pot=None, to_call=None, stack=None, state=None):
         """Pick an action from `legal` (the engine's actions at this node).
         `street_pot` = pot when this street began (spr5 flop/turn keys); `pot`,
-        `to_call` and `stack` (chips now) are context for subclasses.
-        Returns (action, info)."""
+        `to_call`, `stack` (chips now) and `state` (the engine's node state) are
+        context for subclasses. Returns (action, info)."""
         pos = 'ip' if seat == 0 else 'oop'
         if street == 0:
             key = make_info_set_key(0, pos, self.cards.get_bucket(list(hand), None), None, pattern)
@@ -219,7 +223,7 @@ class HeadToHeadMatch:
                 to_call = max(0.0, st['bet_to'] - st['c'][actor])
                 action, info = players[actor].act(
                     actor, hands[actor], vis, street, legal, pattern, street_pot,
-                    pot=st['pot'], to_call=to_call, stack=stack)
+                    pot=st['pot'], to_call=to_call, stack=stack, state=st)
                 cost = game.state_action_cost(action, street, st, actor, stack)
                 char = action_char(action)
                 if events is not None:

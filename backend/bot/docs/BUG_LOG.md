@@ -10,6 +10,43 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-031 — The evaluation harness measured a different game from the one the bots were trained on
+
+| | |
+|---|---|
+| **Date** | 2026-11-11 |
+| **Area** | Evaluation (`src/evaluation/match.py`, `lbr.py`, `aivat.py`, `best_response.py`) |
+| **Severity** | High for decisions (the V3.5 head-to-head, human-model and LBR numbers were unreliable) · **Status** | Fixed on branch rust-core (07f73ad, 1c1bd4e and the follow-up commit) |
+
+**Summary.** Three reviews of the V3.5 evaluation found that the harness kept its own
+copies of the betting rules, and they had drifted from `PokerGame`:
+- `match.py` never turned a sized bet the stack can't cover into the engine's single
+  all-in, and skipped the min-bet / min-raise filters (v2 bet 1 chip into limped pots,
+  putting the other bot on keys its engine can't produce).
+- LBR's model of the bot raised by `to_call + mult × pot_after_call` on top of the chips
+  it already had in (the engine subtracts them), had no min-raise rule, translated on
+  the nominal grid at re-raises, and its exploiter jammed into faced-jam nodes the
+  blueprint never trained, pricing them as folds while the simulated bot coin-flipped:
+  every LBR value came out negative.
+- AIVAT replayed an spr5 opponent's range with v2-format keys.
+- BR's gain attribution was not weighted by the hero's reach, so the per-street split
+  did not add up to the exploitability.
+- Neither match.py nor LBR re-routed a blueprint's untakeable all-in mass the way the
+  served bot does (`route_dropped_allin`).
+
+**Why it wasn't caught.** The sizing-consistency test compared match.py's formula with
+itself rather than with the engine, and like ~115 other tests it used a `check()`
+helper that only printed FAIL — pytest passed even when every check failed.
+
+**Fix.** Matches run on each player's own `PokerGame` state machine; LBR's legal sets
+and sizes are fuzz-tested against `state_legal_actions` / `state_action_cost`
+(`tests/test_lbr_engine_mirror.py`); every `check()` helper also asserts.
+
+**Lessons.** Never hand-copy the engine's rules into a harness: drive the engine, or
+fuzz the copy against it. A test helper that doesn't raise isn't a test.
+
+---
+
 ## BUG-030 — Prod API latency incident (20 timeouts / 8h30m) was undiagnosable: the container log carried no request durations and dropped stderr entirely
 
 | | |
@@ -100,7 +137,7 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 |---|---|
 | **Date** | 2026-06-22 |
 | **Area** | Abstraction (`cfr/keys.make_info_set_key` postflop key + equity-vs-uniform postflop buckets) |
-| **Severity** | Medium (real EV leak in big pots) · **Status** | Open — root cause re-diagnosed 2026-11-09 (see Update): missing preflop 5-bet jam; fix planned in v3 (`docs/V3_BLUEPRINT_PLAN.md`) |
+| **Severity** | Medium (real EV leak in big pots) · **Status** | Partly fixed on branch rust-core — the preflop 5-bet jam (`capped_pj`) is built and trained (V3.4); the replay (`scripts/bug027_replay.py`, V3.5) shows 4-bet pots polarised and J9 reaching the spot 2–6× less often, but the call is still +EV against the blueprint's own shove range. The remaining gap (humans shove narrower than equilibrium) is for the exploitation layer. Not served yet (V3.6). |
 
 > **Update 2026-11-09 — the root cause below is wrong; SPR buckets do NOT fix this.** Three
 > checks on branch rust-core:

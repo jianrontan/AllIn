@@ -182,6 +182,18 @@ def test_auto_resolution_skips_named_abstractions(roots, tmp_path, monkeypatch):
     assert config.resolve_blueprint_path(d).name == 'blueprint_plain.db'
 
 
+def test_auto_resolution_skips_non_serving_menu_modes(tmp_path, monkeypatch):
+    """A capped_pj blueprint is refused by BlueprintStrategy (until V3.6), so it must
+    never be auto-selected over a servable one: the API would start degraded."""
+    from src import config
+    monkeypatch.delenv('ALLIN_BLUEPRINT_DB', raising=False)
+    d = tmp_path / 'bps'
+    d.mkdir()
+    _db(d / 'blueprint_capped.db', {'total_iterations': 10, 'menu_mode': 'capped'}).close()
+    _db(d / 'blueprint_pj.db', {'total_iterations': 999, 'menu_mode': 'capped_pj'}).close()
+    assert config.resolve_blueprint_path(d).name == 'blueprint_capped.db'
+
+
 # ---------------------------------------------------------------------- tables
 
 def _table(street, adir, **extra):

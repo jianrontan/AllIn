@@ -33,27 +33,30 @@ python strategy_api.py
 ### Local exploitation / stats testing (against a copy of prod data)
 To dev against real, persistent data (the stats UI, opponent exploitation, live last-N), run a LOCAL
 DynamoDB and clone prod into it. The store interface is backend-agnostic, so dev (local DynamoDB) runs
-the SAME code path as prod. (PowerShell: set the env vars with `$env:VAR='...'` instead of the inline form.)
+the SAME code path as prod.
 ```bash
-# 1. DynamoDB Local — use a Windows BIND MOUNT for persistence. A NAMED VOLUME hits a non-root write
+# 1. DynamoDB Local — use a BIND MOUNT for persistence. A NAMED VOLUME hits a non-root write
 #    wall (SQLite "unable to open database file" crash-loop -> localhost:8000 READ-TIMEOUT; --user root
-#    -> "Invalid directory"); a bind mount is writable. git-bash: prefix `MSYS_NO_PATHCONV=1`.
-docker run -d --name allin-ddb -p 8000:8000 -v C:/Users/<you>/ddb-data:/data \
+#    -> "Invalid directory"); a bind mount is writable.
+docker run -d --name allin-ddb -p 8000:8000 -v "$HOME/ddb-data:/data" \
   amazon/dynamodb-local -jar DynamoDBLocal.jar -sharedDb -dbPath /data
 #    Later sessions: `docker start allin-ddb` (data persists in the bind mount — NO re-clone).
 
 # 2. Clone prod -> local (needs prod READ creds via `aws configure`; only WRITES to --endpoint). From backend/bot:
 python scripts/clone_dynamo_to_local.py --endpoint http://localhost:8000
 
-# 3. Run the API against the local copy + exploitation flags. From backend/api (bash inline-env shown):
+# 3. Run the API against the local copy + exploitation flags. From backend/api -- relative paths
+#    resolve against backend/api, so they point into ../bot:
 ALLIN_STORE_BACKEND=dynamodb ALLIN_SESSION_STORE=dynamodb ALLIN_DYNAMODB_ENDPOINT=http://localhost:8000 \
 AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local AWS_DEFAULT_REGION=ap-southeast-1 \
-ALLIN_BLUEPRINT_DB=analysis/blueprints/snapshots/snap_52500000.db ALLIN_OPPONENT_MODEL_DIR=analysis/opponent_models \
+ALLIN_BLUEPRINT_DB=../bot/analysis/blueprints/snapshots/snap_52500000.db \
+ALLIN_OPPONENT_MODEL_DIR=../bot/analysis/opponent_models \
 ALLIN_EXPLOIT=1 ALLIN_EXPLOIT_RECENT_N=100 ALLIN_EXPLOIT_RECENT_REFRESH=50 \
 ALLIN_GADGET_ANCHOR=belief ALLIN_MMAP_POSTFLOP=1 python strategy_api.py
 ```
 - The 30/24 `snap_*` blueprint is REQUIRED for exploitation (the models were fit under it; a mismatch
-  self-disables exploit). `ALLIN_GADGET_ANCHOR=belief` lets it actually exploit (drops the ≤-blueprint
+  self-disables exploit; the served `blueprint_final_v2.db` shares the abstraction). `snapshots/` and
+  `opponent_models/` are git-ignored and exist only in the main checkout, not in worktrees. `ALLIN_GADGET_ANCHOR=belief` lets it actually exploit (drops the ≤-blueprint
   floor — local only; prod stays `auto`). Cold (empty store) -> the bot starts at the population model
   and adapts as you play; re-clone (`clone_dynamo_to_local.py`, upserts) to refresh from prod.
 - Failure modes: clone hangs with no output = AWS creds not in THIS shell (boto3 IMDS timeout; the
@@ -126,6 +129,36 @@ python tests/run_evaluation.py --samples 1000
 python tests/run_evaluation.py --db analysis/blueprints/blueprint_20260518_160906.db
 ```
 
+### Branch rust-core (Rust core + v3 blueprint work; not on main yet)
+Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN.md`,
+`docs/V3_BLUEPRINT_PLAN.md` — read the relevant one first.
+- **Environment:** a uv `.venv` (Python 3.12) at the worktree root; run Python as
+  `../../.venv/bin/python` from `backend/bot/`. Rust is Homebrew rustup (keg-only):
+  `env PATH=/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/usr/bin:/bin cargo test --release`
+  from `backend/core-rs/`; rebuild the PyO3 module `allin_core` with `maturin develop --release`.
+- **Rust trainer:** `backend/core-rs` (engine, keys, buckets, MCCFR, parallel merge), driven by
+  `scripts/train_rust.py` (~50k it/s on 12 cores; writes `analysis/blueprints_rs/`, snapshots
+  with `--snapshot-every`). Python stays the oracle: a component is done only when
+  `backend/core-rs/parity/` passes against fixtures from `scripts/export_rust_fixtures.py`.
+- **spr5 keys** (`--key-format spr5`): flop/turn keys carry the street-start SPR bucket,
+  `pf_C_S_pos_street_r{0..4}_pattern` (edges 2/5/12/40; `cfr/keys.py:spr_bucket`). Every reader
+  builds keys in its blueprint's stamped `key_format`.
+- **Versioned card abstractions:** an abstraction is a directory — the root
+  `analysis/abstractions/` (v2) or a named subdir such as `v3/` (exhaustive flop table, 20 river
+  buckets). Blueprints are stamped with an `abstraction_id`; readers bucket with
+  `abstraction_set.resolve_abstraction_dir(db)` and fail closed on a mismatch. Check a dir with
+  `scripts/check_abstraction.py --abstraction v3` (must print OK); baked tables are git-ignored.
+- **Serving fails closed** on spr5 keys, named abstractions and `capped_pj` (`BlueprintStrategy`,
+  the river solver, the API, the PyPokerEngine `Player`) until V3.6; auto-resolution skips them.
+- **Evaluation scripts** (`backend/bot/scripts/`): `h2h_eval.py` (AIVAT head-to-head; plays an
+  untrained faced jam with prod's guard; `--db-b model` = the fitted human population model,
+  `--model-dir`), `lbr_paired.py` (per-hand LBR for paired comparisons), `br_attr.py` (BR with
+  per-street gain attribution), `bug027_replay.py` (the BUG-027 hand through any blueprint).
+  `match.py` plays each side on its own `PokerGame` state machine, so the legal actions, stack
+  clamps and chip costs are the engine's.
+- **Naming clash:** "Phase 6" in these branch plans is the abstraction upgrade; in the Roadmap
+  Notes below it is opponent exploitation.
+
 ## Architecture
 
 ### Data Flow
@@ -184,10 +217,15 @@ from `cfr/keys.py:action_char` (which RAISES on an unmapped action rather than d
 char — a silent default once aliased the real `xlarge` char and corrupted keys). Changing any
 size is an **abstraction change → retrain required** (existing blueprints become incompatible).
 
-- **Postflop** bet/raise: `small`=0.33x, `medium`=0.66x, `large`=1.0x, `overbet`=1.5x pot (a
-  raise is a fraction of the pot-after-call) + voluntary all-in. The one `overbet` tier (1.5x,
-  pattern char `o`) is the only overbet the blueprint trains; larger overbets (2x+) are left to
-  the Phase-4 subgame solver's own menu.
+- **Menu modes** (`sizing.MENU_MODES`; a blueprint is stamped with its `menu_mode`, and every
+  engine is built through `sizing.game_kwargs(menu_mode)`):
+  - `control`: postflop `small`=0.33x, `medium`=0.66x, `large`=1.0x, `overbet`=1.5x pot (a raise is
+    a fraction of the pot-after-call) + a voluntary all-in anywhere.
+  - `capped` (the SERVED v2 blueprint): the same plus `overbet2`=2.0x (char `2`), and NO voluntary
+    all-in — an all-in only emerges when a sized bet clamps to the stack.
+  - `capped_no2`: `capped` without `overbet2`.
+  - `capped_pj` (v3, branch rust-core): `capped` plus a 5-bet jam at the preflop raise cap (facing
+    a 4-bet: fold / call / all-in). Serving refuses it until V3.6 (`SERVING_MENU_MODES`).
 - **Preflop open** (first-in raise): BB-anchored ladder — `small`=2BB, `medium`=2.5BB,
   `large`=3.5BB, `xlarge`=5BB. Small opens are GTO-optimal in heads-up; the `xlarge` tier
   (pattern char `x`) is **open-only** — a 4th anchor so big human opens translate against a
@@ -197,13 +235,15 @@ size is an **abstraction change → retrain required** (existing blueprints beco
   min-raise versus a large open; pot-relative scales so all three sizes stay legal at every open
   size.) NOTE: the three node types no longer share one size list — open has 4 (incl. `xlarge`),
   3-bet/4-bet has 3 (`sizing.SIZES`), postflop has 4 (incl. `overbet`) — so iterate the relevant
-  dict, not a shared tuple. (Review note 2026-05: the 3-bet/4-bet multipliers are FINE as-is —
-  judged as 3-bet-to multiples of the open they are 2.32x / 3.0x / 4.0x, which brackets the GTO
-  ~3-4x range well; all sizes stay legal at every open and re-raise depth, incl. a 0.5x 4-bet after
-  a 1.5x 3-bet. A possible refinement is a 4th SMALL ~0.5x (≈2.0x open) tier on the 3-bet half only
-  to capture the linear-3-bet branch — but justify it with a per-line BR/LBR leak measurement, not
-  with node-count symmetry; it's an abstraction change → retrain. Do NOT add a 4th 4-bet size: at
-  low SPR 4-bets compress toward one-size-or-jam.)
+  dict, not a shared tuple. NB the engine's raise-to is `mult × pot_after_call + to_call`, so the
+  raiser ADDS that minus what it already has in this street: versus a 2BB open the three 3-bets
+  go to 1.82x / 2.5x / 3.5x the open (eff. fractions 0.41 / 0.75 / 1.25, not 0.66 / 1.0 / 1.5).
+  Anything that mirrors the bot's sizes or translation grid (LBR, the explorer) must use these
+  real values (`translation.preflop_grid`, `GameSession._node_grid`). (Review note, corrected
+  2026-11: so a small ~2x 3-bet effectively exists already; don't add sizes for symmetry —
+  justify one with a per-line leak measurement. Humans almost never bet off the grid (0.16% of
+  postflop bets in the 2026 export). Do NOT add a 4th 4-bet size: at low SPR 4-bets compress
+  toward one-size-or-jam.)
 - An unrestricted/off-grid bet (custom human size, or an exploiter) maps onto this grid via
   pseudo-harmonic action translation (Phase 1a).
 
@@ -358,7 +398,7 @@ UI the user never asked to change. Do not repeat that.
 ## Key Constraints
 
 - The Flask API **must** be started from `backend/api/` — it uses `sys.path.insert(0, backend_dir)` so imports like `from bot.src.bot.game_adapter import GameAdapter` resolve correctly.
-- The active blueprint is resolved by `src/config.py:resolve_blueprint_path()`: the `analysis/blueprints/blueprint_*.db` with the highest `total_iterations`, or whatever `ALLIN_BLUEPRINT_DB` points at. There is no `blueprint.json`/`blueprint.db` to maintain by hand.
+- The active blueprint is resolved by `src/config.py:resolve_blueprint_path()`: whatever `ALLIN_BLUEPRINT_DB` points at (used as-is; a relative path resolves against the working directory), else the `analysis/blueprints/blueprint_*.db` with the highest `total_iterations` among the SERVABLE ones — v2 keys, the root abstraction and a serving menu mode (spr5, named-abstraction and `capped_pj` DBs are skipped). There is no `blueprint.json`/`blueprint.db` to maintain by hand.
 - Inference always opens the DB with `read_only=True`; only training opens it read/write.
 - Each hand of `GameSession` starts both players at `STARTING_STACK` (the blueprint assumes ~200 effective). Cross-hand profit/loss is tracked separately in `human_net`.
 - Stakes: `STARTING_STACK = 200` chips with SB=1 / BB=2, i.e. **100 BB effective stacks** — standard heads-up depth. Starting pot is always 3 chips. Pot math is in chips throughout the backend; the frontend displays everything in BB (chips ÷ 2).
@@ -375,8 +415,9 @@ as input, so the range tracker has to exist before the solver.
   Built first so every later change is *scored, not guessed*.
 - **Phase 1b — strategy-sum discount (gamma)** ✅ done. Linear-CFR-style avg-strategy
   discount with its own opponent-node clock (`information_set.py`, `blueprint_trainer.py`).
-  Shipped with `gamma=2`; **the current default is `gamma=1`** (uniform time-average — a
-  gamma=2 sweep over-purified into a U-curve), used by the lossless-preflop retrain. (Not
+  Shipped with `gamma=2`; **the current default is `gamma=1`** (LINEAR averaging: iteration t's
+  strategy weighs ∝ t — less recent-weighted than gamma=2's t², but not uniform, which is
+  gamma=0; verified 2026-11 on `allin_core.merge_round`. A gamma=2 sweep over-purified into a U-curve), used by the lossless-preflop retrain. (Not
   canonical DCFR — see the trainer docstring.)
 - **Phase 1a — Pseudo-harmonic action translation** ✅ done (2026-05-26), shipped together
   with unrestricted custom human bet sizing. Inference-only (no retraining). `cfr/translation.py`

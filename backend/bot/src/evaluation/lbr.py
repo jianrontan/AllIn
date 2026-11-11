@@ -124,7 +124,10 @@ class LBREvaluator:
         n = len(legal)
         probs = None
         if stored:
-            w = np.array([max(0.0, stored.get(a, 0.0)) for a in legal])
+            from ..game.bot_strategy import route_dropped_allin
+            weights = route_dropped_allin({a: max(0.0, stored.get(a, 0.0)) for a in legal},
+                                          stored, legal)
+            w = np.array([weights[a] for a in legal])
             total = w.sum()
             if total > 1e-12:
                 probs = w / total
@@ -380,6 +383,14 @@ class LBREvaluator:
             size = a.split('_')[1]
             if street > 0 and to_call == 0 and self._postflop_menu[size] * pot < 2:
                 continue
+            if a.startswith('raise_'):
+                # Min-raise (PokerGame._ns_fold_call_raises): the raise-to total
+                # mult * pot_after_call + to_call must reach bet_to + the last raise
+                # increment. The level before the last aggression is what this player
+                # has in, so the minimum raise-to is committed + 2 * to_call.
+                mult = (PREFLOP_RAISE_MULT if street == 0 else self._postflop_menu)[size]
+                if mult * (pot + to_call) + to_call < committed + 2 * to_call - 1e-9:
+                    continue
             add = max(self._bot_sizing(size, street, pot, to_call, committed, num_aggr),
                       to_call + 1)
             if add >= stack:

@@ -36,6 +36,39 @@ _JAM_WEIGHTS = _JAM_WEIGHT_SCHEMES.get(os.environ.get('ALLIN_DEEP_JAM_WEIGHT', '
                                        _JAM_WEIGHT_SCHEMES['medium'])
 
 
+def route_dropped_allin(weights, stored, legal_actions):
+    """Deep-stack all-in translation. The blueprint may want to JAM ('allin'), learned when
+    stacks were ~committed. On a DEEP stack a standalone 'allin' isn't legal, so its mass would
+    otherwise spread PROPORTIONALLY into the leftover -- leaking into call/FOLD (the bot folds
+    hands it wanted to commit). Instead route that mass to the legal sized bets/raises weighted
+    by _JAM_WEIGHTS (a jam's closest legal expression is a big bet). Only fires when 'allin'
+    has mass but isn't legal (deep); at low SPR 'allin' IS legal -> untouched. Mutates +
+    returns `weights` ({action: mass} over legal_actions). Disable via
+    ALLIN_DEEP_JAM_ROUTING=0. Shared by the served bot and the evaluation harness (match.py,
+    lbr.py) so they play a blueprint the same way."""
+    if not _DEEP_JAM_ROUTING:
+        return weights
+    am = stored.get('allin', 0.0)
+    if am <= 1e-9 or 'allin' in legal_actions:
+        return weights
+    sized = {}
+    for a in legal_actions:
+        if a.startswith(('bet_', 'raise_')) and '_' in a:
+            w = _JAM_WEIGHTS.get(a.split('_', 1)[1])
+            if w:
+                sized[a] = float(w)
+    tot = sum(sized.values())
+    if tot > 0:
+        for a, m in sized.items():
+            weights[a] = weights.get(a, 0.0) + am * m / tot
+    elif 'call' in legal_actions:
+        # No sized bet legal (e.g. re-raise capped) -> route the jam mass to CALL (the closest
+        # legal "commit") rather than letting it leak proportionally into fold -- closes the
+        # residual of the original bug (review finding, 2026-06-20).
+        weights['call'] = weights.get('call', 0.0) + am
+    return weights
+
+
 class BotStrategy(ABC):
     @abstractmethod
     def decide(self, info_set_key, legal_actions, public_state):
@@ -144,34 +177,8 @@ class BlueprintStrategy(BotStrategy):
         return {}
 
     def _route_dropped_allin(self, weights, stored, legal_actions):
-        """Deep-stack all-in translation. The blueprint may want to JAM ('allin'), learned when
-        stacks were ~committed. On a DEEP stack a standalone 'allin' isn't legal, so its mass would
-        otherwise spread PROPORTIONALLY into the leftover -- leaking into call/FOLD (the bot folds
-        hands it wanted to commit). Instead route that mass to the legal sized bets/raises weighted
-        toward the LARGEST (a jam's closest legal expression is the biggest bet), tapering down by
-        bet size. Only fires when 'allin' has mass but isn't legal (deep); at low SPR 'allin' IS
-        legal -> untouched. Mutates + returns `weights`. Disable via ALLIN_DEEP_JAM_ROUTING=0."""
-        if not _DEEP_JAM_ROUTING:
-            return weights
-        am = stored.get('allin', 0.0)
-        if am <= 1e-9 or 'allin' in legal_actions:
-            return weights
-        sized = {}
-        for a in legal_actions:
-            if a.startswith(('bet_', 'raise_')) and '_' in a:
-                w = _JAM_WEIGHTS.get(a.split('_', 1)[1])
-                if w:
-                    sized[a] = float(w)
-        tot = sum(sized.values())
-        if tot > 0:
-            for a, m in sized.items():
-                weights[a] = weights.get(a, 0.0) + am * m / tot
-        elif 'call' in legal_actions:
-            # No sized bet legal (e.g. re-raise capped) -> route the jam mass to CALL (the closest
-            # legal "commit") rather than letting it leak proportionally into fold -- closes the
-            # residual of the original bug (review finding, 2026-06-20).
-            weights['call'] = weights.get('call', 0.0) + am
-        return weights
+        """See route_dropped_allin (module level, shared with the eval harness)."""
+        return route_dropped_allin(weights, stored, legal_actions)
 
     def _state_distribution(self, info_set_key, legal_actions, public_state):
         """Distribution accounting for action translation. When the opponent

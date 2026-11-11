@@ -47,15 +47,13 @@ def test_best_response_walk_runs():
 
 
 def test_health_endpoint():
-    # Importing the API resolves a blueprint + loads tables; skip if unavailable.
-    try:
-        api_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__)))), 'api')
-        sys.path.insert(0, api_dir)
-        import strategy_api
-    except Exception as e:
-        print(f"SKIP test_health_endpoint (API import failed: {e!r})")
-        return
+    # Importing the API resolves a blueprint + loads tables. It must not raise: a
+    # missing/unloadable blueprint leaves the API degraded (healthz 503), so an import
+    # error here is a real defect (it used to be swallowed as a SKIP).
+    api_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)))), 'api')
+    sys.path.insert(0, api_dir)
+    import strategy_api
     # Call the view inside an app context (avoids a werkzeug test_client version
     # quirk with `as_tuple`); still exercises the real endpoint handler. The
     # view always returns (Response, status_code) -- the status is the rolling-
