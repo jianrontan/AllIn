@@ -304,6 +304,13 @@ class LBREvaluator:
             eff_frac = translation.eff_fraction(total_add, to_call, pot)
             allin_frac = translation.eff_fraction(stack[lbr_seat], to_call, pot)
             grid = translation.postflop_grid_for(self.menu_mode)
+            if to_call > 0 and committed[lbr_seat] > 0:
+                # A re-raise: the engine's sizes are smaller than the nominal pot
+                # fractions by what the raiser already committed (the deployed
+                # bot's GameSession._node_grid uses these real fractions).
+                pac = pot + to_call
+                grid = sorted(((c, f - committed[lbr_seat] / pac) for c, f in grid),
+                              key=lambda cf: cf[1])
             # Append the all-in point only if it is BEYOND the top sized tier (so a
             # capped grid whose top is 2.0x doesn't double-add when stack ~= 2x pot).
             if allin_frac > grid[-1][1]:
@@ -347,15 +354,17 @@ class LBREvaluator:
             if num_aggr == 0:                          # open: absolute BB ladder
                 to_amt = preflop_open_chips()[size]
                 return int(round(to_amt - bot_committed))
-            # 3-bet / 4-bet+: pot-relative (unified, matches the engine).
+            # 3-bet / 4-bet+: pot-relative. The engine raises TO
+            # mult * pot_after_call + to_call, so the bot ADDS that minus what it
+            # already committed this street (PokerGame.calculate_raise_amount).
             mult = PREFLOP_RAISE_MULT[size]
-            return int(round(to_call + mult * (pot + to_call)))
+            return int(round(to_call + mult * (pot + to_call) - bot_committed))
         # Postflop: index the ARM's menu (self._postflop_menu = capped 5-size incl.
         # overbet2 when menu_mode='capped'), NOT the module default -- otherwise a
         # capped blueprint's 'overbet2' size raises KeyError here.
         mult = self._postflop_menu[size]
-        if to_call > 0:
-            return int(round(to_call + mult * (pot + to_call)))
+        if to_call > 0:                        # raise TO mult*pac + to_call (engine)
+            return int(round(to_call + mult * (pot + to_call) - bot_committed))
         return int(round(mult * pot))
 
     def _engine_constrain(self, legal, street, pot, to_call, committed, num_aggr, stack):

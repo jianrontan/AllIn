@@ -34,6 +34,7 @@ def check(name, cond, extra=''):
     else:
         _failed += 1
         print(f"FAIL {name} {extra}")
+    assert cond, f"{name} {extra}"          # fail under pytest too, not just __main__
 
 
 # All three trained postflop menu arms. Drift-guards must cover every served
@@ -111,12 +112,61 @@ def test_match_matches_sizing():
         add = match_sizing(s, 0, pot=3, to_call=1, committed=1, num_aggr=0)
         check(f'match open {s} add matches engine increment',
               add == int(round(open_chips[s] - 1)), f"(add={add}, to={open_chips[s]})")
-    # 3-bet (num_aggr=1) is pot-relative, unified with 4-bet+ (no absolute ladder).
-    pot, to_call = 10, 4
-    add1 = match_sizing('medium', 0, pot=pot, to_call=to_call, committed=4, num_aggr=1)
-    expected = int(round(to_call + sizing.PREFLOP_RAISE_MULT['medium'] * (pot + to_call)))
-    check('match 3-bet is pot-relative (unified)', add1 == expected,
-          f"(add={add1}, expected={expected})")
+    # Raises: the engine raises TO mult * pot_after_call + to_call, so the actor ADDS
+    # that minus what it already committed this street. Compare with the ENGINE's
+    # own cost on real histories (preflop 3-bet and 4-bet, postflop raise/re-raise).
+    for street, hist, pot, to_call, committed, num_aggr in _RAISE_SPOTS:
+        g = PokerGame(**sizing.game_kwargs('capped'))
+        for size in ('small', 'medium', 'large'):
+            want = g._action_cost(f'raise_{size}', street, hist, _START_POT[street],
+                                  len(hist) % 2 if street == 0 else (len(hist) + 1) % 2,
+                                  *_PREV[street])
+            menu = None if street == 0 else sizing.POSTFLOP_BET_MULT_CAPPED
+            got = match_sizing(size, street, pot=pot, to_call=to_call, committed=committed,
+                               num_aggr=num_aggr, postflop_menu=menu)
+            check(f'match raise {street}/{hist}/{size} == engine', got == int(round(want)),
+                  f"(match {got}, engine {want})")
+
+
+def test_lbr_raise_matches_engine():
+    lbr = LBREvaluator(_NullDB(), menu_mode='capped')
+    for street, hist, pot, to_call, committed, num_aggr in _RAISE_SPOTS:
+        g = PokerGame(**sizing.game_kwargs('capped'))
+        for size in ('small', 'medium', 'large'):
+            want = g._action_cost(f'raise_{size}', street, hist, _START_POT[street],
+                                  len(hist) % 2 if street == 0 else (len(hist) + 1) % 2,
+                                  *_PREV[street])
+            got = lbr._bot_sizing(size, street, pot, to_call, committed, num_aggr)
+            check(f'lbr raise {street}/{hist}/{size} == engine', got == int(round(want)),
+                  f"(lbr {got}, engine {want})")
+
+
+# Raise spots, with pot / to_call / committed taken from the engine itself:
+# (street, history, aggressions so far). Preflop starts at pot 3 with blinds 1/2;
+# postflop at pot 20 with 10 already in from each player.
+_START_POT = {0: 3, 1: 20}
+_PREV = {0: (0.0, 0.0), 1: (10.0, 10.0)}
+_SPOTS = [
+    (0, ['bet_small'], 1),                         # BB 3-bets a 2BB open
+    (0, ['bet_large'], 1),                         # BB 3-bets a 3.5BB open
+    (0, ['bet_small', 'raise_medium'], 2),         # SB 4-bets
+    (1, ['bet_medium'], 1),                        # first raise facing a 0.66 bet
+    (1, ['bet_small', 'raise_small'], 2),          # re-raise
+]
+
+
+def _spot(street, hist, num_aggr):
+    g = PokerGame(**sizing.game_kwargs('capped'))
+    actor = len(hist) % 2 if street == 0 else (len(hist) + 1) % 2
+    prev = _PREV[street]
+    pot = g.calculate_current_pot(_START_POT[street], hist, street, *prev)
+    to_call = g.get_call_amount_from_history(street, hist, _START_POT[street], *prev)
+    committed = g.get_player_contribution_this_round(hist, street, _START_POT[street],
+                                                     actor, *prev)
+    return (street, hist, pot, to_call, committed, num_aggr)
+
+
+_RAISE_SPOTS = [_spot(*x) for x in _SPOTS]
 
 
 class _NullDB:
@@ -129,5 +179,6 @@ if __name__ == '__main__':
     test_action_abstraction_matches_sizing()
     test_lbr_open_matches_sizing()
     test_match_matches_sizing()
+    test_lbr_raise_matches_engine()
     print(f"\nResults: {_passed} passed, {_failed} failed out of {_passed + _failed}")
     sys.exit(1 if _failed else 0)

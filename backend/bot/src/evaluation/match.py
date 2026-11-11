@@ -84,12 +84,13 @@ def _sizing(size, street, pot, to_call, committed, num_aggr, postflop_menu=None)
         if num_aggr == 0:                          # open: absolute BB ladder
             to_amt = preflop_open_chips()[size]
             return int(round(to_amt - committed))
-        # 3-bet / 4-bet+: pot-relative (unified, matches the engine).
+        # 3-bet / 4-bet+: pot-relative; the engine raises TO mult*pac + to_call,
+        # so the actor ADDS that minus what it already committed this street.
         mult = PREFLOP_RAISE_MULT[size]
-        return int(round(to_call + mult * (pot + to_call)))
+        return int(round(to_call + mult * (pot + to_call) - committed))
     mult = (postflop_menu or POSTFLOP_BET_MULT)[size]
     if to_call > 0:
-        return int(round(to_call + mult * (pot + to_call)))
+        return int(round(to_call + mult * (pot + to_call) - committed))
     return int(round(mult * pot))
 
 

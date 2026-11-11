@@ -25,6 +25,7 @@ def check(name, cond, extra=''):
     else:
         _failed += 1
         print(f"FAIL {name} {extra}")
+    assert cond, f"{name} {extra}"   # fail under pytest too, not just the __main__ count
 
 
 def _write_db(path, total_iterations, key='pf_9_ip_'):

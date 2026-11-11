@@ -38,6 +38,7 @@ def check(cond, msg):
         _failed += 1
         if len(_fail_examples) < 25:
             _fail_examples.append(msg)
+    assert cond, msg   # fail under pytest too, not just the __main__ count
 
 
 # The state-threaded logic under test now lives in poker_game.py as real

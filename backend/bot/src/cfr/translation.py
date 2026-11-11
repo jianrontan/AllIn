@@ -63,7 +63,10 @@ def preflop_grid(num_aggr, committed_actor, to_call, pot, open_chips, raise_mult
       raise_mult : {size_name: pot-after-call multiplier}  (sizing.PREFLOP_RAISE_MULT)
       size_char  : {size_name: char}              (e.g. {'small':'s',...})
     num_aggr == 0 -> first-in open (absolute ladder, scored on the eff_fraction
-    axis); else 3-bet/4-bet (eff_frac == the multiplier). This is the single
+    axis); else 3-bet/4-bet: the engine raises TO `mult * pot_after_call + to_call`
+    (PokerGame.calculate_raise_amount), so the actor ADDS that minus what it already
+    committed this street, and its eff fraction is mult - committed / pot_after_call
+    (0.41 / 0.75 / 1.25 for a 3-bet vs a 2BB open, not 0.66 / 1.0 / 1.5). This is the single
     definition the live API (_preflop_grid) and the LBR victim model share so they
     can't drift -- same discipline as keys.py / sizing.py."""
     grid = {}
@@ -72,7 +75,8 @@ def preflop_grid(num_aggr, committed_actor, to_call, pot, open_chips, raise_mult
             grid[size_char[size]] = eff_fraction(total - committed_actor, to_call, pot)
     else:
         for size, mult in raise_mult.items():
-            grid[size_char[size]] = mult
+            total = mult * (pot + to_call) + to_call - committed_actor
+            grid[size_char[size]] = eff_fraction(total, to_call, pot)
     return sorted(grid.items(), key=lambda cf: cf[1])
 
 

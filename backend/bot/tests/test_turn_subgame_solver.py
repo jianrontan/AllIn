@@ -96,7 +96,7 @@ def test_decide_turn_emits_action():
         'seat': 1, 'botSeat': 1, 'to_call': 0.0, 'pot': 24.0,
         'p0_stack': 88.0, 'p1_stack': 88.0,
         'turnEntryPot': 24.0, 'turnEntryStacks': (88.0, 88.0), 'turnPath': [],
-        'opp_range': villain, 'hero_range': hero,
+        'turnEntryOppRange': villain, 'turnEntryHeroRange': hero,
     }
     a = s.decide('pf_9_5_oop_turn_', legal, ps)
     db.close()
@@ -157,7 +157,7 @@ def test_turn_spr_gate():
         return
     s = _solver(db)
     base = dict(street='turn', community=_BOARD4, hole_cards=_HOLE, botSeat=1,
-                opp_range=object(), hero_range=object(), turnPath=[])
+                turnEntryOppRange=object(), turnEntryHeroRange=object(), turnPath=[])
     # High-SPR (deep stacks, small pot) -> skip the solve.
     assert s._turn_solver_inputs(
         {**base, 'turnEntryPot': 8.0,

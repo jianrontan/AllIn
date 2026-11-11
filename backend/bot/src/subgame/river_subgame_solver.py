@@ -335,6 +335,19 @@ class RiverSubgameSolver(BlueprintStrategy):
         if guarded is not None:
             return guarded
         spec = self._solver_inputs(ps)
+        if spec is None and ps.get('street') == 'river':
+            # The solver skipped this river spot (high SPR). The guards defer the river
+            # to the solver, so without this an untrained faced raise (a 4th+ river
+            # aggression, legal live) would be the blueprint's fold/call coin flip.
+            try:
+                deep = self._facing_deep_raise_guard(info_set_key, legal_actions, ps,
+                                                     allow_river=True)
+            except Exception:
+                self._fallback_count += 1
+                self.stats['fallback'] += 1
+                deep = self._safe_untrained_call(info_set_key, legal_actions, ps)
+            if deep is not None:
+                return deep
         if spec is None:
             exdbg = self._exploit_debug(ps)
             tilted = self._exploit_tilt_dist(info_set_key, legal_actions, ps)
@@ -375,6 +388,7 @@ class RiverSubgameSolver(BlueprintStrategy):
         (never crash a live hand: advance_bot_turns only catches GameError, so an
         unguarded raise here would 500 the hand). Returns the guard action or None,
         and records guard stats / debug. Shared by river decide() and the turn solver."""
+        self._tls.allin_guard_dbg = None             # never report a previous decision's numbers
         try:
             guard = self._facing_allin_guard(legal_actions, ps)
         except Exception:
@@ -386,7 +400,7 @@ class RiverSubgameSolver(BlueprintStrategy):
             self.stats['allin_guard'] += 1
             self.last_debug = {'mode': 'allin_guard', 'street': ps.get('street'),
                                'action': guard, **self._exploit_debug(ps),
-                               **(getattr(self, '_allin_guard_dbg', None) or {})}
+                               **(getattr(self._tls, 'allin_guard_dbg', None) or {})}
         return guard
 
     def _gate_and_pick(self, dist, node, info, info_set_key, legal_actions, ps, spec,
@@ -552,7 +566,7 @@ class RiverSubgameSolver(BlueprintStrategy):
         # Surface the numbers the guard decided on (debug overlay): the bot's equity vs the BELIEF,
         # the equity it NEEDS (pot odds), and the chip EV of calling. Lets you judge whether a faced-
         # all-in call/fold was sound (eq >= need = a +EV call) or a belief over/under-estimate.
-        self._allin_guard_dbg = {
+        self._tls.allin_guard_dbg = {
             'guardEq': round(eq, 3),
             'guardNeed': round(call_cost / final_pot, 3) if final_pot > 0 else None,
             'guardEvCall': round(ev_call, 2)}
@@ -563,7 +577,7 @@ class RiverSubgameSolver(BlueprintStrategy):
         return None                                  # too close -> defer to blueprint
 
     # -- facing-a-deep-raise guard (preflop / flop / turn, money behind) --------
-    def _facing_deep_raise_guard(self, info_set_key, legal_actions, ps):
+    def _facing_deep_raise_guard(self, info_set_key, legal_actions, ps, allow_river=False):
         """Guard a FACING-a-bet decision (deep raise OR jam) when the blueprint has
         nothing usable at this node -- i.e. a beyond-cap / untrained key.
 
@@ -592,9 +606,12 @@ class RiverSubgameSolver(BlueprintStrategy):
         still never folds a premium. See the equity branch below.
 
         Returns 'call'/'fold', or None to DEFER (river -> solver; trained key ->
-        blueprint; no faced bet; or missing tracker inputs)."""
+        blueprint; no faced bet; or missing tracker inputs). `allow_river` is set only
+        when the river solver skipped the spot (decide); the river's opp_range is the
+        river-ENTRY belief (it has not seen this street's raises), so on the river the
+        guard judges vs the top-fraction range, never the tracked read."""
         street = ps.get('street')
-        if street not in ('preflop', 'flop', 'turn'):
+        if street not in ('preflop', 'flop', 'turn') and not (allow_river and street == 'river'):
             return None                              # river -> full solver downstream
         if 'call' not in legal_actions or 'fold' not in legal_actions:
             return None                              # not facing a bet
@@ -628,7 +645,7 @@ class RiverSubgameSolver(BlueprintStrategy):
         # possible range (AA >= ~0.78 equity vs anything > any preflop pot odds), so it
         # NEVER folds; only genuine trash folds. This makes "never fold the nuts to a
         # deep raise" a hard guarantee, independent of the tracker's confidence state.
-        if self._trust_read(tracker):
+        if street != 'river' and self._trust_read(tracker):
             n_runouts = 600 if street == 'preflop' else 200
             eq = float(tracker.hero_equity(list(hole), list(board), n_runouts=n_runouts))
         elif street == 'preflop':

@@ -211,13 +211,14 @@ class TurnSubgameSolver(RiverSubgameSolver):
 
     def _turn_solver_inputs(self, ps):
         """Turn-solve inputs from public_state, or None to fall back. The turn-entry
-        fields (turnEntryPot/turnEntryStacks/turnPath) are added to bot_public_state at
+        fields (turnEntryPot/turnEntryStacks/turnPath/turnEntryOppRange/turnEntryHeroRange)
+        are added to bot_public_state at
         wiring; absent them, return None. Skips high-SPR turns (tree blow-up + lowest
         stakes -- the guard + blueprint cover those)."""
         if ps.get('street') != 'turn':
             return None
         required = ('turnEntryPot', 'turnEntryStacks', 'botSeat', 'hole_cards',
-                    'opp_range', 'hero_range', 'turnPath', 'community')
+                    'turnEntryOppRange', 'turnEntryHeroRange', 'turnPath', 'community')
         if any(ps.get(k) is None for k in required):
             return None
         pot_entry = ps['turnEntryPot']
@@ -225,7 +226,7 @@ class TurnSubgameSolver(RiverSubgameSolver):
         eff = stacks[0] if isinstance(stacks, (list, tuple)) else stacks
         if pot_entry <= 0 or eff / pot_entry > self.max_spr_turn:
             return None
-        tracker = ps['opp_range']
+        tracker = ps['turnEntryOppRange']
         return {
             'board': ps['community'],
             'pot_entry': pot_entry,
@@ -233,7 +234,7 @@ class TurnSubgameSolver(RiverSubgameSolver):
             'bot_seat': ps['botSeat'],
             'hole': ps['hole_cards'],
             'villain_tracker': tracker,
-            'hero_tracker': ps['hero_range'],
+            'hero_tracker': ps['turnEntryHeroRange'],
             'confidence': getattr(tracker, 'confidence', 1.0),
             'turn_path': ps['turnPath'],
         }

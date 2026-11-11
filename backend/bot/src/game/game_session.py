@@ -744,14 +744,18 @@ class GameSession:
         # NOTE: INERT on the served path -- the turn solver is shelved/removed (river-only serving,
         # 2026-06-22). This turn-entry snapshot (d['turn_entry_*']) is kept wired only so a future
         # turn-solver revival (ROADMAP 5b, range-conditional CFV net) wouldn't need re-plumbing.
+        # It goes under its OWN keys: overwriting 'opp_range' with it made the turn guards
+        # (_facing_allin_guard, _facing_deep_raise_guard, the exploit tilt) judge a turn bet
+        # or jam against a belief that had not seen it, at its pre-bet confidence.
         if street == 2 and d.get('turn_entry_bot') is not None:
             state['botSeat'] = actor
             state['turnEntryPot'] = d['starting_pot']
             state['turnEntryStacks'] = (STARTING_STACK - d['p0_invested'],
                                         STARTING_STACK - d['p1_invested'])
-            state['hero_range'] = RangeTracker.from_dict(d['turn_entry_bot'], self.cards)
+            state['turnEntryHeroRange'] = RangeTracker.from_dict(d['turn_entry_bot'], self.cards)
             if d.get('turn_entry_opp') is not None:
-                state['opp_range'] = RangeTracker.from_dict(d['turn_entry_opp'], self.cards)
+                state['turnEntryOppRange'] = RangeTracker.from_dict(d['turn_entry_opp'],
+                                                                    self.cards)
             state['turnPath'] = self._turn_path_specs()
 
         # If the opponent just made an off-grid bet, hand the bot the bracketing
