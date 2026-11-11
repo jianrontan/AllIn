@@ -37,6 +37,7 @@ from itertools import combinations
 import numpy as np
 
 from .lbr import LBREvaluator, BotRange, _FULL_DECK
+from ..cfr.keys import spr_bucket
 from ..abstractions.card_abstractions import _PREFLOP_EQUITY
 
 
@@ -132,9 +133,11 @@ class AIVATEstimator:
                                         rr['river_card'], rr['range'], rr['pot'])
         elif rec.get('events'):
             brange = BotRange(hand_a, self.cards)   # B's hands exclude A's cards
+            street_pot = None                       # pot at the street's start (spr5 keys)
             for ev in rec['events']:
                 if ev['type'] == 'street_start':
                     st = ev['street']
+                    street_pot = ev['pot']
                     if st == 3:
                         # River chance node: B's range is current (revealed through the
                         # turn, updated through turn actions) and the river is not yet
@@ -147,7 +150,8 @@ class AIVATEstimator:
                 elif ev['type'] == 'action' and ev['seat'] == b_seat:
                     action = ev['legal'][ev['choice']]
                     brange.observe(self.lbr.restricted_probs, action, ev['street'],
-                                   pos_b, ev['pattern'], ev['legal'], ev['vis'])
+                                   pos_b, ev['pattern'], ev['legal'], ev['vis'],
+                                   spr=spr_bucket(self.lbr.key_format, ev['street'], street_pot))
 
         c1 = self._preflop_eq(hand_a)
 

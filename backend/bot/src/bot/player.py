@@ -17,6 +17,12 @@ class Player(BasePokerPlayer):
         try:
             db_path = resolve_blueprint_path()
             self.db = BlueprintDB(db_path, read_only=True)
+            # GameAdapter builds v2 keys with root buckets: refuse anything else
+            # rather than silently missing every flop/turn lookup.
+            from ..cfr.keys import require_key_format
+            from ..abstractions.abstraction_set import require_root_abstraction
+            require_key_format(self.db, ('v2',), 'Player')
+            require_root_abstraction(self.db, 'Player')
             total_iterations = self.db.get_metadata('total_iterations', 0)
             # Rebuild the adapter under the served blueprint's action abstraction so
             # a capped blueprint isn't offered actions it never trained (the serving-

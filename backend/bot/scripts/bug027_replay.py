@@ -36,7 +36,6 @@ from src.abstractions.postflop_features import rank7   # noqa: E402
 from src.abstractions.sizing import db_menu_mode   # noqa: E402
 from src.cfr.keys import make_info_set_key, spr_bucket, db_key_format   # noqa: E402
 from src.evaluation.match import _legal_actions   # noqa: E402
-from src.game import range_tracker as rt   # noqa: E402
 from src.game.range_tracker import RangeTracker, _FULL_DECK   # noqa: E402
 from src.storage.blueprint_db import BlueprintDB   # noqa: E402
 
@@ -148,10 +147,6 @@ def replay(path):
     mm, kf = db_menu_mode(db), db_key_format(db) or 'v2'
     adir = resolve_abstraction_dir(db, 'bug027 replay')
     cards = CardAbstraction(adir)
-    # The tracker's bucket maps are process-global and keyed by board only, so clear
-    # them before bucketing with a different abstraction.
-    rt._PF_BUCKET_CACHE.clear()
-    rt._POSTFLOP_BUCKET_CACHE.clear()
     fn = model_fn(db)
     vil = RangeTracker(HERO, cards)          # the BB's range (hero's cards removed)
     bot = RangeTracker((), cards)            # the bot's own range

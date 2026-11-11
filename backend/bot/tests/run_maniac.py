@@ -32,9 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.config import resolve_blueprint_path
 from src.storage.blueprint_db import BlueprintDB
-from src.evaluation.match import (
-    HeadToHeadMatch, BlueprintPlayer, _legal_actions, _sizing, _FULL_DECK)
-from src.cfr.keys import action_char
+from src.evaluation.match import HeadToHeadMatch, _FULL_DECK
 
 
 class ManiacPlayer:
@@ -44,35 +42,21 @@ class ManiacPlayer:
         self.rng = rng
         self.profile = profile
 
-    def act(self, seat, hand, vis, street, pot, committed, stack, to_call, num_aggr, pattern):
-        legal = _legal_actions(street, to_call, num_aggr, stack, pot)
-        can_aggr = ('allin' in legal)  # implies sized bets/raises are legal too
-
-        if can_aggr:
+    def act(self, seat, hand, vis, street, legal, pattern, street_pot,
+            pot=None, to_call=None, stack=None):
+        sized = [a for a in legal if a.startswith(('bet_', 'raise_'))]
+        med = next((a for a in sized if a.endswith('_medium')), None)
+        aggr = [a for a in (med, 'allin' if 'allin' in legal else None) if a]
+        if aggr:
             if self.profile == 'jam':
-                action = 'allin'
+                action = 'allin' if 'allin' in legal else aggr[0]
             elif self.profile == 'medium':
-                action = 'raise_medium' if to_call > 0 else 'bet_medium'
+                action = aggr[0]
             else:  # mixed
-                med = 'raise_medium' if to_call > 0 else 'bet_medium'
-                action = self.rng.choice([med, 'allin'])
+                action = self.rng.choice(aggr)
         else:
-            action = 'call' if to_call > 0 else 'check'  # never fold
-
-        if action == 'check':
-            char, add, aggr = 'k', 0, False
-        elif action == 'call':
-            char, add, aggr = 'c', to_call, False
-        elif action == 'allin':
-            char, add, aggr = 'a', stack, True
-        else:
-            size = action.split('_')[1]
-            add = max(_sizing(size, street, pot, to_call, committed, num_aggr), to_call + 1)
-            if add >= stack:
-                char, add, aggr = 'a', stack, True
-            else:
-                char, add, aggr = action_char(action), add, True
-        return char, add, aggr, {}
+            action = 'call' if 'call' in legal else 'check'  # never fold
+        return action, {}
 
 
 def run(blueprint, profile, hands, seed):

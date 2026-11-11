@@ -11,8 +11,12 @@ each acting strategy's action distribution + sampled action) that AIVAT consumes
 to subtract the luck.
 
 A "strategy" here is any object exposing get_average_strategy(key) -> {action:
-prob} or None (i.e. a BlueprintDB, or a fake for testing). Both players act in
-the blueprint's abstract action set; the engine tracks real chips.
+prob} or None (i.e. a BlueprintDB, or a fake for testing). Each player acts on
+its OWN engine (PokerGame built from its blueprint's menu_mode): the legal
+actions, the sized-bet-to-all-in clamp, the min-bet / min-raise filters and the
+chip costs all come from the same state machine training used
+(`state_legal_actions` / `state_action_cost` / `advance_node_state`), so a
+blueprint is only ever offered the actions it was trained on.
 """
 import os
 import random
@@ -20,8 +24,9 @@ import random
 import numpy as np
 
 from ..cfr.keys import make_info_set_key, action_char, spr_bucket
-from ..cfr.poker_game import STARTING_STACK
-from ..abstractions.sizing import preflop_open_chips, PREFLOP_RAISE_MULT, POSTFLOP_BET_MULT
+from ..cfr.poker_game import PokerGame, STARTING_STACK
+from ..abstractions.sizing import (preflop_open_chips, PREFLOP_RAISE_MULT, POSTFLOP_BET_MULT,
+                                   game_kwargs)
 from ..abstractions.card_abstractions import CardAbstraction
 from ..abstractions.hand_evaluator import HandEvaluator
 
@@ -33,7 +38,11 @@ _FULL_DECK = [s + r for r in _RANKS for s in _SUITS]
 
 
 def _legal_actions(street, to_call, num_aggr, stack, pot, menu_mode='control'):
-    """Mirror poker_game.get_legal_actions using the SAME engine action NAMES so a
+    """A light mirror of poker_game.get_legal_actions for scripts that only know
+    (to_call, num_aggr, stack, pot). It does NOT apply the engine's min-bet /
+    min-raise filters or replace unaffordable sizes with an all-in, so it is only
+    exact deep-stacked; the match engine below uses PokerGame itself.
+    Uses the SAME engine action NAMES so a
     blueprint lookup hits the stored keys (the DB stores opens as bet_*, NOT raise_*):
       * preflop OPEN (street 0, num_aggr==0) -> bet_* on the 4-size BB ladder (incl
         xlarge);  preflop 3-bet/4-bet (num_aggr>=1) -> raise_* (3 pot-relative sizes);
@@ -99,8 +108,7 @@ class BlueprintPlayer:
         # both the legal-action menu and the sizing dict so a capped blueprint isn't
         # offered actions it never trained (the BUG-008 / serving-mismatch class).
         self.menu_mode = menu_mode
-        from ..abstractions.sizing import postflop_menu_for
-        self._postflop_menu = postflop_menu_for(menu_mode)
+        self.game = PokerGame(**game_kwargs(menu_mode))
         self._raw_cache = {}
         self._restricted_cache = {}
 
@@ -118,18 +126,26 @@ class BlueprintPlayer:
             return cached
         stored = self._raw(key)
         n = len(legal)
+        probs = None
         if stored:
             w = np.array([max(0.0, stored.get(a, 0.0)) for a in legal])
             t = w.sum()
-            probs = w / t if t > 1e-12 else np.ones(n) / n
-        else:
-            probs = np.ones(n) / n
+            if t > 1e-12:
+                probs = w / t
+        if probs is None:
+            # Untrained / zero-mass key: the deployed bot's passive fallback
+            # (BlueprintStrategy._distribution) -- never a stray raise.
+            passive = np.array([1.0 if a in ('check', 'call', 'fold') else 0.0 for a in legal])
+            probs = passive / passive.sum() if passive.sum() > 0 else np.ones(n) / n
         self._restricted_cache[ck] = probs
         return probs
 
-    def act(self, seat, hand, vis, street, pot, committed, stack, to_call, num_aggr, pattern,
-            street_pot=None):
-        """`street_pot` = pot when this street began (needed for spr5 flop/turn keys)."""
+    def act(self, seat, hand, vis, street, legal, pattern, street_pot,
+            pot=None, to_call=None, stack=None):
+        """Pick an action from `legal` (the engine's actions at this node).
+        `street_pot` = pot when this street began (spr5 flop/turn keys); `pot`,
+        `to_call` and `stack` (chips now) are context for subclasses.
+        Returns (action, info)."""
         pos = 'ip' if seat == 0 else 'oop'
         if street == 0:
             key = make_info_set_key(0, pos, self.cards.get_bucket(list(hand), None), None, pattern)
@@ -138,30 +154,10 @@ class BlueprintPlayer:
                 street, pos, self.cards.get_bucket(list(hand), None),
                 self.cards.get_bucket(list(hand), vis), pattern,
                 spr_bucket(self.key_format, street, street_pot))
-        legal = _legal_actions(street, to_call, num_aggr, stack, pot, self.menu_mode)
         probs = self._restricted(key, tuple(legal))
         idx = self.rng.choices(range(len(legal)), weights=probs)[0]
-        action = legal[idx]
-
-        if action == 'fold':
-            char, add, aggr = 'f', 0, False
-        elif action == 'check':
-            char, add, aggr = 'k', 0, False
-        elif action == 'call':
-            char, add, aggr = 'c', to_call, False
-        elif action == 'allin':
-            char, add, aggr = 'a', stack, True
-        else:
-            size = action.split('_')[1]
-            add = max(_sizing(size, street, pot, to_call, committed, num_aggr,
-                              self._postflop_menu), to_call + 1)
-            if add >= stack:
-                char, add, aggr = 'a', stack, True
-            else:
-                char, add, aggr = action_char(action), add, True
-
-        info = {'seat': seat, 'key': key, 'legal': legal, 'probs': probs, 'choice': idx}
-        return char, add, aggr, info
+        info = {'seat': seat, 'key': key, 'legal': list(legal), 'probs': probs, 'choice': idx}
+        return legal[idx], info
 
 
 class HeadToHeadMatch:
@@ -187,72 +183,65 @@ class HeadToHeadMatch:
         # to control for a fake/pre-stamp source.
         self.pa = BlueprintPlayer(strat_a, cards_a, self.rng, menu_mode=menu_mode_a)
         self.pb = BlueprintPlayer(strat_b, cards_b, self.rng, menu_mode=menu_mode_b)
+        # Engine for a replacement player that brings none (e.g. a scripted maniac).
+        self._default_game = self.pa.game
 
     def play_hand(self, seat_of_A, hand_a, hand_b, board, record=None):
-        """Returns A's net chips. If `record` is a list, append a trajectory dict."""
+        """Returns A's net chips. If `record` is a list, append a trajectory dict.
+        The acting player's own engine supplies its legal actions and chip costs and
+        advances the shared street state (the trainer's state machine)."""
         players = {seat_of_A: self.pa, 1 - seat_of_A: self.pb}
         hands = {seat_of_A: hand_a, 1 - seat_of_A: hand_b}
-        invested = [SB, BB]
-        stack = [STARTING_STACK - SB, STARTING_STACK - BB]
+        games = {seat: getattr(players[seat], 'game', None) or self._default_game
+                 for seat in (0, 1)}
+        prev = [0.0, 0.0]          # chips each seat invested before this street
+        street_pot = float(SB + BB)
         folded = None
-        allin_street = None      # street at which betting locked all-in (board cards known)
+        allin_street = None        # street at which betting locked all-in (board cards known)
         events = [] if record is not None else None
 
-        street = 0
-        while street <= 3:
+        for street in range(4):
             vis = [] if street == 0 else board[:2 + street]
+            st = games[0].init_node_state(street, street_pot)
             if events is not None:
                 events.append({'type': 'street_start', 'street': street,
-                               'vis': list(vis), 'pot': sum(invested),
-                               'invested': list(invested)})
-            committed = [SB, BB] if street == 0 else [0, 0]
-            num_aggr = 0
+                               'vis': list(vis), 'pot': street_pot,
+                               'invested': [prev[0] + st['c'][0], prev[1] + st['c'][1]]})
             pattern = ''
-            actor = 0 if street == 0 else 1
-            need = {0, 1}
-            guard = 0
-            while need and folded is None:
-                guard += 1
-                if guard > 16:
+            for n in range(64):
+                actor = (n + (1 if street > 0 else 0)) & 1
+                game = games[actor]
+                stack = STARTING_STACK - prev[actor] - st['c'][actor]
+                legal = game.state_legal_actions(street, st, actor, stack)
+                if not legal:
                     break
-                other = 1 - actor
-                if stack[actor] <= 0:
-                    need.discard(actor)
-                    actor = other
-                    continue
-                to_call = max(0, committed[other] - committed[actor])
-                pot = sum(invested)
-                char, add, aggr, info = players[actor].act(
-                    actor, hands[actor], vis, street, pot, committed[actor],
-                    stack[actor], to_call, num_aggr, pattern,
-                    street_pot=pot - sum(committed))
+                to_call = max(0.0, st['bet_to'] - st['c'][actor])
+                action, info = players[actor].act(
+                    actor, hands[actor], vis, street, legal, pattern, street_pot,
+                    pot=st['pot'], to_call=to_call, stack=stack)
+                cost = game.state_action_cost(action, street, st, actor, stack)
+                char = action_char(action)
                 if events is not None:
                     events.append({
                         'type': 'action', 'street': street, 'vis': list(vis),
-                        'pot': pot, 'invested': list(invested), 'pattern': pattern,
-                        **info, 'char': char, 'add': add, 'aggr': aggr})
-                if char == 'f':
+                        'pot': st['pot'],
+                        'invested': [prev[0] + st['c'][0], prev[1] + st['c'][1]],
+                        'pattern': pattern, **info, 'action': action, 'char': char,
+                        'add': cost, 'aggr': action not in ('check', 'call', 'fold')})
+                st = game.advance_node_state(st, action, street, actor, stack, prev)
+                pattern += char
+                if action == 'fold':
                     folded = actor
                     break
-                add = min(add, stack[actor])
-                invested[actor] += add
-                committed[actor] += add
-                stack[actor] -= add
-                pattern += char
-                if aggr:
-                    num_aggr += 1
-                    need = {other}
-                else:
-                    need.discard(actor)
-                actor = other
-
+            prev = [prev[0] + st['c'][0], prev[1] + st['c'][1]]
+            street_pot = st['pot']
             if folded is not None:
                 break
-            if min(stack) <= 0:
-                allin_street = street     # all-in locked; board cards beyond this are pure chance
+            if st['allin_seen']:
+                allin_street = street     # all-in called; later board cards are pure chance
                 break
-            street += 1
 
+        invested = prev
         result = self._resolve(seat_of_A, hand_a, hand_b, board, invested, folded)
         if record is not None:
             record.append({

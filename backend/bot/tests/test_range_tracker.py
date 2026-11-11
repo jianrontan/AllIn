@@ -422,7 +422,7 @@ def test_bucket_cache_shared_across_trackers():
     t1.reveal(board)
     t1._buckets(1, board)
     assert len(_PF_BUCKET_CACHE) == 1326, "preflop map fills all combos once"
-    assert tuple(board) in _POSTFLOP_BUCKET_CACHE
+    assert _rt._postflop_cache_key(CARDS, tuple(board)) in _POSTFLOP_BUCKET_CACHE
     n_boards = len(_POSTFLOP_BUCKET_CACHE)
 
     t2 = RangeTracker(('C7', 'C8'), CARDS)           # different hero, same board
@@ -468,12 +468,38 @@ def test_bucket_cache_lru_bound():
             t.reveal(b)
             t._buckets(1, b)
         assert len(_POSTFLOP_BUCKET_CACHE) == 3, len(_POSTFLOP_BUCKET_CACHE)
-        assert tuple(boards[-1]) in _POSTFLOP_BUCKET_CACHE      # newest kept
-        assert tuple(boards[0]) not in _POSTFLOP_BUCKET_CACHE   # oldest evicted
+        key = lambda b: _rt._postflop_cache_key(CARDS, tuple(b))
+        assert key(boards[-1]) in _POSTFLOP_BUCKET_CACHE        # newest kept
+        assert key(boards[0]) not in _POSTFLOP_BUCKET_CACHE     # oldest evicted
     finally:
         _rt._POSTFLOP_BUCKET_MAX_BOARDS = old_cap
         _clear_bucket_caches()
     print("PASS test_bucket_cache_lru_bound")
+
+
+def test_bucket_cache_separates_abstractions():
+    """Two abstractions in one process (a v2 and a v3 tracker) must each get their
+    own buckets on the same board, not whichever filled the cache first."""
+    class _Cards:
+        def __init__(self, adir, offset):
+            self.postflop = type('P', (), {'dir': adir})()
+            self.offset = offset
+
+        def get_bucket(self, hole, board):
+            return CARDS.get_bucket(hole, board) if board is None else self.offset
+
+    _clear_bucket_caches()
+    board = ['SQ', 'SJ', 'ST']
+    a = RangeTracker(('HA', 'DK'), _Cards('/tmp/abs_root', 1))
+    b = RangeTracker(('HA', 'DK'), _Cards('/tmp/abs_v3', 2))
+    for t in (a, b):
+        t.reveal(board)
+    _, sa = a._buckets(1, board)
+    _, sb = b._buckets(1, board)
+    assert {x for x in sa if x is not None} == {1}
+    assert {x for x in sb if x is not None} == {2}
+    _clear_bucket_caches()
+    print("PASS test_bucket_cache_separates_abstractions")
 
 
 def test_observe_solved_per_hand_update():
@@ -521,6 +547,7 @@ TESTS = [
     test_bucket_cache_shared_across_trackers,
     test_bucket_cache_warm_equals_cold_for_observe,
     test_bucket_cache_lru_bound,
+    test_bucket_cache_separates_abstractions,
 ]
 
 if __name__ == '__main__':

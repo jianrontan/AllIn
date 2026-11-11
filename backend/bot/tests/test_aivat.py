@@ -57,7 +57,45 @@ def test_river_control_variate_is_zero_mean():
           f'(spread={max(vals) - min(vals):.3f})')
 
 
+class _Spr5FakeDB:
+    """An spr5 blueprint stand-in that records every key the range replay looks up."""
+    def __init__(self):
+        self.keys = []
+
+    def get_metadata(self, key, default=None):
+        return {'key_format': 'spr5', 'menu_mode': 'capped'}.get(key, default)
+
+    def get_average_strategy(self, key):
+        self.keys.append(key)
+        return None
+
+
+def test_range_replay_builds_spr5_keys():
+    """c2's replay of B's range must look B's flop/turn actions up in B's own key
+    format: for an spr5 B, a v2-format key misses every time."""
+    db = _Spr5FakeDB()
+    est = AIVATEstimator(db, seed=0)
+    flop = ['S2', 'S7', 'CJ']
+    rec = {'seat_of_A': 0, 'hand_a': ('HA', 'HK'), 'hand_b': ('DA', 'DQ'),
+           'board': flop + ['D5', 'C9'], 'allin_street': None, 'folded': None,
+           'result': 0.0, 'invested': [10, 10],
+           'events': [
+               {'type': 'street_start', 'street': 0, 'vis': [], 'pot': 3},
+               {'type': 'street_start', 'street': 1, 'vis': flop, 'pot': 20},
+               {'type': 'action', 'street': 1, 'seat': 1, 'vis': flop, 'pattern': '',
+                'legal': ['check', 'bet_small'], 'choice': 0},
+           ]}
+    est._hand_variates(rec)
+    flop_keys = [k for k in db.keys if '_flop_' in k]
+    check('AIVAT range replay looks up flop keys', bool(flop_keys))
+    # Street-start pot 20 -> SPR (200 - 10) / 20 = 9.5 -> bucket 2.
+    check('AIVAT range replay builds spr5 flop keys', all('_flop_r2_' in k for k in flop_keys),
+          f'({flop_keys[:2]})')
+    assert flop_keys and all('_flop_r2_' in k for k in flop_keys), flop_keys[:2]
+
+
 if __name__ == '__main__':
     test_river_control_variate_is_zero_mean()
+    test_range_replay_builds_spr5_keys()
     print(f"\nResults: {_passed} passed, {_failed} failed out of {_passed + _failed}")
     sys.exit(1 if _failed else 0)

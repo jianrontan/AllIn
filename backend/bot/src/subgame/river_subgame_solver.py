@@ -255,7 +255,11 @@ class RiverSubgameSolver(BlueprintStrategy):
         # reproducible (the mix itself is correct either way).
         self._rng = rng if rng is not None else np.random.default_rng()
         self._evaluator = HandEvaluator()
-        self._cards = CardAbstraction()
+        # Bucket with the abstraction the blueprint was trained on (one dir for the
+        # hand buckets and the centroid means that rank them).
+        from ..abstractions.abstraction_set import resolve_abstraction_dir
+        self._abs_dir = resolve_abstraction_dir(blueprint_db, 'RiverSubgameSolver')
+        self._cards = CardAbstraction(self._abs_dir)
         self._fallback_count = 0       # solve failures that degraded to the blueprint
         # Uniform-range equity floor cache (the latency fix): equity vs a uniform
         # opponent range depends only on (hole, board), not game state, so it is safe
@@ -703,7 +707,7 @@ class RiverSubgameSolver(BlueprintStrategy):
             return cached
         from ..abstractions.postflop_features import load_centroids
         street = {3: 'flop', 4: 'turn', 5: 'river'}[n_board]
-        centroids, bins = load_centroids(street)
+        centroids, bins = load_centroids(street, self._abs_dir)
         centroids = np.asarray(centroids, dtype=float)
         centers = (np.arange(bins) + 0.5) / bins
         sums = centroids.sum(axis=1)

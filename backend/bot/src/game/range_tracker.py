@@ -77,15 +77,14 @@ _ALL_COMBOS = list(combinations(_FULL_DECK, 2))   # 1326 two-card combos
 # action on a given board pays ~1326 get_bucket calls; every subsequent one is
 # a dict hit.
 #
-# ASSUMPTION: one bucketing scheme per process. The buckets are keyed on the
-# board alone (not the CardAbstraction instance), which is correct because the
-# baked tables / centroids are process-global and deterministic -- two
-# CardAbstraction objects in the same process bucket identically. This mirrors
-# the existing process-global `_RIVER_BOARD_CACHE` in postflop_v2. The
-# `test_range_tracker_bucket_cache` test guards the cached path against the
-# direct get_bucket path for the real abstraction.
+# The postflop maps are keyed by (abstraction, board): two CardAbstraction objects
+# over the SAME abstraction dir bucket identically, so they share entries, but a v2
+# and a v3 tracker in one process must not (v3's river has 20 buckets, v2's 10).
+# Preflop buckets are not versioned (every abstraction uses the same 169 hands), so
+# that map is filled once. The `test_range_tracker_bucket_cache` tests guard the
+# cached path against the direct get_bucket path.
 _PF_BUCKET_CACHE = {}                 # hand_tuple -> preflop bucket (fill-once)
-_POSTFLOP_BUCKET_CACHE = OrderedDict()  # board_slice_tuple -> {hand_tuple: bucket}
+_POSTFLOP_BUCKET_CACHE = OrderedDict()  # (abstraction, board_slice) -> {hand_tuple: bucket}
 _BUCKET_CACHE_LOCK = threading.Lock()
 # LRU bound on distinct boards held. A board only needs to stay hot for the
 # few actions of one street (seconds), plus the boards of other concurrent
@@ -106,13 +105,22 @@ def _preflop_bucket_map(cards):
     return _PF_BUCKET_CACHE
 
 
+def _postflop_cache_key(cards, board_slice):
+    """Cache key for `cards`' buckets on `board_slice`: the real path of the
+    abstraction dir it buckets with (None for a stand-in without one)."""
+    adir = getattr(getattr(cards, 'postflop', None), 'dir', None)
+    return (os.path.realpath(adir) if adir else None, board_slice)
+
+
 def _postflop_bucket_map(cards, board_slice):
     """{hand_tuple -> strength bucket} for every combo not colliding with
-    `board_slice`, memoized per board (LRU-bounded). board_slice is a tuple."""
+    `board_slice`, memoized per (abstraction, board) (LRU-bounded). board_slice
+    is a tuple."""
+    ck = _postflop_cache_key(cards, board_slice)
     with _BUCKET_CACHE_LOCK:
-        m = _POSTFLOP_BUCKET_CACHE.get(board_slice)
+        m = _POSTFLOP_BUCKET_CACHE.get(ck)
         if m is not None:
-            _POSTFLOP_BUCKET_CACHE.move_to_end(board_slice)
+            _POSTFLOP_BUCKET_CACHE.move_to_end(ck)
             return m
     # Compute outside the lock (get_bucket can be non-trivial). A concurrent
     # double-miss just computes twice and the last writer wins -- harmless,
@@ -122,8 +130,8 @@ def _postflop_bucket_map(cards, board_slice):
     m = {h: cards.get_bucket([h[0], h[1]], board_list)
          for h in _ALL_COMBOS if h[0] not in bset and h[1] not in bset}
     with _BUCKET_CACHE_LOCK:
-        _POSTFLOP_BUCKET_CACHE[board_slice] = m
-        _POSTFLOP_BUCKET_CACHE.move_to_end(board_slice)
+        _POSTFLOP_BUCKET_CACHE[ck] = m
+        _POSTFLOP_BUCKET_CACHE.move_to_end(ck)
         while len(_POSTFLOP_BUCKET_CACHE) > _POSTFLOP_BUCKET_MAX_BOARDS:
             _POSTFLOP_BUCKET_CACHE.popitem(last=False)
     return m

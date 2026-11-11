@@ -252,16 +252,21 @@ class LBREvaluator:
                 cands.append(self._value_aggressive(
                     lbr_seat, lbr_hand, vis, street, invested, stack, committed,
                     to_call, num_aggr, pattern, botrange, bot_seat, total_add, False))
-            cands.append(self._value_aggressive(
-                lbr_seat, lbr_hand, vis, street, invested, stack, committed,
-                to_call, num_aggr, pattern, botrange, bot_seat, stack[lbr_seat], True))
-        elif _cap_jam_open(self._cap_jam, street, num_aggr, to_call, stack[lbr_seat]):
-            # capped_pj: the exploiter may 5-bet jam facing the 4-bet, as the bot can.
+        # LBR shoves only where the blueprint's own tree has an all-in for this seat
+        # (a size that clamps to the stack, the capped_pj cap jam, or the control
+        # arm's voluntary jam). Elsewhere the bot faces a jam it never trained, plays
+        # a passive coin flip prod never plays (prod runs an equity guard), and the
+        # number measures that fallback instead of the blueprint.
+        if 'allin' in self._menu_legal(street, pot, to_call, committed[lbr_seat], num_aggr,
+                                       stack[lbr_seat]):
             cands.append(self._value_aggressive(
                 lbr_seat, lbr_hand, vis, street, invested, stack, committed,
                 to_call, num_aggr, pattern, botrange, bot_seat, stack[lbr_seat], True))
 
         best = max(cands, key=lambda c: c[0])
+        # The victim answers an aggressive LBR action by blending its bracketing
+        # grid sizes (as priced above and as the deployed bot does).
+        self._pending = (pattern + best[1], pattern, best[4]) if best[3] else None
         return best[1], best[2], best[3]
 
     def _value_aggressive(self, lbr_seat, lbr_hand, vis, street, invested, stack,
@@ -315,9 +320,11 @@ class LBREvaluator:
             # deployed bot (translation.blend missing_action='fold'). Without this
             # the victim is modelled as CALLING untrained off-grid lines, biasing
             # LBR to under-value exactly the off-tree bets it exists to find.
+            # A faced all-in has no translation: an untrained 'a' key is played
+            # with the passive fold/call coin flip (restricted_probs), so price it so.
             p = botrange.per_hand_action_prob(
                 self._raw_strategy, 'fold', street, self._pos(bot_seat),
-                pattern + c, vis, missing=1.0,
+                pattern + c, vis, missing=0.5 if c == 'a' else 1.0,
                 spr=self._spr(street, invested, committed))
             pfold = w * p if pfold is None else pfold + w * p
         w = botrange.w
@@ -331,7 +338,7 @@ class LBREvaluator:
         eq = self.equity_vs_range(lbr_hand, vis, botrange.hands, cont_w)
         v_cont = eq * pot_after - (lbr_inv + total_add)
         value = p_fold * v_fold + (1.0 - p_fold) * v_cont
-        return (value, char, total_add, True)
+        return (value, char, total_add, True, translated)
 
     def _bot_sizing(self, size, street, pot, to_call, bot_committed, num_aggr):
         """Chips the bot ADDS for an abstract bet/raise size (training sizing).
@@ -351,11 +358,35 @@ class LBREvaluator:
             return int(round(to_call + mult * (pot + to_call)))
         return int(round(mult * pot))
 
-    def _bot_act(self, bot_seat, bot_hand, vis, street, invested, stack, committed,
-                 to_call, num_aggr, pattern, botrange, lbr_seat):
-        """Bot samples its blueprint; updates LBR's belief. Returns (char, add, aggr)."""
-        pot = sum(invested)
-        can_aggr = num_aggr < MAX_AGGR_PER_STREET and stack[bot_seat] > max(0, to_call)
+    def _engine_constrain(self, legal, street, pot, to_call, committed, num_aggr, stack):
+        """Mirror PokerGame's filters on the victim's sized actions: a postflop bet
+        below 2 chips is not offered, and a size that costs the whole stack or more
+        is replaced by one all-in (_apply_stack_constraints) -- the action the
+        blueprint was trained on there, which carries its mass at low SPR."""
+        out, clamp = [], False
+        for a in legal:
+            if not a.startswith(('bet_', 'raise_')):
+                out.append(a)
+                continue
+            size = a.split('_')[1]
+            if street > 0 and to_call == 0 and self._postflop_menu[size] * pot < 2:
+                continue
+            add = max(self._bot_sizing(size, street, pot, to_call, committed, num_aggr),
+                      to_call + 1)
+            if add >= stack:
+                clamp = True
+            else:
+                out.append(a)
+        if clamp and 'allin' not in out:
+            i = next((j for j, a in enumerate(out) if a.startswith(('bet_', 'raise_'))), len(out))
+            out.insert(i, 'allin')
+        return out
+
+    def _menu_legal(self, street, pot, to_call, committed, num_aggr, stack):
+        """The blueprint's legal actions for a player at this node, as the engine
+        builds them for its menu arm: sized bets/raises, the voluntary all-in (control)
+        or the capped_pj cap jam, then the engine's min-bet filter and stack clamp."""
+        can_aggr = num_aggr < MAX_AGGR_PER_STREET and stack > max(0, to_call)
         # Engine-matching action names (opens are bet_*, not raise_*, so the
         # blueprint lookup hits the stored open keys): preflop open -> 4-size bet_*
         # ladder; preflop 3-bet/4-bet -> raise_* (3); postflop -> bet_/raise_ incl
@@ -383,8 +414,49 @@ class LBREvaluator:
             legal += sized
             if self._voluntary_allin:
                 legal += ['allin']
-        elif _cap_jam_open(self._cap_jam, street, num_aggr, to_call, stack[bot_seat]):
+        elif _cap_jam_open(self._cap_jam, street, num_aggr, to_call, stack):
             legal += ['allin']                       # capped_pj: 5-bet jam facing the 4-bet
+        legal = self._engine_constrain(legal, street, pot, to_call, committed, num_aggr,
+                                       stack)
+
+        return legal
+
+    def _blended_probs(self, pending, street, pos, bot_hand, vis, invested, committed,
+                       legal, probs):
+        """The deployed bot's response to an LBR bet (BlueprintStrategy._state_distribution
+        -> translation.blend): mix the bracketing sizes' restricted strategies by their
+        pseudo-harmonic weights; an untrained bracket's weight folds. An untrained faced
+        all-in is the exception: it is the passive coin flip, as priced in
+        _value_aggressive (prod runs an equity guard there; LBR does not jam into it)."""
+        _, before, translated = pending
+        if not translated:
+            return probs
+        pf = self.cards.get_bucket(list(bot_hand), None)
+        sb = None if street == 0 else self.cards.get_bucket(list(bot_hand), vis)
+        spr = self._spr(street, invested, committed)
+        legal_t = tuple(legal)
+
+        def strat_for_char(c):
+            key = (make_info_set_key(0, pos, pf, None, before + c) if street == 0 else
+                   make_info_set_key(street, pos, pf, sb, before + c, spr))
+            stored = self._raw_strategy(key)
+            if not stored or sum(max(0.0, stored.get(a, 0.0)) for a in legal_t) <= 1e-12:
+                if c == 'a':
+                    return {a: 0.5 for a in ('fold', 'call') if a in legal_t}
+                return {}
+            r = self.restricted_probs(key, legal_t)
+            return dict(zip(legal_t, r))
+
+        mixed = translation.blend(translated, strat_for_char)
+        out = np.array([mixed.get(a, 0.0) for a in legal_t])
+        return out / out.sum() if out.sum() > 1e-12 else probs
+
+    def _bot_act(self, bot_seat, bot_hand, vis, street, invested, stack, committed,
+                 to_call, num_aggr, pattern, botrange, lbr_seat):
+        """Bot samples its blueprint; updates LBR's belief. Returns (char, add, aggr)."""
+        pot = sum(invested)
+        legal = self._menu_legal(street, pot, to_call, committed[bot_seat], num_aggr,
+                                 stack[bot_seat])
 
         pos = self._pos(bot_seat)
         if street == 0:
@@ -397,6 +469,10 @@ class LBREvaluator:
                 self._spr(street, invested, committed))
 
         probs = self.restricted_probs(key, tuple(legal))
+        pending, self._pending = getattr(self, '_pending', None), None
+        if pending is not None and pending[0] == pattern:
+            probs = self._blended_probs(pending, street, pos, bot_hand, vis, invested,
+                                        committed, legal, probs)
         action = self.rng.choices(legal, weights=probs)[0]
 
         # Bayesian belief update on the observed action (decision-time context).
