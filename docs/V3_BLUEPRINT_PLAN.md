@@ -452,6 +452,47 @@ pair, sets and nut flush draws.
   model (+45 to +60, about 1σ) and against v2 for A. The two signals disagree, and
   neither is decisive.
 
+**Review (2026-11-11, three reviewers: abstraction mixing, eval harness,
+training path) — the H2H, human-model and LBR numbers above are SUPERSEDED**
+by a re-run on the fixed tools (results to follow). The best-response and
+BUG-027 numbers stand. Fixed in 07f73ad:
+- **`match.py` drifted from the engine.** It kept sized bets the stack can't
+  cover instead of the engine's single `allin` (~11% of decisions lost mass on
+  the trained jam, e.g. `..._turn_r0_k` offered `[check, …]` not
+  `[check, allin]`), and it skipped the min-bet / min-raise filters, so v2 bet 1
+  chip into limped pots, putting spr5 players on keys their engine can't
+  produce (2.9% of A-vs-v2 hands, 8.5% vs the human model). Matches now run on
+  each player's own `PokerGame` state machine (`state_legal_actions` /
+  `state_action_cost` / `advance_node_state`), and an untrained key falls back
+  to prod's passive fold/call (not uniform). New test `test_match_engine.py`
+  replays every offered action against `get_legal_actions`.
+- **LBR was invalid (every value negative).** The exploiter jammed into faced-jam
+  keys the blueprint never trained, priced them as "the bot always folds", and
+  the simulated bot then played a 50/50 coin flip there. Now:
+  - LBR jams only where the blueprint's own tree has an all-in;
+  - the simulated bot's legal actions apply the engine's stack clamp and
+    min-bet filter;
+  - the bot answers an off-grid LBR bet with prod's bracket blend, as LBR prices
+    it (an untrained bracket folds; an untrained faced jam is the coin flip).
+  - 2k-hand smoke: v2 +2,144, SPR 100M +564, A 150M +547 (all positive now).
+- **AIVAT** replayed an spr5 B's range with v2-format keys (missing every
+  flop/turn lookup). The point estimates were unbiased; only C-vs-A variance
+  suffered.
+- **The range tracker's bucket caches** are now keyed by abstraction dir (they
+  mixed v2/v3 buckets in one process; the replay no longer clears them by hand).
+- **Smaller latent fixes:**
+  - `RiverSubgameSolver` buckets and ranks with the blueprint's own abstraction.
+  - The PyPokerEngine `Player` refuses spr5 / named-abstraction DBs.
+- **Left for V3.6 / Phase 7** (behind the serving guards, which fail closed):
+  - threading spr5 keys through `GameSession`, the range tracker's
+    `_action_matrix`, `tilt.py` and `replay.py`;
+  - the `/api/abstractions` bucket counts;
+  - the opponent-model fit and build scripts using root buckets. Its consistency
+    check stays on the root centroids on purpose: the models were fit on them,
+    so it should keep rejecting v3 until the models carry an abstraction id.
+- **Training path: no bug.** Key packing fits K=20, all 20 river buckets are
+  distinct keys, Rust == Python bucketing under v3, and the cap jam is correct.
+
 **Found for V3.6:** `range_tracker._PF_BUCKET_CACHE` / `_POSTFLOP_BUCKET_CACHE` are
 process-global and keyed by board only, not by abstraction. One process tracking
 ranges under two abstractions (v2 + v3 sessions on one gunicorn worker) would reuse
