@@ -216,7 +216,7 @@ You've done Step 0 (AWS account + IAM + Cloudflare domain). The rest, in order:
 
 **1. Provision the four DynamoDB tables.** From your laptop with `aws configure` already done:
 
-```powershell
+```bash
 python scripts/provision_dynamodb.py --region ap-southeast-1
 ```
 
@@ -226,7 +226,7 @@ The script (in `scripts/provision_dynamodb.py`) imports each store class and cal
 
 **2. Create the ECR repo.**
 
-```powershell
+```bash
 aws ecr create-repository --repository-name allin --region ap-southeast-1
 ```
 
@@ -246,7 +246,7 @@ checklist below tracks tightening this.)
 
 **6. Build, tag, push the Docker image.**
 
-```powershell
+```bash
 docker build --pull -t allin .
 # Smoke-test locally:
 docker run -p 5000:5000 -e ALLIN_SESSION_STORE=memory -e ALLIN_STORE_BACKEND=memory allin
@@ -264,12 +264,12 @@ Image = `<YOUR-ECR-URL>:v1.0.0`. Open port `5000` publicly. Health-check path `/
 You also need to grant the Lightsail service permission to pull from your private ECR — the
 one-time setup:
 
-```powershell
-aws lightsail update-container-service --service-name allin --region ap-southeast-1 `
+```bash
+aws lightsail update-container-service --service-name allin --region ap-southeast-1 \
   --private-registry-access "ecrImagePullerRole={isActive=true}"
 
 # Get the role ARN, then add a repository policy to ECR that allows that role:
-aws lightsail get-container-services --service-name allin --region ap-southeast-1 `
+aws lightsail get-container-services --service-name allin --region ap-southeast-1 \
   --query "containerServices[0].privateRegistryAccess.ecrImagePullerRole.principalArn"
 # Use the ARN in an ECR repository policy with ecr:BatchGetImage + ecr:GetDownloadUrlForLayer.
 ```

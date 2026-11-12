@@ -1,4 +1,4 @@
-# v3 blueprint — plan and progress log (V3.0–V3.5 done; ship decision and V3.6 pending)
+# v3 blueprint — plan and progress log (V3.0–V3.5 done; V3.5b–V3.14 pending, see Steps)
 
 Branch `rust-core`. Written 2026-11-09 after the BUG-027 investigation.
 Follows [PHASE6_ABSTRACTION_PLAN.md](PHASE6_ABSTRACTION_PLAN.md) (SPR buckets built,
@@ -498,6 +498,63 @@ was process-global and keyed by board only, so one process tracking ranges under
 abstractions would reuse the first one's buckets. It is now keyed by
 (abstraction dir, board); the replay no longer clears it by hand.
 
+### V3.5 re-run on the fixed harness (2026-11-12) — partial, paused
+
+Overnight run from 01:30 (`analysis/blueprints_rs/eval_runs/20261112/run_all.sh`,
+git-ignored; `resume.sh` there reruns only the jobs without a result). BR finished;
+the queue was paused at 10:44 with 31 of 104 match/LBR jobs left (the last match seeds
+and all 8 LBR runs). Both arms were resumed from 150M to 300M before this run.
+
+**Best response, the iteration test** (`scripts/br_attr.py`, 24 boards per seed, so a
+seed is one set of boards and comparisons are paired by seed). v2 seed 42 gave
+14,027.7, reproducing the Nov 9 run (14,028) on today's code.
+
+| C − A (mbb/hand) | seed 42 | seed 43 | seed 44 | seed 45 |
+|---|---|---|---|---|
+| 150M | +106 | +333 | | |
+| 200M | +107 | +483 | | |
+| 300M | +80 | +555 | +345 | +430 |
+
+| Total BR, seed 42 / 43 | 150M | 200M | 300M |
+|---|---|---|---|
+| A | 12,947 / 11,819 | 13,187 / 11,971 | 13,553 / 12,246 |
+| C | 13,053 / 12,152 | 13,294 / 12,454 | 13,633 / 12,801 |
+
+- **The "C needs more iterations" theory is refuted.** The gap does not shrink with
+  training (mean +353 at 300M over four seeds). It sits in the BB seat
+  (+250 to +720 per seed) and in preflop gain (street 0: +115 to +470); C is
+  slightly better as SB (−70 to −175). The preflop buckets are identical, so this is
+  the BB's preflop defence becoming easier to exploit given C's postflop play: the
+  abstraction-pathology pattern (a finer abstraction need not be less exploitable in
+  the real game).
+- **Both arms get more exploitable from 150M to 300M** (+430 to +650 per seed). The
+  rise is on the turn and river (A seed 42: turn +236, river +192); preflop is flat.
+  Same "BR bottoms out, then rises" as the 90M Python retrain. Pick the snapshot by
+  play, not BR.
+
+**Matches, partial** (AIVAT, 40k hands per seed; 4–5 of 6 seeds; mbb/hand, >0 = the
+first-named bot wins). These replace the superseded V3.5 table; the human-model
+scale changed because the simulated human now jams at measured human rates.
+
+| | v2 | SPR 100M | A100 | A150 | A300 | C100 | C150 | C300 |
+|---|---|---|---|---|---|---|---|---|
+| vs human model | +481 ± 45 | +594 ± 43 | +600 ± 41 | +652 ± 41 | +682 ± 40 | +613 ± 41 | +679 ± 41 | +676 ± 40 |
+| vs v2 | — | +174 ± 37 | +204 ± 39 | +213 ± 39 | not run | +223 ± 39 | +252 ± 39 | not run |
+| C vs A, same iterations | | | | | | +48 ± 38 (100M) | +31 ± 37 (150M) | +55 ± 37 (300M) |
+
+- Every new blueprint beats v2 clearly: ~+200 head-to-head, and +110 to +200 more
+  than v2 against the human model.
+- Play improves past 100M (+50 to +80 vs the human model by 150–300M) even as BR
+  rises.
+- C vs A leans C by +30 to +55 at every length, none significant yet.
+
+**Reading so far.** By the gates, C fails gate 2 (BR of C ≤ BR of A) at every
+length, and its play edge over A is small and unconfirmed. A also ships without a
+second abstraction dir, new table assets or the two-abstraction memory risk. So far
+this points to **A**, at a 150M–300M snapshot chosen on play, but the decision waits
+for the remaining seeds and LBR (step V3.5b). A300 and C300 also need a head-to-head
+vs v2.
+
 ## Steps
 
 | Step | Work | Wall time | Gate |
@@ -508,18 +565,153 @@ abstractions would reuse the first one's buckets. It is now keyed by
 | V3.3 | River centroids K = 20 (`--opp-samples 0`) into `v3/`; check the Rust river bucketing reads K from the file | minutes | occupancy sane; Python == Rust on random river spots |
 | V3.4 | Train two arms, 150M each, snapshot every 10M, `--river-cache-boards 140000`: **A** = spr5 + cap jam on v2's abstraction (isolates change 1); **C** = all four changes (the candidate) | ~1–1.5 h per arm | strategy-shape probe clean (no "never fold" collapse; weak-hand preflop fold sane) |
 | V3.5 | Evaluate (below) and pick the ship snapshot | ~4–5 h total, overnight | gates below |
+| V3.5b | Finish the re-run (`resume.sh`: 31 jobs, ~1.5 h) plus A300/C300 head-to-head vs v2; pick the **base arm** (A or C) and snapshot | ~2 h | gates below; snapshot by play, not BR |
 | V3.6 | Serving path (Phase 6.2, extended), all behind the DB stamps; v2 behaviour unchanged: `BlueprintStrategy`, range tracker, river solver (projection, gadget CFV, guards), translation, `game_session`/`game_adapter` | — | tests incl. a BUG-027 replay through `GameSession`; v2 tests unchanged |
+| V3.7 | Rust river solver, served | ~1 week | Rust == Python solve on fixed spots; p95 latency ≤ 5 s on a 0.25 vCPU profile; gadget still ≤ blueprint |
+| V3.8 | Sub-minimum bet anchor (inference only) | days | LBR at 0.1×/0.25× pot falls (z > 2); other fractions and H2H vs v2 within \|t\| < 2 |
+| V3.9 | River solver bet menu "F" | days, after V3.7 | p95 ≤ 5 s on Rust; H2H with the solver on ≥ menu A (\|t\| < 2 or better) |
+| V3.10 | Opponent models re-fit on v3 keys, stamped with `abstraction_id` (moved here from Phase 7: V3.11 and V3.13 need it) | ~1 day | the model guard compares abstraction ids; exploit no longer self-disables on the v3 blueprint |
+| V3.11 | Pooled facing-jam population read + logged-spot evaluator (targets BUG-027) | days | logged-spot EV(call) − EV(fold) improves over the current guard; no regression vs the human model |
+| V3.12 | Negative-regret pruning arm (Rust trainer), on the base arm's config | ~1 week + training | strategy-shape probe clean; BUG-027 replay; H2H vs the base arm and vs the human model ≥ base |
+| V3.13 | Offline data-biased-response (DBR) blueprint against the population model | 1–2 weeks, after V3.10 | BR cost vs a held-out human-model gain, swept over P_max |
+| V3.14 | Final pick among base / pruning / DBR blueprints; hardening (below) | — | the gates, re-run on the final candidates |
 
 The V3.6 serving work covers:
-- spr5 keys;
+- spr5 keys, threaded through `GameSession`, the range tracker's `_action_matrix`,
+  `tilt.py` and `replay.py`;
 - the cap-jam node: a human 5-bet of any size maps to `a`, and the bot can choose
   `allin` there;
 - the deep-raise guard covering only beyond-the-new-cap nodes;
-- the v3 abstraction dir.
+- `capped_pj` in `SERVING_MENU_MODES`, and auto-resolution and the fail-closed
+  refusals lifted for stamped v3 DBs;
+- the v3 abstraction dir, only if C is the base arm: every serving reader builds its
+  card abstraction from the blueprint's verified directory;
+- the four open river-solver review items (they affect v2 too):
+  1. the safe gadget's fallback solve is starved of time in `auto` mode: reserve a
+     fixed share of the shared deadline for it;
+  2. the blueprint projection treats untrained deep nodes as uniform, inflating
+     `e_bp` (~3.9% in one spot): project call/check there instead;
+  3. custom amounts are rounded with `:g`, so a solver raise at exactly min-raise can
+     round below it and be rejected: format with `.10g` or clamp to the minimum;
+  4. a re-solve that gives the bot's hand zero reach silently falls back to the
+     blueprint: count it and fall back explicitly;
+- the remaining coin-flip fallbacks (e.g. an untrained faced jam) replaced by the
+  equity-vs-belief guard.
 
-**Then Phase 7 (separate sign-off):** re-fit the opponent models on v3 keys
-(exploit self-disables on a mismatch until then), `/api/abstractions` +
-KeyExplorer, `assets-v3`, the Docker Rust stage, live A/B, cutover.
+### Scope added 2026-11-12: the next improvements are part of v3
+
+Sources: the 2026-11-11 research and bet-menu reviews (summarised here; their scratch
+scripts were not kept).
+
+**V3.7 — serve the Rust river solver, with a faster CFR variant.**
+- Today the live solver runs 275 iterations of CFR+ with simultaneous updates and
+  linear averaging in Python: ~15 s for a single-raised pot on the 0.25 vCPU box. The
+  Rust port measured 7× faster but is not served.
+- Work:
+  - a `ALLIN_RIVER_BACKEND=python|rust` adapter;
+  - alternating updates with DCFR(1.5, 0, 2) or DCFR+, for an expected 2–3× fewer
+    iterations (DCFR beats CFR+ and PCFR+ on HUNL subgames);
+  - re-check the safe gadget under the new weighting;
+  - a Rust stage in the Docker image.
+- Expected: ~15 s → 1–2 s per solve. The freed latency pays for V3.9.
+
+**V3.8 — sub-minimum bets at inference.**
+- Humans almost never bet off the grid: 7 of 4,285 postflop opening bets (0.16%), 0
+  of 280 first raises, 0 of 1,458 preflop opens (6,664 hands).
+- In a clairvoyance toy game, pseudo-harmonic translation gives an exploiter 0 in
+  every interior gap, including 2.0× to all-in. The one hole is below the smallest
+  size: such a bet is clamped to the 0.33 response, so the bot over-folds. Exploiter
+  gain is 100 / 79 / 41 / 24 milli-pot per bet at 0.05 / 0.10 / 0.20 / 0.25× pot.
+- Fix at inference: anchor a sub-minimum bet between "size 0 = never fold" and the
+  0.33 response, pseudo-harmonically. `bot_strategy` and `translation` have no
+  sub-minimum handling today.
+- Measure first (M0): LBR probing {0.1, 0.25, 0.5, 0.8, 1.25, 2.5, 3.0}× pot, reported
+  per fraction (`LBR_BET_FRACTIONS` is only 0.5 / 1.0 / 1.5 today). A fraction counts
+  as a leak only if its gain over the on-grid fraction has z > 2.
+- No new trained blueprint sizes: no human volume sits in a gap, and each added tier
+  costs 1.2–1.35× the info sets plus a retrain. If the grid is touched again, the
+  evidence favours cutting raise tiers to ~2 (×0.28 the patterns; each raise size gets
+  only 2–6% of the mass at raise nodes, all-in 6–8%). That is a separate one-variable
+  arm, only if M0 finds an interior leak with real volume.
+
+**V3.9 — river solver bet menu "F".**
+- Bets 0.33 / 0.5 / 0.75 / 1 / 1.5 / 2 + all-in; raises 0.5 / 1 + all-in; 3
+  aggressions. Today's menu A uses 0.5 / 0.75 / 1 / 1.5 for both bets and raises.
+- Tree size (nodes): single-raised pot SPR 4.5: A 72, F 74; 3-bet pot SPR 1.2: A 16,
+  F 24; limped SPR 24: A 210, F 124. F costs the same as A in single-raised pots and
+  40% less in the deep worst case, and adds the block bet and a 2× overbet.
+- The solver needs no raise sizes for the human's sake: a human's exact raise is
+  spliced into the tree (`inject_realized_edge`). F also closes the documented
+  missing-0.33 gap (`river_subgame_solver.py`).
+- Compare A vs F vs F + 0.25 / 3.0: node counts, Rust p95 latency, solve gap at 275
+  iterations, then a paired AIVAT H2H (30–50k hands) with the solver on in both arms.
+
+**V3.10 — opponent models on v3 keys.**
+- Re-derive keys from the raw recaps; don't reuse stored v2 keys (5-bet lines mapped
+  to beyond-cap keys under v2 and map to trained `a` keys under v3).
+- Models record the `abstraction_id` (and key format) they were fit on, and the
+  guard compares it; `fit_opponent_models.py` buckets with the target blueprint's
+  abstraction.
+
+**V3.11 — pooled read on how strong human jams are (BUG-027).**
+- BUG-027 is an opponent-model problem: J9 has 0.57–0.66 equity against the
+  blueprint's own shove range but ~0.20 against a human one.
+- At flop/turn facing-jam nodes (`_facing_allin_guard`), take equity against a
+  low-dimensional human model, P(jam | strength percentile, SPR, street, pot type),
+  pooled across all big-bet nodes (per-key counts in 4-bet pots are tiny).
+- Gate on that model's credible interval, not the per-hand tracker confidence (in
+  BUG-027 a read of 0.046 < 0.2 sent the bot back to the wide blueprint range).
+- Safety: weight the model by its data the way DBR does (P_max·n/(s+n)).
+- Our data is unusual: the server deals the cards, so recaps have both hole cards
+  even on folds, with no showdown selection bias.
+- **Logged-spot evaluator:** for every logged human jam the bot faced (and every river
+  bet that closes the action), compute exact EV(call) − EV(fold) from the human's real
+  cards by enumerating the remaining board. Unbiased, no response variance; scores
+  this guard (or any guard) on real data in seconds.
+
+**V3.12 — negative-regret pruning arm.**
+- Pluribus-style: on 95% of iterations, skip the traversing player's actions with
+  regret below a large negative threshold, except on the last street or one step from
+  a terminal; floor regret at a slightly lower bound.
+- Why: pruning makes a bucket's strategy fit the hands that actually reach it, which
+  acts like a finer abstraction with no new keys. Today a hand gets full regret
+  weight at a bucketed postflop node it almost never reaches (J9o in a 4-bet pot when
+  it 4-bets 2%): the BUG-023/027 class. Pluribus credits part of a ~2× speed-up to it.
+- Conflict: our trainer floors regret at 0 (CFR+), so this needs an unfloored arm or
+  a per-action dormant counter, and the parallel merge must be designed for
+  unfloored regret from the start (BUG-014 and the reverted "Fix #2").
+- Train on the base arm's config, one variable changed; gate on the strategy-shape
+  probe first.
+
+**V3.13 — safe exploitative (DBR) blueprint.**
+- At the human seat's nodes the opponent plays the fitted population model with
+  probability P_conf(n) and its own CFR strategy otherwise (data-biased response,
+  Johanson & Bowling 2009); ~1 h of Rust training per P_max.
+- Targets pre-river exploitation, which is only the bounded tilt today.
+- Measure BR (the cost) against a held-out human-model match (the gain), sweeping
+  P_max. Evaluating against the same model is in-sample, so hold out players or time.
+
+**Not included:** the research's "add the sizes humans actually use" (Libratus-style
+self-improvement). The recap data shows humans press the size buttons (0.16%
+off-grid), so there is no volume to add.
+
+**Then Phase 7 (deployment, separate sign-off; nothing ships until it is all tested):**
+- `/api/abstractions` + KeyExplorer for spr5 keys and the cap jam;
+- `assets-v3` (the blueprint, plus the v3 tables if C);
+- the memory budget on the 0.25 vCPU Lightsail box (two abstractions only if C);
+- test hardening:
+  - the ~26 silent print-and-return skips become real skips or failures;
+  - CI builds `allin_core` and runs parity and `cargo test`;
+  - mark the 501 s BR smoke test slow;
+  - fix the two env leaks and the global-random seeding;
+  - the missing tests: match payoffs, AIVAT on engine records, a real v2 + v3
+    tracker cache, `check_abstraction.py`, a `bug027_replay.py` smoke, a parity
+    freshness gate;
+- a full local play-through (frontend + API + local DynamoDB, exploit on);
+- merge rust-core into main (main has AGENTS.md and an IDEAS.md entry; apply the
+  CLAUDE.md edits to AGENTS.md too);
+- staged deploy: v3 with exploit off, live A/B vs v2, cutover, then exploit on (the
+  June announcement promises it).
 
 ## Evaluation and gates
 
@@ -575,10 +767,17 @@ Gates 1 and 4 carry the decision. Gate 2 is the attribution check.
   across different games. The A-vs-C split and the human-like-opponent measure
   exist to cover that.
 
-## Decisions needed (sign-off)
+## Decisions
 
+Signed off 2026-11-09:
 1. The four changes as specified, with finer flop/turn K, OCHS and more preflop
-   classes deferred?
-2. V3.0 versioned abstractions first (served code, behind stamps, no change for
-   v2)?
-3. Two training arms (A, C), with the gates above deciding?
+   classes deferred.
+2. V3.0 versioned abstractions first (served code, behind stamps, no change for v2).
+3. Two training arms (A, C), with the gates above deciding.
+
+Decided 2026-11-12: V3.7–V3.13 (Rust river solver, sub-minimum anchor, river menu F,
+the jam read, the pruning arm and the DBR blueprint) are part of v3, not later work.
+
+Still open:
+- the base arm (A or C) and its snapshot, after V3.5b;
+- Phase 7 deployment, which needs its own sign-off.

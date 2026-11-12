@@ -430,8 +430,10 @@ The property tests can also run under pytest:
 
 `src/config.py:resolve_blueprint_path()` picks the `analysis/blueprints/blueprint_*.db`
 with the **highest training iterations** (that isn't currently being written
-to). Both `blueprint_*.db` and `blueprint_par_*.db` (parallel runs) match, and
-snapshots under `analysis/blueprints/snapshots/` are excluded. So when you finish
+to) among the ones the server can serve: v2 keys, the root card abstraction and a
+serving menu mode. Both `blueprint_*.db` and `blueprint_par_*.db` (parallel runs)
+match; snapshots under `analysis/blueprints/snapshots/` and anything in
+`analysis/blueprints_rs/` (the Rust trainer's output) are excluded. So when you finish
 a longer run, the API/bot switch to it automatically on restart — no file
 renaming or promotion step.
 
@@ -460,16 +462,16 @@ and the API serves exactly that file, skipping the auto-pick. Set it in the
 
 ```bash
 # set the var, then start the API in the SAME terminal
-export ALLIN_BLUEPRINT_DB=/c/Ron/AllIn/backend/bot/analysis/blueprints/blueprint_par_20260529_002511.db
-cd /c/Ron/AllIn/backend/api
+export ALLIN_BLUEPRINT_DB="$HOME/Projects/AllIn/backend/bot/analysis/blueprints/blueprint_final_v2.db"
+cd ~/Projects/AllIn/backend/api
 python strategy_api.py
 ```
 
 Or scope it to the single command:
 
 ```bash
-cd /c/Ron/AllIn/backend/api
-ALLIN_BLUEPRINT_DB=/c/Ron/AllIn/backend/bot/analysis/blueprints/blueprint_par_20260529_002511.db python strategy_api.py
+cd ~/Projects/AllIn/backend/api
+ALLIN_BLUEPRINT_DB="$HOME/Projects/AllIn/backend/bot/analysis/blueprints/blueprint_final_v2.db" python strategy_api.py
 ```
 
 Three things to know:
@@ -477,10 +479,10 @@ Three things to know:
 - **Read at startup, not per request.** To switch blueprints, change the var and
   **restart** the API.
 - **Same shell only.** `export` applies to that terminal; a new terminal won't have
-  it. To persist across shells, add the `export` line to `~/.bashrc`.
+  it. To persist across shells, add the `export` line to `~/.zshrc`.
 - **Use an absolute path.** The API runs from `backend/api/`, so a relative
-  `analysis/...` path won't resolve. (`/c/...` works; a native `C:\...` path works
-  too if quoted.)
+  `analysis/...` path won't resolve (a relative path is read against the working
+  directory, e.g. `../bot/analysis/...`).
 
 **Verify which blueprint is live:** `curl http://localhost:5000/api/test` reports
 the `blueprint` filename and `iterations`. The API also prints
@@ -488,10 +490,11 @@ the `blueprint` filename and `iterations`. The API also prints
 
 **Clear the pin** (back to auto-resolution): `unset ALLIN_BLUEPRINT_DB`, then restart.
 
-> **Why you often need this:** auto-resolution picks the **highest-iteration** DB.
+> **Why you often need this:** auto-resolution picks the **highest-iteration** servable DB.
 > If an old, abstraction-incompatible blueprint with more iterations is still in
 > `analysis/blueprints/`, it will outrank your fresh current-abstraction run —
-> pin `ALLIN_BLUEPRINT_DB` to force the right one.
+> pin `ALLIN_BLUEPRINT_DB` to force the right one. A v3 (spr5 / `capped_pj`) blueprint
+> is refused by the server until V3.6, pinned or not.
 
 The evaluation harness instead takes the path directly, no env var:
 

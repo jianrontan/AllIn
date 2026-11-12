@@ -850,6 +850,18 @@ combination — so people can solve *real* H2H games — is filed as a post-Step
   gold standard, ≈ building DeepStack). Shallow is easy (small near-terminal trees); deep
   is hard (more streets, the aggression cap + coarse size grid bite, needs a deeper menu).
 
+## v3 blueprint + Rust core (branch rust-core) 🚧
+
+Tracked in [V3_BLUEPRINT_PLAN.md](V3_BLUEPRINT_PLAN.md) (steps, results, gates) and
+[RUST_CORE_PLAN.md](RUST_CORE_PLAN.md) (the Rust trainer). Status 2026-11-12:
+- ✅ Rust trainer (~50k it/s on 12 cores), spr5 keys, the preflop 5-bet jam (`capped_pj`),
+  versioned card abstractions; arms A (v2 cards) and C (v3 cards) trained to 300M. Both
+  beat v2 by ~+200 mbb/hand head-to-head on the fixed harness.
+- ⏳ V3.5b base-arm pick → V3.6 serving path → V3.7 Rust river solver served → V3.8
+  sub-minimum bet anchor → V3.9 river menu "F" → V3.10 opponent models on v3 keys →
+  V3.11 pooled facing-jam read → V3.12 pruning arm → V3.13 DBR blueprint → V3.14 final
+  pick, then deployment (separate sign-off).
+
 ## References
 
 [1] [Depth-Limited Solving for Imperfect-Information Games](https://dl.acm.org/doi/10.5555/3327757.3327865)

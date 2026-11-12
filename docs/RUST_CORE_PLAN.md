@@ -50,7 +50,7 @@ contract with the Python code (executable documentation).
 uv venv -p 3.12 .venv && uv pip install -p .venv/bin/python -r backend/requirements-dev.txt maturin
 
 # fixtures (deterministic; --quick for a fast loop, --only to regenerate one group)
-cd backend/bot && ../../.venv/bin/python scripts/export_rust_fixtures.py
+(cd backend/bot && ../../.venv/bin/python scripts/export_rust_fixtures.py)
 
 # build + test the Rust side
 cd backend/core-rs
@@ -89,11 +89,11 @@ If `cargo` isn't on PATH: Homebrew's rustup is keg-only — add
 | 0 | Scaffold + oracles | crate, fixtures, harness, baseline | ✅ harness 9/9 vs Python; mutation-tested |
 | 1 | River solver | `river_showdown`, `river_tree`, `river_cfr`, `river_gadget` | ✅ core: parity green (exact mode bit-identical), 7× measured. ⬜ serving: `ALLIN_RIVER_BACKEND` adapter + Docker Rust stage + local A/B |
 | 2 | Evaluator + bucketing | `eval_rank7`, `buckets` (preflop map; flop/turn `.npy` table lookup; river runtime equity + canonical-board cache) | ✅ exact on all fixtures (strict parity green); rank7 10×, river board 470× cold |
-| 3 | Betting engine + keys | `engine` (state-threaded, both menu modes), `keys` | ✅ exact on all fixtures |
+| 3 | Betting engine + keys | `engine` (state-threaded, all four menu modes incl. `capped_pj`), `keys` | ✅ exact on all fixtures |
 | 4 | Single-thread MCCFR + SQLite writer | `mccfr` | ✅ checkpointed DB byte-identical to Python's (3 runs × 600 iters, control/capped, γ=1/2) under injected deals + uniforms; 30× single core |
 | 5 | Parallel trainer (M6) | `mccfr_merge` (block Linear-CFR, threads) | ✅ merge bit-exact (200 cases); ~68k it/s on 12 workers (~300× Python core); statistical agreement with Python parallel (progress log). ⬜ BR/LBR at equal iterations (expensive; run before the long run) |
-| 6 | Abstraction upgrade | SPR buckets, finer buckets | user signs off the spec |
-| 7 | Long run + v3 bundle | train, re-bake, re-fit opponent models | BR/LBR + human-like match; user approves cutover |
+| 6 | Abstraction upgrade | SPR buckets, finer buckets | ✅ spr5 built, trained and scored ([PHASE6_ABSTRACTION_PLAN.md](PHASE6_ABSTRACTION_PLAN.md)) |
+| 7 | Long run + v3 bundle | train, re-bake, re-fit opponent models | ⏳ in progress as the v3 plan ([V3_BLUEPRINT_PLAN.md](V3_BLUEPRINT_PLAN.md), steps V3.5b–V3.14); user approves cutover |
 
 Phases 1, 2, 3 are independent (can run in parallel sessions/worktrees);
 4 needs 2+3; 5 needs 4.

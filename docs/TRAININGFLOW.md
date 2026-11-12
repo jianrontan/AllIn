@@ -149,6 +149,17 @@ run_blueprint_trainer.py --workers N --merge-every 2000 --menu-mode capped [--ga
   convergence scoreboard), and bundles the **5 same-generation serving artifacts** (blueprint renamed to
   `blueprint_final.db` + 2 centroids + 2 baked tables) to `~/result/`. It self-detects root vs a sudo user
   (Hetzner / AWS EC2), forces unbuffered logs, and prints `RSS/sysRAM` per round (needs `psutil`).
+- **The Rust trainer (branch rust-core).** `backend/bot/scripts/train_rust.py` drives the
+  Rust port in `backend/core-rs` (PyO3 module `allin_core`; build it with
+  `maturin develop --release` there). Same algorithm, keys, DB schema and metadata, so
+  either trainer can resume the other's blueprint; the single-thread path is
+  bit-identical to Python's (parity-tested) and the parallel path is the same
+  block-Linear-CFR merge on threads, ~50k it/s on 12 cores (~300× the Python core).
+  It adds `--key-format spr5`, `--abstraction v3`, `--menu-mode capped_pj` and
+  `--snapshot-every`, stamps the merge-round size, and writes to
+  `analysis/blueprints_rs/`, which auto-resolution ignores. `train_on_cloud.sh` is
+  still Python-only and builds only the root abstraction. See
+  [RUST_CORE_PLAN.md](RUST_CORE_PLAN.md) and [V3_BLUEPRINT_PLAN.md](V3_BLUEPRINT_PLAN.md).
 - **Operational runbook** (provision a 16 vCPU / 64 GB box → ssh → run → monitor → collect → tear down,
   with the gotchas: `nohup`/`tmux`, the speed-test DB, account limits, cost) is in the private
   `docs/private/EC2_TRAINING_RUNBOOK.md`.

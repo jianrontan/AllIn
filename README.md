@@ -222,8 +222,11 @@ python tests/run_evaluation.py --samples 1000   # exploitability in mbb/hand (lo
   the blueprint river while the bot plays the river solver). Reviving it needs a
   range-conditional value net, or exact solves of small low-SPR turn trees.
 - **In progress (branch rust-core)** — a Rust trainer (~300× the Python core) and the v3
-  blueprint: SPR-bucketed flop/turn keys, a preflop 5-bet jam, an exhaustive flop table and
-  20 river buckets. See docs/RUST_CORE_PLAN.md and docs/V3_BLUEPRINT_PLAN.md.
+  blueprint: SPR-bucketed flop/turn keys and a preflop 5-bet jam (both trained and scored;
+  a finer card abstraction was tried as a second arm). Still to come in v3: the Rust river
+  solver served with a faster CFR variant, a wider river bet menu, better handling of tiny
+  bets, a pooled read of human jams, a pruning training arm and a safe exploitative
+  blueprint. See docs/RUST_CORE_PLAN.md and docs/V3_BLUEPRINT_PLAN.md.
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for detail, and
 [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) for the architecture.

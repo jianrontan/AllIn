@@ -132,6 +132,12 @@ python tests/run_evaluation.py --db analysis/blueprints/blueprint_20260518_16090
 ### Branch rust-core (Rust core + v3 blueprint work; not on main yet)
 Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN.md`,
 `docs/V3_BLUEPRINT_PLAN.md` — read the relevant one first.
+- **Status (2026-11-12):** V3.0–V3.5 done (arms A and C trained to 300M). Remaining v3 scope,
+  in `V3_BLUEPRINT_PLAN.md` "Steps": V3.5b pick the base arm, V3.6 serving path, V3.7 serve
+  the Rust river solver (DCFR, alternating updates), V3.8 sub-minimum bet anchor, V3.9 river
+  menu "F", V3.10 opponent models on v3 keys, V3.11 pooled facing-jam read, V3.12
+  negative-regret pruning arm, V3.13 DBR blueprint, V3.14 final pick; then Phase 7 deploy
+  (separate sign-off).
 - **Environment:** a uv `.venv` (Python 3.12) at the worktree root; run Python as
   `../../.venv/bin/python` from `backend/bot/`. Rust is Homebrew rustup (keg-only):
   `env PATH=/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/usr/bin:/bin cargo test --release`
@@ -155,7 +161,8 @@ Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN
   `--model-dir`), `lbr_paired.py` (per-hand LBR for paired comparisons), `br_attr.py` (BR with
   per-street gain attribution), `bug027_replay.py` (the BUG-027 hand through any blueprint).
   `match.py` plays each side on its own `PokerGame` state machine, so the legal actions, stack
-  clamps and chip costs are the engine's.
+  clamps and chip costs are the engine's. Overnight eval runs and their results live in
+  `analysis/blueprints_rs/eval_runs/<date>/` (git-ignored; a run's `run_all.sh` is its recipe).
 - **Naming clash:** "Phase 6" in these branch plans is the abstraction upgrade; in the Roadmap
   Notes below it is opponent exploitation.
 
