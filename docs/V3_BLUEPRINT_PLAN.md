@@ -1,4 +1,4 @@
-# v3 blueprint — plan and progress log (V3.0–V3.5 done; V3.5b–V3.14 pending, see Steps)
+# v3 blueprint — plan and progress log (V3.0–V3.5b done, base-arm pick awaits sign-off; V3.6–V3.14 pending, see Steps)
 
 Branch `rust-core`. Written 2026-11-09 after the BUG-027 investigation.
 Follows [PHASE6_ABSTRACTION_PLAN.md](PHASE6_ABSTRACTION_PLAN.md) (SPR buckets built,
@@ -498,12 +498,13 @@ was process-global and keyed by board only, so one process tracking ranges under
 abstractions would reuse the first one's buckets. It is now keyed by
 (abstraction dir, board); the replay no longer clears it by hand.
 
-### V3.5 re-run on the fixed harness (2026-11-12) — partial, paused
+### V3.5 re-run on the fixed harness (2026-11-12/13) — complete
 
 Overnight run from 01:30 (`analysis/blueprints_rs/eval_runs/20261112/run_all.sh`,
 git-ignored; `resume.sh` there reruns only the jobs without a result). BR finished;
-the queue was paused at 10:44 with 31 of 104 match/LBR jobs left (the last match seeds
-and all 8 LBR runs). Both arms were resumed from 150M to 300M before this run.
+the queue was paused at 10:44 with 31 of 104 match/LBR jobs left and resumed on
+11-13 01:30 with A300/C300 vs v2 added (43 jobs, done 03:16). Both arms were resumed
+from 150M to 300M before this run.
 
 **Best response, the iteration test** (`scripts/br_attr.py`, 24 boards per seed, so a
 seed is one set of boards and comparisons are paired by seed). v2 seed 42 gave
@@ -532,28 +533,54 @@ seed is one set of boards and comparisons are paired by seed). v2 seed 42 gave
   Same "BR bottoms out, then rises" as the 90M Python retrain. Pick the snapshot by
   play, not BR.
 
-**Matches, partial** (AIVAT, 40k hands per seed; 4–5 of 6 seeds; mbb/hand, >0 = the
-first-named bot wins). These replace the superseded V3.5 table; the human-model
-scale changed because the simulated human now jams at measured human rates.
+**Matches** (AIVAT, 40k hands per seed, 6 seeds = 240k hands; mbb/hand, >0 = the
+first-named bot wins; ± is the pooled standard error). These replace the superseded
+V3.5 table; the human-model scale changed because the simulated human now jams at
+measured human rates.
 
 | | v2 | SPR 100M | A100 | A150 | A300 | C100 | C150 | C300 |
 |---|---|---|---|---|---|---|---|---|
-| vs human model | +481 ± 45 | +594 ± 43 | +600 ± 41 | +652 ± 41 | +682 ± 40 | +613 ± 41 | +679 ± 41 | +676 ± 40 |
-| vs v2 | — | +174 ± 37 | +204 ± 39 | +213 ± 39 | not run | +223 ± 39 | +252 ± 39 | not run |
-| C vs A, same iterations | | | | | | +48 ± 38 (100M) | +31 ± 37 (150M) | +55 ± 37 (300M) |
+| vs human model | +481 ± 41 | +592 ± 39 | +601 ± 37 | +631 ± 37 | +659 ± 37 | +611 ± 37 | +658 ± 37 | +680 ± 37 |
+| vs v2 | — | +186 ± 34 | +209 ± 32 | +245 ± 32 | +280 ± 32 | +233 ± 32 | +268 ± 32 | **+381 ± 31** |
+| C vs A, same iterations | | | | | | +46 ± 31 | +24 ± 30 | **+79 ± 30** |
 
-- Every new blueprint beats v2 clearly: ~+200 head-to-head, and +110 to +200 more
-  than v2 against the human model.
-- Play improves past 100M (+50 to +80 vs the human model by 150–300M) even as BR
-  rises.
-- C vs A leans C by +30 to +55 at every length, none significant yet.
+**Paired LBR** (`lbr_paired.py`, seed 777, 10k hands, the same deals for every
+blueprint; mbb/hand, lower = less exploitable):
 
-**Reading so far.** By the gates, C fails gate 2 (BR of C ≤ BR of A) at every
-length, and its play edge over A is small and unconfirmed. A also ships without a
-second abstraction dir, new table assets or the two-abstraction memory risk. So far
-this points to **A**, at a 150M–300M snapshot chosen on play, but the decision waits
-for the remaining seeds and LBR (step V3.5b). A300 and C300 also need a head-to-head
-vs v2.
+| | v2 | SPR 100M | A100 | A150 | A300 | C100 | C150 | C300 |
+|---|---|---|---|---|---|---|---|---|
+| LBR | 1,164 | 453 | 337 | 673 | 710 | 383 | 666 | 599 |
+
+Each value is ±~300 and a paired difference ±~200, so only v3 vs v2 is resolved
+(A100 −827 ± 288, C300 −565 ± 297, A300 −454 ± 297, SPR 100M −710 ± 255). C − A is
++47 / −7 / −111 (± ~200) at 100M / 150M / 300M: no difference.
+
+- Every new blueprint beats v2 clearly: +186 to +381 head-to-head, +110 to +200 more
+  than v2 against the human model, and roughly half v2's LBR.
+- Play keeps improving to 300M in both arms (vs v2: A +209 → +280, C +233 → +381;
+  vs the human model +60 to +70) even as BR rises.
+- **At 300M C beats A**: +79 ± 30 head-to-head (z = 2.6, five of six seeds positive)
+  and +101 ± 45 more than A against v2 (z = 2.3). Against the human model C300 leads
+  A300 by +21 ± 52 (not significant). At 100M and 150M the edge is +24 to +46, not
+  significant.
+
+**Reading.** Against the gates (gates 1 and 4 carry the decision, gate 2 is the
+attribution check):
+- Gate 1 (BUG-027 replay) and gate 4 (vs the human model ≥ v2) pass for both arms;
+  gate 3 (no regression vs v2, H2H and LBR) passes for both.
+- Gate 2 fails for C: its BR is ~2.7% worse than A's (+353 mean at 300M), in the BB
+  seat and preflop.
+- The head-to-head edge C gained by 300M is the first significant difference between
+  the arms, and it shows up twice (directly and against v2). Against the human-like
+  opponent, the measure closest to prod, the arms are level.
+- C's cost: a second abstraction dir and its baked tables in the assets, the
+  two-abstraction memory risk, and opponent models fit on v3 buckets (V3.10 refits
+  them on v3 keys either way).
+
+**Recommendation: C at 300M**, pending sign-off — the stronger player wherever the
+measures resolve, at the price of a worse BR lower bound. A at 300M is the fallback
+if the BR gap or the extra assets weigh more. Snapshot: 300M in either arm (the best
+play measured; BR is not used to pick it).
 
 ## Steps
 
@@ -565,7 +592,7 @@ vs v2.
 | V3.3 | River centroids K = 20 (`--opp-samples 0`) into `v3/`; check the Rust river bucketing reads K from the file | minutes | occupancy sane; Python == Rust on random river spots |
 | V3.4 | Train two arms, 150M each, snapshot every 10M, `--river-cache-boards 140000`: **A** = spr5 + cap jam on v2's abstraction (isolates change 1); **C** = all four changes (the candidate) | ~1–1.5 h per arm | strategy-shape probe clean (no "never fold" collapse; weak-hand preflop fold sane) |
 | V3.5 | Evaluate (below) and pick the ship snapshot | ~4–5 h total, overnight | gates below |
-| V3.5b | Finish the re-run (`resume.sh`: 31 jobs, ~1.5 h) plus A300/C300 head-to-head vs v2; pick the **base arm** (A or C) and snapshot | ~2 h | gates below; snapshot by play, not BR |
+| V3.5b | ✅ results in 2026-11-13 (re-run finished, A300/C300 vs v2 added); recommendation C at 300M, base-arm pick awaits sign-off | ~2 h | gates below; snapshot by play, not BR |
 | V3.6 | Serving path (Phase 6.2, extended), all behind the DB stamps; v2 behaviour unchanged: `BlueprintStrategy`, range tracker, river solver (projection, gadget CFV, guards), translation, `game_session`/`game_adapter` | — | tests incl. a BUG-027 replay through `GameSession`; v2 tests unchanged |
 | V3.7 | Rust river solver, served | ~1 week | Rust == Python solve on fixed spots; p95 latency ≤ 5 s on a 0.25 vCPU profile; gadget still ≤ blueprint |
 | V3.8 | Sub-minimum bet anchor (inference only) | days | LBR at 0.1×/0.25× pot falls (z > 2); other fractions and H2H vs v2 within \|t\| < 2 |
@@ -779,5 +806,6 @@ Decided 2026-11-12: V3.7–V3.13 (Rust river solver, sub-minimum anchor, river m
 the jam read, the pruning arm and the DBR blueprint) are part of v3, not later work.
 
 Still open:
-- the base arm (A or C) and its snapshot, after V3.5b;
+- the base arm (A or C) and its snapshot: V3.5b recommends C at 300M (see "V3.5
+  re-run on the fixed harness");
 - Phase 7 deployment, which needs its own sign-off.
