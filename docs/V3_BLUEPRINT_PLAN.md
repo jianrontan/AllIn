@@ -1,4 +1,4 @@
-# v3 blueprint — plan and progress log (V3.0–V3.5b done; V3.6–V3.14 pending, base-arm pick before V3.10; see Steps)
+# v3 blueprint — plan and progress log (V3.0–V3.6 done; V3.7–V3.14 pending, base-arm pick before V3.10; see Steps)
 
 Branch `rust-core`. Written 2026-11-09 after the BUG-027 investigation.
 Follows [PHASE6_ABSTRACTION_PLAN.md](PHASE6_ABSTRACTION_PLAN.md) (SPR buckets built,
@@ -144,9 +144,7 @@ Implemented in `backend/bot/src/abstractions/abstraction_set.py`
 - The evaluation tools resolve each blueprint's own directory: LBR, best response,
   `HeadToHeadMatch` and `CrossMatch` (per side, sharing one instance when the two
   agree), and the SPR probe.
-- Serving fails closed on a named abstraction until V3.6: `BlueprintStrategy`
-  (so also the river solver), the strategy API, and auto-resolution, which skips
-  named-abstraction blueprints.
+- Serving failed closed on a named abstraction until V3.6, which lifted it (below).
 
 **Review fixes (2026-11-09).**
 - **Named abstractions are strict.** A missing flop/turn table or an unstamped table
@@ -198,8 +196,8 @@ and its npz reader ignores the new `flop_runouts` member.
 **Evaluation mirrors.** LBR's victim model and exploiter, and the head-to-head
 match's legal actions, offer the cap jam too.
 
-**Serving.** `BlueprintStrategy` and the strategy API refuse `capped_pj` until
-V3.6 (`sizing.SERVING_MENU_MODES`).
+**Serving.** `BlueprintStrategy` and the strategy API refused `capped_pj` until
+V3.6, which added it to `sizing.SERVING_MENU_MODES`.
 
 **Rust.** `Engine.preflop_cap_jam` with the `"capped_pj"` mode. New parity
 components:
@@ -593,7 +591,7 @@ play measured; BR is not used to pick it).
 | V3.4 | Train two arms, 150M each, snapshot every 10M, `--river-cache-boards 140000`: **A** = spr5 + cap jam on v2's abstraction (isolates change 1); **C** = all four changes (the candidate) | ~1–1.5 h per arm | strategy-shape probe clean (no "never fold" collapse; weak-hand preflop fold sane) |
 | V3.5 | Evaluate (below) and pick the ship snapshot | ~4–5 h total, overnight | gates below |
 | V3.5b | ✅ results in 2026-11-13 (re-run finished, A300/C300 vs v2 added); recommendation C at 300M; the pick itself moved to V3.10 (decided 2026-11-13) | ~2 h | gates below; snapshot by play, not BR |
-| V3.6 | Serving path (Phase 6.2, extended), all behind the DB stamps; v2 behaviour unchanged: `BlueprintStrategy`, range tracker, river solver (projection, gadget CFV, guards), translation, `game_session`/`game_adapter`. Built for **both** arms (A300 and C300), with the serving memory of each measured | — | tests incl. a BUG-027 replay through `GameSession`, on A300 and C300; v2 tests unchanged |
+| V3.6 | ✅ 2026-11-13 (see "V3.6 — done"). Serving path (Phase 6.2, extended), all behind the DB stamps; v2 behaviour unchanged: `BlueprintStrategy`, range tracker, river solver (projection, gadget CFV, guards), translation, `game_session`/`game_adapter`. Built for **both** arms (A300 and C300), with the serving memory of each measured | — | tests incl. a BUG-027 replay through `GameSession`, on A300 and C300; v2 tests unchanged |
 | V3.7 | Rust river solver, served | ~1 week | Rust == Python solve on fixed spots; p95 latency ≤ 5 s on a 0.25 vCPU profile; gadget still ≤ blueprint |
 | V3.8 | Sub-minimum bet anchor (inference only) | days | LBR at 0.1×/0.25× pot falls (z > 2); other fractions and H2H vs v2 within \|t\| < 2 |
 | V3.9 | River solver bet menu "F" | days, after V3.7 | p95 ≤ 5 s on Rust; H2H with the solver on ≥ menu A (\|t\| < 2 or better) |
@@ -603,7 +601,7 @@ play measured; BR is not used to pick it).
 | V3.13 | Offline data-biased-response (DBR) blueprint against the population model | 1–2 weeks, after V3.10 | BR cost vs a held-out human-model gain, swept over P_max |
 | V3.14 | Final pick among base / pruning / DBR blueprints; hardening (below) | — | the gates, re-run on the final candidates |
 
-The V3.6 serving work covers:
+The V3.6 serving work covered (all done; see "V3.6 — done" below):
 - spr5 keys, threaded through `GameSession`, the range tracker's `_action_matrix`,
   `tilt.py` and `replay.py`;
 - the cap-jam node: a human 5-bet of any size maps to `a`, and the bot can choose
@@ -626,6 +624,81 @@ The V3.6 serving work covers:
      blueprint: count it and fall back explicitly;
 - the remaining coin-flip fallbacks (e.g. an untrained faced jam) replaced by the
   equity-vs-belief guard.
+
+### V3.6 — done 2026-11-13
+
+**Binding a session to its blueprint.** `game_session.session_kwargs(db)` returns the
+blueprint's menu mode, key format and verified abstraction dir; the API builds every
+`GameSession` with it (live game, explorer river solve, abandoned-hand sweep). The
+session then:
+- builds flop/turn keys with the street-start SPR bucket (`_spr()`, from
+  `d['starting_pot']`), and passes the same bucket to both range trackers' `observe`
+  (`_action_matrix(spr=)`) and to the bot (`public_state['spr']`, read by the exploit
+  tilt);
+- buckets with `card_abstractions.shared_card_abstraction(dir)`: one CardAbstraction
+  per directory per process, shared with the river solver. Before, every request built
+  its own and reloaded the baked tables (the turn table is 126 MB).
+
+`exploitation/replay.py` takes `key_format` and rebuilds the street-start pot from the
+logged chips; `opponent_model._levels` skips the `rN` token.
+
+**The preflop cap jam, live.** Live play uncaps re-raises, so facing the 4-bet the
+engine offers sized 5-bets the blueprint never trained. At that node
+(`_at_preflop_cap`: preflop, `capped_pj`, exactly 3 aggressions, the last one just
+made):
+- the bot is offered exactly the trained `fold / call / allin`;
+- the human keeps the live sizes plus `allin`, and any 5-bet (sized, custom or a jam)
+  is recorded as `a`. The trackers observe it as `allin` on the trained legal set, and
+  the bot answers from the trained facing-jam key (fold/call).
+
+Beyond the cap the deep-raise guard still owns untrained nodes; the cap node and the
+facing-jam node are trained, so it defers there.
+
+**Refusals lifted.** `BlueprintStrategy` (so the river solver), the API and
+auto-resolution take any known key format, a verified abstraction dir and a serving
+menu mode (`capped_pj` added). Auto-resolution only checks that the dir exists; the
+loader verifies the abstraction id. Still v2-only, failing closed:
+- the PyPokerEngine `Player` (its `GameAdapter` builds v2 keys from PyPokerEngine
+  state; not a serving path);
+- `HumanModel`: the fitted models are v2 keys on root buckets, so it refuses a v3
+  blueprint and exploitation self-disables until V3.10;
+- the Hand Explorer: `/api/strategy/from-hand` returns 501 for a v3 blueprint (its key
+  builder has no street-start pot; Phase 7).
+
+**River solver.**
+1. The safe gadget keeps 40% of the budget (`_GADGET_RESERVE`) when the exploit solve
+   may fall back to it (an untrusted read); a trusted read still gets the whole budget.
+2. `blueprint_to_tree_dist` projects an untrained node as the served passive play
+   (check, or call facing a bet) instead of uniform.
+3. `make_custom_action` writes the full repr when `%g` would round, so a raise to
+   exactly the minimum is no longer rejected.
+4. Zero hero reach raises `UnsolvableSpot`: counted in `stats['zero_reach']`, logged
+   without a traceback, and played by the explicit fallback.
+
+**Coin flips.** The deep-raise guard no longer needs a tracker (it judges against the
+top-fraction range without one), and a failed or unsolvable river spot facing an
+untrained bet goes through that guard before the safe call.
+
+**Tests.** `tests/test_v3_serving.py` (18), including the BUG-027 hand through
+`GameSession` on A300 and C300: every bot node is a trained key, the flop lead-jam is
+`_flop_r0_a`, and the cap node is played as trained. The refusal tests in
+`test_abstraction_set.py` now pin the new behaviour. API smoke (scratch script, 20
+hands per blueprint through `/game/new`, `/action`, `/bot-action`, `/next-hand`): A300
+63/63 and C300 50/50 bot keys trained, every flop/turn key SPR-tagged, river solves
+ran; v2 unchanged (no SPR tokens, Hand Explorer 200, 53/53 trained). With
+`ALLIN_EXPLOIT=1`, v2 loads the 15 player models and A300 self-disables.
+
+**Serving memory** (`scripts/measure_serving_memory.py`: the served bot plus 60 hands
+against a sticky caller, 13 river solves, one blueprint per process):
+
+| | v2 | A300 | C300 |
+|---|---|---|---|
+| RSS after the hands | 270 MB | 272 MB | 284 MB |
+
+One process serves one blueprint, so C does not load a second set of tables: the v3
+turn table is a copy of the root's (126 MB each) and the exhaustive flop table is the
+same size as the root's (11.6 MB). C costs ~12 MB more than A, from its river buckets
+and caches. The "two-abstraction memory risk" applies only if one process loaded both.
 
 ### Scope added 2026-11-12: the next improvements are part of v3
 
@@ -727,7 +800,7 @@ off-grid), so there is no volume to add.
 **Then Phase 7 (deployment, separate sign-off; nothing ships until it is all tested):**
 - `/api/abstractions` + KeyExplorer for spr5 keys and the cap jam;
 - `assets-v3` (the blueprint, plus the v3 tables if C);
-- the memory budget on the 0.25 vCPU Lightsail box (two abstractions only if C);
+- the memory budget on the 0.25 vCPU Lightsail box (V3.6 measured ~270–285 MB per process for one blueprint; budget the gunicorn worker count against it);
 - test hardening:
   - the ~26 silent print-and-return skips become real skips or failures;
   - CI builds `allin_core` and runs parity and `cargo test`;
@@ -813,5 +886,5 @@ memory first.
 
 Still open:
 - the base arm (A or C) and its snapshot, at V3.10: V3.5b recommends C at 300M (see
-  "V3.5 re-run on the fixed harness");
+  "V3.5 re-run on the fixed harness"); V3.6 found C costs ~12 MB more to serve than A;
 - Phase 7 deployment, which needs its own sign-off.

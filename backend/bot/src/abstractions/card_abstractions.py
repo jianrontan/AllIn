@@ -1,4 +1,7 @@
 # backend/bot/abstractions/card_abstractions.py
+import os
+import threading
+
 from .hand_evaluator import HandEvaluator
 from .postflop_v2 import PostflopV2
 
@@ -358,3 +361,24 @@ class CardAbstraction:
         else:
             suffix = 's' if suited else 'o'
             return f"{high_rank}{low_rank}{suffix}"
+
+
+# One CardAbstraction per abstraction directory, shared process-wide by the serving
+# path (every GameSession and the bot). A CardAbstraction loads its directory's baked
+# tables on first use (the turn table is ~126 MB), and a session is rebuilt from JSON
+# on every request, so a per-session instance reloaded the tables per request; with
+# two abstractions served (v2 + v3) the copies would add up. Bucketing is a pure
+# function of (hand, board), so one instance per directory is exact.
+_SHARED = {}
+_SHARED_LOCK = threading.Lock()
+
+
+def shared_card_abstraction(abstraction_dir=None):
+    """The process-wide CardAbstraction for `abstraction_dir` (None = the root)."""
+    from .abstraction_set import ROOT
+    key = os.path.realpath(abstraction_dir or ROOT)
+    with _SHARED_LOCK:
+        ca = _SHARED.get(key)
+        if ca is None:
+            ca = _SHARED[key] = CardAbstraction(abstraction_dir)
+        return ca

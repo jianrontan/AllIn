@@ -87,10 +87,14 @@ class BlueprintStrategy(BotStrategy):
     """Looks the situation up in the trained blueprint DB."""
 
     def __init__(self, blueprint_db, purify_threshold=0.0):
-        from ..cfr.keys import require_key_format
-        require_key_format(blueprint_db, ('v2',), 'BlueprintStrategy')
-        from ..abstractions.abstraction_set import require_root_abstraction
-        require_root_abstraction(blueprint_db, 'BlueprintStrategy')
+        # Fail closed on a blueprint the serving path can't key, bucket or play. The
+        # caller builds the info-set keys (GameSession, bound to this blueprint with
+        # game_session.session_kwargs), so this only checks the stamps are servable:
+        # a known key format, a verified abstraction dir, a serving menu mode.
+        from ..cfr.keys import require_key_format, KEY_FORMATS
+        require_key_format(blueprint_db, KEY_FORMATS, 'BlueprintStrategy')
+        from ..abstractions.abstraction_set import resolve_abstraction_dir
+        resolve_abstraction_dir(blueprint_db, 'BlueprintStrategy')
         from ..abstractions.sizing import SERVING_MENU_MODES, require_menu_mode
         if hasattr(blueprint_db, 'get_metadata'):
             require_menu_mode(blueprint_db, SERVING_MENU_MODES, 'BlueprintStrategy')

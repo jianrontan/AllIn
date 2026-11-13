@@ -163,20 +163,22 @@ def _spr5_db(d):
     return p
 
 
-def test_readers_refuse_spr5_blueprints():
-    """Fail closed: v2-only readers (the serving path, until it learns spr5) must
-    refuse an spr5 blueprint instead of silently missing every flop/turn lookup;
-    the evaluation harness accepts it."""
+def test_readers_and_spr5_blueprints():
+    """Fail closed: v2-only readers (the opponent model until V3.10) must refuse an
+    spr5 blueprint instead of silently missing every flop/turn lookup; the serving
+    bot (V3.6) and the evaluation harness accept it."""
     from src.storage.blueprint_db import BlueprintDB
     from src.game.bot_strategy import BlueprintStrategy
+    from src.exploitation.opponent_model import HumanModel
     from src.evaluation.lbr import LBREvaluator
     from src.evaluation.best_response import BestResponseEvaluator
     from src.cfr.keys import require_key_format, db_key_format
     with tempfile.TemporaryDirectory() as d:
         db = BlueprintDB(_spr5_db(d), read_only=True)
         assert db_key_format(db) == 'spr5'
+        BlueprintStrategy(db)
         with pytest.raises(ValueError, match='key_format'):
-            BlueprintStrategy(db)
+            HumanModel(d, db)
         assert LBREvaluator(db, seed=1).key_format == 'spr5'
         assert BestResponseEvaluator(db, seed=1).key_format == 'spr5'
         assert require_key_format(db, ('v2', 'spr5'), 't') == 'spr5'
@@ -184,11 +186,17 @@ def test_readers_refuse_spr5_blueprints():
         db.close()
 
 
-def test_auto_resolution_skips_spr5(monkeypatch):
+def test_auto_resolution_takes_spr5(monkeypatch):
+    """Servable since V3.6 (an unknown key format is still skipped)."""
     from src.config import resolve_blueprint_path
+    from src.storage.blueprint_db import BlueprintDB
     monkeypatch.delenv('ALLIN_BLUEPRINT_DB', raising=False)
     with tempfile.TemporaryDirectory() as d:
-        _spr5_db(d)
+        path = _spr5_db(d)
+        assert str(resolve_blueprint_path(d)) == str(path)
+        db = BlueprintDB(path)
+        db.set_metadata('key_format', 'v9')
+        db.close()
         with pytest.raises(FileNotFoundError):
             resolve_blueprint_path(d)
 

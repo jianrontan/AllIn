@@ -131,14 +131,19 @@ def test_legacy_blueprints_refuse_a_changed_root(roots):
         A.resolve_abstraction_dir(FakeDB({}))
 
 
-def test_serving_readers_refuse_a_named_abstraction(roots, tmp_path):
+def test_root_only_readers_refuse_a_named_abstraction(roots, tmp_path):
+    """The PyPokerEngine Player and the opponent model still bucket with the root
+    only; the serving bot (V3.6) takes any verified abstraction, and still refuses a
+    directory that changed since the blueprint was trained."""
     _, v3 = roots
     assert A.require_root_abstraction(FakeDB({}), 'x') == A.ROOT
     with pytest.raises(ValueError, match='only supports the root'):
         A.require_root_abstraction(FakeDB(A.stamp_for(v3)), 'x')
     from src.game.bot_strategy import BlueprintStrategy
     db = _db(tmp_path / 'bp.db', A.stamp_for(v3))
-    with pytest.raises(ValueError, match='only supports the root'):
+    BlueprintStrategy(db)
+    db.set_metadata('abstraction_id', 'f' * 40)
+    with pytest.raises(ValueError, match='changed'):
         BlueprintStrategy(db)
     db.close()
 
@@ -171,7 +176,8 @@ def test_lbr_and_best_response_resolve_the_blueprint_abstraction(roots, tmp_path
     db.close()
 
 
-def test_auto_resolution_skips_named_abstractions(roots, tmp_path, monkeypatch):
+def test_auto_resolution_takes_named_abstractions_whose_dir_exists(roots, tmp_path,
+                                                                   monkeypatch):
     _, v3 = roots
     from src import config
     monkeypatch.delenv('ALLIN_BLUEPRINT_DB', raising=False)
@@ -179,19 +185,25 @@ def test_auto_resolution_skips_named_abstractions(roots, tmp_path, monkeypatch):
     d.mkdir()
     _db(d / 'blueprint_plain.db', {'total_iterations': 10}).close()
     _db(d / 'blueprint_v3.db', {'total_iterations': 999, **A.stamp_for(v3)}).close()
-    assert config.resolve_blueprint_path(d).name == 'blueprint_plain.db'
+    assert config.resolve_blueprint_path(d).name == 'blueprint_v3.db'
+    _db(d / 'blueprint_gone.db', {'total_iterations': 9999,
+                                  **A.stamp_for(v3), 'abstraction': 'v9'}).close()
+    assert config.resolve_blueprint_path(d).name == 'blueprint_v3.db'   # no v9 dir
 
 
 def test_auto_resolution_skips_non_serving_menu_modes(tmp_path, monkeypatch):
-    """A capped_pj blueprint is refused by BlueprintStrategy (until V3.6), so it must
-    never be auto-selected over a servable one: the API would start degraded."""
+    """A menu mode BlueprintStrategy refuses must never be auto-selected over a
+    servable one: the API would start degraded. capped_pj is servable since V3.6."""
     from src import config
     monkeypatch.delenv('ALLIN_BLUEPRINT_DB', raising=False)
     d = tmp_path / 'bps'
     d.mkdir()
     _db(d / 'blueprint_capped.db', {'total_iterations': 10, 'menu_mode': 'capped'}).close()
-    _db(d / 'blueprint_pj.db', {'total_iterations': 999, 'menu_mode': 'capped_pj'}).close()
+    _db(d / 'blueprint_odd.db', {'total_iterations': 9999, 'menu_mode': 'nonsense'}).close()
     assert config.resolve_blueprint_path(d).name == 'blueprint_capped.db'
+    _db(d / 'blueprint_pj.db', {'total_iterations': 999, 'menu_mode': 'capped_pj',
+                                'key_format': 'spr5'}).close()
+    assert config.resolve_blueprint_path(d).name == 'blueprint_pj.db'
 
 
 # ---------------------------------------------------------------------- tables

@@ -858,7 +858,8 @@ Tracked in [V3_BLUEPRINT_PLAN.md](V3_BLUEPRINT_PLAN.md) (steps, results, gates) 
   versioned card abstractions; arms A (v2 cards) and C (v3 cards) trained to 300M. Both
   beat v2 by ~+200 mbb/hand head-to-head on the fixed harness.
 - ✅ V3.5b evaluation finished (C at 300M recommended; the pick waits until V3.10).
-- ⏳ V3.6 serving path (both arms) → V3.7 Rust river solver served → V3.8
+- ✅ V3.6 serving path (both arms; 2026-11-13).
+- ⏳ V3.7 Rust river solver served → V3.8
   sub-minimum bet anchor → V3.9 river menu "F" → V3.10 base-arm pick + opponent models on v3 keys →
   V3.11 pooled facing-jam read → V3.12 pruning arm → V3.13 DBR blueprint → V3.14 final
   pick, then deployment (separate sign-off).

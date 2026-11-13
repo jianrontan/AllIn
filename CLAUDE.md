@@ -155,8 +155,16 @@ Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN
   buckets). Blueprints are stamped with an `abstraction_id`; readers bucket with
   `abstraction_set.resolve_abstraction_dir(db)` and fail closed on a mismatch. Check a dir with
   `scripts/check_abstraction.py --abstraction v3` (must print OK); baked tables are git-ignored.
-- **Serving fails closed** on spr5 keys, named abstractions and `capped_pj` (`BlueprintStrategy`,
-  the river solver, the API, the PyPokerEngine `Player`) until V3.6; auto-resolution skips them.
+- **Serving v3 (V3.6):** a `GameSession` is bound to its blueprint with
+  `game_session.session_kwargs(db)` (menu mode, key format, verified abstraction dir), so keys,
+  the range tracker, tilt and replay use the blueprint's format and buckets; one
+  `shared_card_abstraction(dir)` per process. `BlueprintStrategy`, the river solver, the API and
+  auto-resolution accept stamped spr5 / `capped_pj` / named-abstraction blueprints. At the
+  preflop cap a live 5-bet of any size is recorded as the trained jam `a`, and the bot plays
+  exactly fold/call/allin there. Still v2-only and failing closed: the PyPokerEngine `Player`,
+  `HumanModel` (exploit self-disables until the V3.10 refit) and the Hand Explorer
+  (`/api/strategy/from-hand` returns 501; Phase 7). `scripts/measure_serving_memory.py` reports
+  a blueprint's serving RSS.
 - **Evaluation scripts** (`backend/bot/scripts/`): `h2h_eval.py` (AIVAT head-to-head; plays an
   untrained faced jam with prod's guard; `--db-b model` = the fitted human population model,
   `--model-dir`), `lbr_paired.py` (per-hand LBR for paired comparisons), `br_attr.py` (BR with
@@ -233,7 +241,8 @@ size is an **abstraction change → retrain required** (existing blueprints beco
     all-in — an all-in only emerges when a sized bet clamps to the stack.
   - `capped_no2`: `capped` without `overbet2`.
   - `capped_pj` (v3, branch rust-core): `capped` plus a 5-bet jam at the preflop raise cap (facing
-    a 4-bet: fold / call / all-in). Serving refuses it until V3.6 (`SERVING_MENU_MODES`).
+    a 4-bet: fold / call / all-in). Served since V3.6 (`SERVING_MENU_MODES`; live 5-bets at the
+    cap map onto the trained jam, `GameSession._cap_node_actions`).
 - **Preflop open** (first-in raise): BB-anchored ladder — `small`=2BB, `medium`=2.5BB,
   `large`=3.5BB, `xlarge`=5BB. Small opens are GTO-optimal in heads-up; the `xlarge` tier
   (pattern char `x`) is **open-only** — a 4th anchor so big human opens translate against a
@@ -406,7 +415,7 @@ UI the user never asked to change. Do not repeat that.
 ## Key Constraints
 
 - The Flask API **must** be started from `backend/api/` — it uses `sys.path.insert(0, backend_dir)` so imports like `from bot.src.bot.game_adapter import GameAdapter` resolve correctly.
-- The active blueprint is resolved by `src/config.py:resolve_blueprint_path()`: whatever `ALLIN_BLUEPRINT_DB` points at (used as-is; a relative path resolves against the working directory), else the `analysis/blueprints/blueprint_*.db` with the highest `total_iterations` among the SERVABLE ones — v2 keys, the root abstraction and a serving menu mode (spr5, named-abstraction and `capped_pj` DBs are skipped). There is no `blueprint.json`/`blueprint.db` to maintain by hand.
+- The active blueprint is resolved by `src/config.py:resolve_blueprint_path()`: whatever `ALLIN_BLUEPRINT_DB` points at (used as-is; a relative path resolves against the working directory), else the `analysis/blueprints/blueprint_*.db` with the highest `total_iterations` among the SERVABLE ones — a known key format, an abstraction whose directory exists and a serving menu mode (on branch rust-core v3 blueprints qualify; the Rust trainer writes to `analysis/blueprints_rs/`, which is never searched). There is no `blueprint.json`/`blueprint.db` to maintain by hand.
 - Inference always opens the DB with `read_only=True`; only training opens it read/write.
 - Each hand of `GameSession` starts both players at `STARTING_STACK` (the blueprint assumes ~200 effective). Cross-hand profit/loss is tracked separately in `human_net`.
 - Stakes: `STARTING_STACK = 200` chips with SB=1 / BB=2, i.e. **100 BB effective stacks** — standard heads-up depth. Starting pot is always 3 chips. Pot math is in chips throughout the backend; the frontend displays everything in BB (chips ÷ 2).

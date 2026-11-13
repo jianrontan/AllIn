@@ -27,8 +27,14 @@ def _custom_total(action):
 
 
 def make_custom_action(is_raise, total):
-    """Build the canonical custom action string for a raise-to `total`."""
-    return f"{'raise' if is_raise else 'bet'}_custom_{total:g}"
+    """Build the canonical custom action string for a raise-to `total`. Short ('%g')
+    when that is exact, else the full repr: '%g' keeps 6 significant digits, so a raise
+    to exactly the minimum (a solver size) could round below it and be rejected."""
+    total = float(total)
+    text = f"{total:g}"
+    if float(text) != total:
+        text = repr(total)
+    return f"{'raise' if is_raise else 'bet'}_custom_{text}"
 
 
 class PokerGame:

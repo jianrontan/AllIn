@@ -26,10 +26,10 @@ _LOG = logging.getLogger(__name__)
 
 from ..cfr.poker_game import (
     PokerGame, STARTING_STACK, _is_custom, _custom_total, make_custom_action)
-from ..cfr.keys import action_char, make_info_set_key
+from ..cfr.keys import action_char, make_info_set_key, spr_bucket
 from ..cfr.keys import STREET_NAMES as _STREET_NAMES, BOARD_COUNT as _BOARD_COUNT
 from ..cfr import translation
-from ..abstractions.card_abstractions import CardAbstraction
+from ..abstractions.card_abstractions import shared_card_abstraction
 from ..abstractions.hand_evaluator import HandEvaluator, RANK_MAP
 from .cards import shuffled_deck, to_display_list
 from .range_tracker import RangeTracker
@@ -92,12 +92,31 @@ class GameError(Exception):
 # silently produce engines that don't match the persisted state).
 _DEFAULT_MENU_MODE = 'control'
 _DEFAULT_MAX_RAISES_PER_STREET = float('inf')
+_DEFAULT_KEY_FORMAT = 'v2'
+# Aggressions per street the blueprint TRAINS under (PokerGame's default
+# max_raises_per_street=2 -> 1 bet + 2 raises). Live play uncaps re-raises, so the
+# preflop cap jam (capped_pj) is placed here, at the trained cap, not at the engine's.
+_TRAINED_AGGRESSIONS = 3
+
+
+def session_kwargs(blueprint_db):
+    """The GameSession arguments that bind a session to a blueprint: its menu mode,
+    key format and verified card-abstraction directory. Every reader of a blueprint
+    must build keys and buckets the way it was trained, so the transport builds
+    sessions with **session_kwargs(db) instead of passing these one by one."""
+    from ..abstractions.sizing import db_menu_mode
+    from ..abstractions.abstraction_set import resolve_abstraction_dir
+    from ..cfr.keys import db_key_format
+    return {'menu_mode': db_menu_mode(blueprint_db),
+            'key_format': db_key_format(blueprint_db),
+            'abstraction_dir': resolve_abstraction_dir(blueprint_db, 'GameSession')}
 
 
 class GameSession:
     def __init__(self, data, strategy_fn=None, menu_mode=_DEFAULT_MENU_MODE,
                  max_raises_per_street=_DEFAULT_MAX_RAISES_PER_STREET,
-                 hero_strategy_fn=None):
+                 hero_strategy_fn=None, key_format=_DEFAULT_KEY_FORMAT,
+                 abstraction_dir=None):
         self.data = data
         # The serving engine MUST use the same action abstraction the served
         # blueprint was trained under. Serving a 'capped' blueprint through a
@@ -117,7 +136,15 @@ class GameSession:
         self.game = PokerGame(**game_kwargs(menu_mode),
                               max_raises_per_street=max_raises_per_street)
         self.menu_mode = menu_mode
-        self.cards = CardAbstraction()
+        from ..abstractions.sizing import has_preflop_cap_jam
+        self._cap_jam = has_preflop_cap_jam(menu_mode)
+        # The blueprint's key format ('v2' / 'spr5': flop/turn keys carry the street-start
+        # SPR bucket) and card abstraction (None = the root v2 tables). One shared
+        # CardAbstraction per directory: the baked tables are loaded once per process,
+        # not once per request (a session is rebuilt from JSON on every request).
+        spr_bucket(key_format, 0, 3.0)               # validates the format name
+        self.key_format = key_format
+        self.cards = shared_card_abstraction(abstraction_dir)
         self.evaluator = HandEvaluator()
         # Opponent model for the hand-level range tracker (Phase 3). A callback
         # strategy_fn(key, legal)->probs; the live API injects the blueprint's
@@ -140,13 +167,15 @@ class GameSession:
     def new(cls, session_id, player_id, strategy_fn=None,
             menu_mode=_DEFAULT_MENU_MODE,
             max_raises_per_street=_DEFAULT_MAX_RAISES_PER_STREET,
-            hero_strategy_fn=None):
+            hero_strategy_fn=None, key_format=_DEFAULT_KEY_FORMAT,
+            abstraction_dir=None):
         session = cls({
             'session_id': session_id,
             'player_id': player_id,
             'human_net': 0.0,
         }, strategy_fn=strategy_fn, menu_mode=menu_mode,
-            max_raises_per_street=max_raises_per_street, hero_strategy_fn=hero_strategy_fn)
+            max_raises_per_street=max_raises_per_street, hero_strategy_fn=hero_strategy_fn,
+            key_format=key_format, abstraction_dir=abstraction_dir)
         session._deal_hand(hand_number=1, human_seat=0)
         return session
 
@@ -154,13 +183,15 @@ class GameSession:
     def from_dict(cls, data, strategy_fn=None,
                   menu_mode=_DEFAULT_MENU_MODE,
                   max_raises_per_street=_DEFAULT_MAX_RAISES_PER_STREET,
-                  hero_strategy_fn=None):
+                  hero_strategy_fn=None, key_format=_DEFAULT_KEY_FORMAT,
+                  abstraction_dir=None):
         # Deep-copy so the live session never aliases the stored dict's nested
         # lists/dicts (history, action_log, community, opp_range, ...). Without
         # this, in-place mutations would leak into the store before put() and a
         # mid-apply failure could corrupt the persisted state.
         return cls(copy.deepcopy(data), strategy_fn=strategy_fn, menu_mode=menu_mode,
-                   max_raises_per_street=max_raises_per_street, hero_strategy_fn=hero_strategy_fn)
+                   max_raises_per_street=max_raises_per_street, hero_strategy_fn=hero_strategy_fn,
+                   key_format=key_format, abstraction_dir=abstraction_dir)
 
     def to_dict(self):
         return self.data
@@ -323,7 +354,44 @@ class GameSession:
         if (self.current_player() == d['human_seat']
                 and 'check' in actions and 'fold' not in actions):
             actions = actions + ['fold']
+        if self._at_preflop_cap():
+            actions = self._cap_node_actions(actions)
         return actions
+
+    # -- the preflop cap jam (capped_pj) ------------------------------------
+    # The blueprint trains with 3 aggressions per street; facing the 4-bet (the 3rd)
+    # a capped_pj player may fold, call or go all-in. Live play uncaps re-raises, so
+    # the engine offers sized 5-bets here instead. Map them onto the trained node:
+    # the bot plays exactly fold/call/allin, and any human 5-bet (sized, custom or a
+    # jam) is recorded as 'a' so the bot answers it from the trained facing-jam key.
+
+    def _at_preflop_cap(self):
+        """True when the player to act faces the preflop 4-bet (the trained cap)."""
+        d = self.data
+        hist = d['history']
+        if (not self._cap_jam or d['status'] != 'in_hand' or d['street'] != 0
+                or not hist or 'allin' in hist or not hist[-1].startswith(('bet_', 'raise_'))):
+            return False
+        return sum(1 for a in hist if a.startswith(('bet_', 'raise_'))) == _TRAINED_AGGRESSIONS
+
+    def _cap_jam_is_raise(self):
+        """True when an all-in here commits more than a call (the trained jam exists)."""
+        return self._action_cost('allin') > self._action_cost('call') + 1e-9
+
+    def _cap_node_actions(self, actions):
+        if self.current_player() != self.data['human_seat']:
+            # The bot plays the trained node exactly: no untrained sized 5-bets.
+            return (['fold', 'call', 'allin'] if self._cap_jam_is_raise()
+                    else ['fold', 'call'])
+        if 'allin' not in actions and self._cap_jam_is_raise():
+            actions = actions + ['allin']            # the human may always jam here
+        return actions
+
+    def _spr(self):
+        """The SPR bucket this street's keys carry (spr5 flop/turn), else None. The
+        street-start pot is d['starting_pot'] (bets fold into it at each new street)."""
+        d = self.data
+        return spr_bucket(self.key_format, min(d['street'], 3), d['starting_pot'])
 
     def _action_cost(self, action):
         d = self.data
@@ -431,7 +499,20 @@ class GameSession:
         snapped_action = action
         translated = None
         base_pattern = d['bet_pattern']
-        if custom:
+        # Any aggression at the preflop cap (capped_pj) is the trained 5-bet jam 'a'.
+        cap_jam = self._at_preflop_cap() and (
+            custom or action == 'allin' or action.startswith(('bet_', 'raise_')))
+        obs_legal = legal
+        if self._at_preflop_cap():
+            obs_legal = ['fold', 'call', 'allin'] if self._cap_jam_is_raise() else ['fold', 'call']
+        if cap_jam:
+            if custom:
+                action = self._validate_custom(action, legal)
+            elif action not in legal:
+                raise GameError(f"Illegal action {action!r}; legal: {legal}")
+            char = action_char('allin')
+            snapped_action = 'allin'
+        elif custom:
             action = self._validate_custom(action, legal)
             if action == 'allin':
                 # A custom raise-to that meets/exceeds the stack normalizes to an
@@ -490,7 +571,8 @@ class GameSession:
                           if (ga := self._grid_action_for_char(c, legal)) is not None]
                          if translated else None)
             tracker.observe(self.strategy_fn, snapped_action, street, self._opp_position(),
-                            d['bet_pattern'], legal, board, blend=obs_blend)
+                            d['bet_pattern'], obs_legal, board, blend=obs_blend,
+                            spr=self._spr())
             new_opp_range = tracker.to_dict()
         if (player != d['human_seat'] and self.hero_strategy_fn is not None
                 and d.get('bot_range') is not None):
@@ -512,7 +594,7 @@ class GameSession:
                 # deviation is not separately recorded -- exact per-hand recording awaits the E5
                 # range-vs-range solve, which produces per-hand probs natively.)
                 bt.observe(self.hero_strategy_fn, snapped_action, street, self._bot_position(),
-                           d['bet_pattern'], legal, board)
+                           d['bet_pattern'], obs_legal, board, spr=self._spr())
             new_bot_range = bt.to_dict()
 
         # From here on every mutation is on session.data and is infallible
@@ -534,7 +616,7 @@ class GameSession:
         d['action_log'].append({
             'player': player,
             'street': _STREET_NAMES[min(d['street'], 3)],
-            'action': snapped_action if custom else action,
+            'action': snapped_action if (custom or cap_jam) else action,
             'chips': round(cost, 2),
         })
 
@@ -686,7 +768,8 @@ class GameSession:
         starting = self.cards.get_bucket(cards, None)
         board = d['community'][:_BOARD_COUNT[street]]
         strength = self.cards.get_bucket(cards, board)
-        return make_info_set_key(street, position, starting, strength, pattern)
+        return make_info_set_key(street, position, starting, strength, pattern,
+                                 spr=self._spr())
 
     def bot_public_state(self):
         """State handed to BotStrategy.decide() for the player to act.
@@ -712,6 +795,9 @@ class GameSession:
             'seat': actor,                       # the acting (bot) seat, every street
             'hole_cards': d['p0_cards'] if actor == 0 else d['p1_cards'],
             'to_call': to_call,
+            # The SPR bucket of this street's keys (spr5 flop/turn; None otherwise), so a
+            # strategy that builds its own keys (the exploit tilt) matches info_set_key.
+            'spr': self._spr(),
             'opp_range': self._load_range(),
             # Phase 6: opaque per-player exploitation payload ({chardist, delta}) when the
             # transport sets session.exploit; the game core just passes it through, the bot

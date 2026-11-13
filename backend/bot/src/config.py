@@ -63,12 +63,23 @@ def _read_key_format(db_path):
 
 
 def _servable_by_default(db_path):
-    """Auto-resolution candidates: v2 keys on the root (v2) abstraction, under a menu
-    mode the serving path accepts (an unstamped DB is 'control'). Anything else would
-    be selected and then refused by BlueprintStrategy, leaving the API degraded."""
+    """Auto-resolution candidates: a known key format, an abstraction whose directory
+    exists (unstamped = the root), and a menu mode the serving path accepts (an
+    unstamped DB is 'control'). Anything else would be selected and then refused by
+    BlueprintStrategy, leaving the API degraded. (The loader still verifies the
+    abstraction_id and fails closed on a changed directory.)"""
     from .abstractions.sizing import SERVING_MENU_MODES
-    return (_read_key_format(db_path) == 'v2'
-            and _read_metadata(db_path, 'abstraction', None) is None
+    from .abstractions.abstraction_set import abstraction_dir
+    from .cfr.keys import KEY_FORMATS
+    name = _read_metadata(db_path, 'abstraction', None)
+    if name is _UNREADABLE:
+        return False
+    try:
+        adir_ok = os.path.isdir(abstraction_dir(name or None))
+    except ValueError:
+        adir_ok = False
+    return (_read_key_format(db_path) in KEY_FORMATS
+            and adir_ok
             and (_read_metadata(db_path, 'menu_mode', None) or 'control') in SERVING_MENU_MODES)
 
 

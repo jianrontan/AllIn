@@ -494,7 +494,8 @@ the `blueprint` filename and `iterations`. The API also prints
 > If an old, abstraction-incompatible blueprint with more iterations is still in
 > `analysis/blueprints/`, it will outrank your fresh current-abstraction run —
 > pin `ALLIN_BLUEPRINT_DB` to force the right one. A v3 (spr5 / `capped_pj`) blueprint
-> is refused by the server until V3.6, pinned or not.
+> is served (V3.6), but exploitation stays off for it and the Hand Explorer returns 501
+> until the opponent models are re-fit on v3 keys (V3.10) and the explorer learns them.
 
 The evaluation harness instead takes the path directly, no env var:
 

@@ -201,10 +201,12 @@ class RangeTracker:
         self._bucket_cache[ck] = (pf, strength)
         return pf, strength
 
-    def _action_matrix(self, strategy_fn, street, position, bet_pattern, legal, board):
+    def _action_matrix(self, strategy_fn, street, position, bet_pattern, legal, board,
+                       spr=None):
         """[n_hands, n_legal] model probabilities per opponent hand at this node.
         Hands sharing an info-set key share a row, so the model is queried once
-        per distinct bucket key."""
+        per distinct bucket key. `spr` is the street's SPR bucket for an spr5
+        blueprint's flop/turn keys (keys.spr_bucket), None for v2 keys."""
         n = len(self.hands)
         legal_t = tuple(legal)
         mat = np.zeros((n, len(legal_t)))
@@ -219,18 +221,21 @@ class RangeTracker:
                 if street == 0:
                     key = make_info_set_key(0, position, pf[i], None, bet_pattern)
                 else:
-                    key = make_info_set_key(street, position, pf[i], strength[i], bet_pattern)
+                    key = make_info_set_key(street, position, pf[i], strength[i], bet_pattern,
+                                            spr=spr)
                 row = strategy_fn(key, legal_t)
                 seen[gid] = row
             mat[i] = row
         return mat
 
     # -- Bayesian update + confidence ---------------------------------
-    def observe(self, strategy_fn, action, street, position, bet_pattern, legal, board, blend=None):
+    def observe(self, strategy_fn, action, street, position, bet_pattern, legal, board, blend=None,
+                spr=None):
         """Condition the belief on the opponent having taken `action` here, and update confidence by
         how well it matched the model. `blend` (optional) is the pseudo-harmonic translation of an
         OFF-GRID bet -- [(grid_action, weight), ...] -- so the bet is credited to BOTH bracketing sizes
-        (more faithful + less confidence erosion than snapping to the single nearest size)."""
+        (more faithful + less confidence erosion than snapping to the single nearest size). `spr`:
+        the street's SPR bucket when the model is an spr5 blueprint (see _action_matrix)."""
         legal = list(legal)
         # Resolve the observation to (legal action, weight) entries: the BLEND for an off-grid bet, else
         # the single action. Empty (off-MENU / un-snappable -- e.g. a custom raise-to-stack normalized
@@ -242,7 +247,8 @@ class RangeTracker:
         if not obs:
             self.confidence *= _OFF_MENU_CONFIDENCE_DECAY
             return
-        mat = self._action_matrix(strategy_fn, street, position, bet_pattern, legal, board)
+        mat = self._action_matrix(strategy_fn, street, position, bet_pattern, legal, board,
+                                  spr=spr)
         idx = [(legal.index(a), w) for a, w in obs]
         col = sum(w * mat[:, i] for i, w in idx)         # per-hand P(observed | hand), blended over brackets
 

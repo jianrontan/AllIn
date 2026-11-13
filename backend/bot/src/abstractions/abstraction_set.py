@@ -155,8 +155,8 @@ def is_root(adir):
 
 
 def require_root_abstraction(blueprint_db, who):
-    """Fail closed for readers that can only bucket with the root (v2) abstraction
-    -- the serving path until v3 serving (V3.6) lands."""
+    """Fail closed for readers that can only bucket with the root (v2) abstraction:
+    the PyPokerEngine Player and the opponent model (until its V3.10 refit)."""
     adir = resolve_abstraction_dir(blueprint_db, who)
     if not is_root(adir):
         raise ValueError(

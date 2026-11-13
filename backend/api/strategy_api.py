@@ -67,17 +67,25 @@ _BLUEPRINT_LOAD_ERROR_PUBLIC = None  # exception TYPE only -- safe for healthz
 _BLUEPRINT_PATH = None
 BLUEPRINT_DB = None
 BLUEPRINT_MENU_MODE = 'control'
+# The GameSession arguments that bind every session to the served blueprint (menu mode,
+# key format, verified abstraction dir): game_session.session_kwargs. v2 = the defaults.
+BLUEPRINT_SESSION_KW = {'menu_mode': 'control'}
+# True when the served blueprint is v2-keyed on the root abstraction -- the only kind the
+# Hand Explorer's key builder handles until Phase 7 (spr5 keys need the street-start pot).
+BLUEPRINT_IS_V2 = True
 try:
     _BLUEPRINT_PATH = make_blueprint_source().local_path()
     BLUEPRINT_DB = BlueprintDB(_BLUEPRINT_PATH, read_only=True)
-    from bot.src.cfr.keys import require_key_format
-    require_key_format(BLUEPRINT_DB, ('v2',), 'the strategy API')
-    from bot.src.abstractions.abstraction_set import require_root_abstraction
-    require_root_abstraction(BLUEPRINT_DB, 'the strategy API')
+    from bot.src.cfr.keys import require_key_format, KEY_FORMATS
+    require_key_format(BLUEPRINT_DB, KEY_FORMATS, 'the strategy API')
     from bot.src.abstractions.sizing import SERVING_MENU_MODES, require_menu_mode
     require_menu_mode(BLUEPRINT_DB, SERVING_MENU_MODES, 'the strategy API')
-    from bot.src.abstractions.sizing import db_menu_mode
-    BLUEPRINT_MENU_MODE = db_menu_mode(BLUEPRINT_DB)
+    from bot.src.game.game_session import session_kwargs
+    from bot.src.abstractions.abstraction_set import is_root
+    BLUEPRINT_SESSION_KW = session_kwargs(BLUEPRINT_DB)      # verifies the abstraction dir
+    BLUEPRINT_MENU_MODE = BLUEPRINT_SESSION_KW['menu_mode']
+    BLUEPRINT_IS_V2 = (BLUEPRINT_SESSION_KW['key_format'] == 'v2'
+                       and is_root(BLUEPRINT_SESSION_KW['abstraction_dir']))
 except Exception as _bp_err:
     _BLUEPRINT_LOAD_ERROR = f"{type(_bp_err).__name__}: {_bp_err}"
     # The full message can embed container filesystem paths (e.g. a
@@ -727,6 +735,12 @@ def strategy_from_hand():
     Hand Explorer: take real cards + a betting line, derive the info-set key,
     and return the blueprint strategy. One round-trip.
     """
+    if not BLUEPRINT_IS_V2:
+        # This builder makes v2 keys with root buckets; a v3 blueprint's flop/turn keys
+        # carry the street-start SPR and may use other buckets, so every lookup would
+        # silently miss. Refuse until the explorer learns v3 keys (Phase 7).
+        return jsonify({"error": "the Hand Explorer does not support the served (v3) "
+                                 "blueprint yet"}), 501
     data = request.get_json(silent=True) or {}
     hole = [c for c in data.get('holeCards', []) if c]
     community_in = [c for c in data.get('communityCards', []) if c]
@@ -906,7 +920,7 @@ def _explorer_session(hole_e, board_e, position):
     replaying the line builds both blueprint-projected ranges exactly as live play
     does. Returns (session, bot_seat)."""
     session = GameSession.new('explorer', 'explorer', strategy_fn=BOT_RANGE_FN,
-                              menu_mode=BLUEPRINT_MENU_MODE)
+                              **BLUEPRINT_SESSION_KW)
     d = session.data
     bot_seat = 0 if position == 'ip' else 1            # ip = SB/button = seat 0
     used = set(hole_e) | set(board_e)
@@ -1137,7 +1151,7 @@ def _load_session(session_id, claimed_player_id):
         # 404 (not 403) so we don't confirm a session id exists to a non-owner.
         return None, (jsonify({"error": "session not found or expired"}), 404)
     sess = GameSession.from_dict(data, strategy_fn=_range_fn_for(data.get('player_id')),
-                                 menu_mode=BLUEPRINT_MENU_MODE, hero_strategy_fn=HERO_RANGE_FN)
+                                 **BLUEPRINT_SESSION_KW, hero_strategy_fn=HERO_RANGE_FN)
     sess.exploit = _exploit_for(data.get('player_id'))
     _apply_live_recent(sess, data.get('player_id'))
     return sess, None
@@ -1285,7 +1299,7 @@ def _sweep_once(max_resolved=20):
                     continue                     # changed since the snapshot
                 session = GameSession.from_dict(
                     fresh, strategy_fn=_range_fn_for(fresh.get('player_id')),
-                    menu_mode=BLUEPRINT_MENU_MODE, hero_strategy_fn=HERO_RANGE_FN)
+                    **BLUEPRINT_SESSION_KW, hero_strategy_fn=HERO_RANGE_FN)
                 session.exploit = _exploit_for(fresh.get('player_id'))
                 _apply_live_recent(session, fresh.get('player_id'))
                 _resolve_abandoned(session)
@@ -1453,7 +1467,7 @@ def game_new():
     with SESSIONS.lock(session_id):
         session = GameSession.new(session_id, player_id,
                                   strategy_fn=_range_fn_for(player_id),
-                                  menu_mode=BLUEPRINT_MENU_MODE, hero_strategy_fn=HERO_RANGE_FN)
+                                  **BLUEPRINT_SESSION_KW, hero_strategy_fn=HERO_RANGE_FN)
         session.exploit = _exploit_for(player_id)
         session.data['ab_arm'] = _ab_arm(player_id)            # recorded per hand for the EV A/B
         _apply_live_recent(session, player_id, refresh=True)   # new game -> re-fit the latest window

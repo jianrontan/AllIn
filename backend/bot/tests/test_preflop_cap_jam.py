@@ -161,11 +161,15 @@ def test_match_and_lbr_mirror_the_cap_jam():
     assert not _cap_jam_open(True, 0, 2, 30, 150)
 
 
-def test_serving_refuses_capped_pj(tmp_path):
+def test_serving_takes_capped_pj(tmp_path):
+    """Servable since V3.6 (tests/test_v3_serving.py plays the cap node live); an
+    unknown menu mode is still refused."""
     from src.game.bot_strategy import BlueprintStrategy
     from src.storage.blueprint_db import BlueprintDB
     db = BlueprintDB(str(tmp_path / 'bp.db'))
     db.set_metadata('menu_mode', 'capped_pj')
+    BlueprintStrategy(db)
+    db.set_metadata('menu_mode', 'capped_xx')
     with pytest.raises(ValueError, match='menu_mode'):
         BlueprintStrategy(db)
     db.set_metadata('menu_mode', 'capped')

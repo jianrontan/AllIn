@@ -149,7 +149,7 @@ def db_menu_mode(blueprint_db):
 
 def require_menu_mode(blueprint_db, supported, who):
     """Fail closed: refuse a blueprint trained under an arm this reader can't play
-    (e.g. the serving path and 'capped_pj' until v3 serving lands). Returns the arm."""
+    (a menu mode it has no engine for). Returns the arm."""
     mm = db_menu_mode(blueprint_db)
     if mm not in supported:
         raise ValueError(
@@ -158,9 +158,10 @@ def require_menu_mode(blueprint_db, supported, who):
     return mm
 
 
-# Arms the live serving path can play. 'capped_pj' needs the V3.6 serving work
-# (5-bet translation onto the trained jam, guards at the new cap).
-SERVING_MENU_MODES = ('control', 'capped', 'capped_no2')
+# Arms the live serving path can play. 'capped_pj' since V3.6: GameSession maps any
+# live 5-bet at the trained preflop cap onto the trained jam and the bot plays the
+# trained fold/call/allin node (game_session._cap_node_actions).
+SERVING_MENU_MODES = ('control', 'capped', 'capped_no2', 'capped_pj')
 
 
 def preflop_open_chips():

@@ -272,10 +272,14 @@ read a file a training process holds open. Tables: `info_sets`,
 
 Picks the active blueprint automatically: whatever `ALLIN_BLUEPRINT_DB` points at (used
 as-is), else the `analysis/blueprints/blueprint_*.db` with the highest `total_iterations`
-(that isn't actively being written) among the servable ones: v2 keys, the root card
-abstraction and a serving menu mode (`sizing.SERVING_MENU_MODES`). spr5, named-abstraction
-and `capped_pj` DBs are skipped until V3.6. **No manual promotion step.** The Rust trainer
-writes to `analysis/blueprints_rs/`, which auto-resolution never looks at.
+(that isn't actively being written) among the servable ones: a known key format, an
+abstraction whose directory exists and a serving menu mode (`sizing.SERVING_MENU_MODES`).
+Since V3.6 that includes v3 (spr5 / `capped_pj` / named-abstraction) blueprints; the loader
+still verifies the abstraction id. **No manual promotion step.** The Rust trainer writes to
+`analysis/blueprints_rs/`, which auto-resolution never looks at.
+
+A `GameSession` must be built with `**game_session.session_kwargs(db)` so its keys and
+buckets match the blueprint it serves (the API does this once at startup).
 
 ### `game/` — transport-agnostic live-hand engine
 
