@@ -1,4 +1,4 @@
-# v3 blueprint — plan and progress log (V3.0–V3.5b done, base-arm pick awaits sign-off; V3.6–V3.14 pending, see Steps)
+# v3 blueprint — plan and progress log (V3.0–V3.5b done; V3.6–V3.14 pending, base-arm pick before V3.10; see Steps)
 
 Branch `rust-core`. Written 2026-11-09 after the BUG-027 investigation.
 Follows [PHASE6_ABSTRACTION_PLAN.md](PHASE6_ABSTRACTION_PLAN.md) (SPR buckets built,
@@ -592,12 +592,12 @@ play measured; BR is not used to pick it).
 | V3.3 | River centroids K = 20 (`--opp-samples 0`) into `v3/`; check the Rust river bucketing reads K from the file | minutes | occupancy sane; Python == Rust on random river spots |
 | V3.4 | Train two arms, 150M each, snapshot every 10M, `--river-cache-boards 140000`: **A** = spr5 + cap jam on v2's abstraction (isolates change 1); **C** = all four changes (the candidate) | ~1–1.5 h per arm | strategy-shape probe clean (no "never fold" collapse; weak-hand preflop fold sane) |
 | V3.5 | Evaluate (below) and pick the ship snapshot | ~4–5 h total, overnight | gates below |
-| V3.5b | ✅ results in 2026-11-13 (re-run finished, A300/C300 vs v2 added); recommendation C at 300M, base-arm pick awaits sign-off | ~2 h | gates below; snapshot by play, not BR |
-| V3.6 | Serving path (Phase 6.2, extended), all behind the DB stamps; v2 behaviour unchanged: `BlueprintStrategy`, range tracker, river solver (projection, gadget CFV, guards), translation, `game_session`/`game_adapter` | — | tests incl. a BUG-027 replay through `GameSession`; v2 tests unchanged |
+| V3.5b | ✅ results in 2026-11-13 (re-run finished, A300/C300 vs v2 added); recommendation C at 300M; the pick itself moved to V3.10 (decided 2026-11-13) | ~2 h | gates below; snapshot by play, not BR |
+| V3.6 | Serving path (Phase 6.2, extended), all behind the DB stamps; v2 behaviour unchanged: `BlueprintStrategy`, range tracker, river solver (projection, gadget CFV, guards), translation, `game_session`/`game_adapter`. Built for **both** arms (A300 and C300), with the serving memory of each measured | — | tests incl. a BUG-027 replay through `GameSession`, on A300 and C300; v2 tests unchanged |
 | V3.7 | Rust river solver, served | ~1 week | Rust == Python solve on fixed spots; p95 latency ≤ 5 s on a 0.25 vCPU profile; gadget still ≤ blueprint |
 | V3.8 | Sub-minimum bet anchor (inference only) | days | LBR at 0.1×/0.25× pot falls (z > 2); other fractions and H2H vs v2 within \|t\| < 2 |
 | V3.9 | River solver bet menu "F" | days, after V3.7 | p95 ≤ 5 s on Rust; H2H with the solver on ≥ menu A (\|t\| < 2 or better) |
-| V3.10 | Opponent models re-fit on v3 keys, stamped with `abstraction_id` (moved here from Phase 7: V3.11 and V3.13 need it) | ~1 day | the model guard compares abstraction ids; exploit no longer self-disables on the v3 blueprint |
+| V3.10 | **Pick the base arm** (A or C, from V3.5b's results and V3.6's memory numbers; V3.10–V3.13 build on it), then re-fit the opponent models on its v3 keys, stamped with `abstraction_id` (moved here from Phase 7: V3.11 and V3.13 need it) | ~1 day | the model guard compares abstraction ids; exploit no longer self-disables on the v3 blueprint |
 | V3.11 | Pooled facing-jam population read + logged-spot evaluator (targets BUG-027) | days | logged-spot EV(call) − EV(fold) improves over the current guard; no regression vs the human model |
 | V3.12 | Negative-regret pruning arm (Rust trainer), on the base arm's config | ~1 week + training | strategy-shape probe clean; BUG-027 replay; H2H vs the base arm and vs the human model ≥ base |
 | V3.13 | Offline data-biased-response (DBR) blueprint against the population model | 1–2 weeks, after V3.10 | BR cost vs a held-out human-model gain, swept over P_max |
@@ -611,8 +611,10 @@ The V3.6 serving work covers:
 - the deep-raise guard covering only beyond-the-new-cap nodes;
 - `capped_pj` in `SERVING_MENU_MODES`, and auto-resolution and the fail-closed
   refusals lifted for stamped v3 DBs;
-- the v3 abstraction dir, only if C is the base arm: every serving reader builds its
-  card abstraction from the blueprint's verified directory;
+- the v3 abstraction dir (built now, so either arm can be picked at V3.10): every
+  serving reader builds its card abstraction from the blueprint's verified directory;
+  measure resident memory serving A300 vs C300 (C loads a second set of tables), for
+  the pick and the Phase 7 memory budget;
 - the four open river-solver review items (they affect v2 too):
   1. the safe gadget's fallback solve is starved of time in `auto` mode: reserve a
      fixed share of the shared deadline for it;
@@ -805,7 +807,11 @@ Signed off 2026-11-09:
 Decided 2026-11-12: V3.7–V3.13 (Rust river solver, sub-minimum anchor, river menu F,
 the jam read, the pruning arm and the DBR blueprint) are part of v3, not later work.
 
+Decided 2026-11-13: the base-arm pick waits until V3.10, the first step that needs
+it. V3.6–V3.9 are built and tested for both arms, and V3.6 measures C's extra serving
+memory first.
+
 Still open:
-- the base arm (A or C) and its snapshot: V3.5b recommends C at 300M (see "V3.5
-  re-run on the fixed harness");
+- the base arm (A or C) and its snapshot, at V3.10: V3.5b recommends C at 300M (see
+  "V3.5 re-run on the fixed harness");
 - Phase 7 deployment, which needs its own sign-off.

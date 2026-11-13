@@ -132,10 +132,11 @@ python tests/run_evaluation.py --db analysis/blueprints/blueprint_20260518_16090
 ### Branch rust-core (Rust core + v3 blueprint work; not on main yet)
 Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN.md`,
 `docs/V3_BLUEPRINT_PLAN.md` — read the relevant one first.
-- **Status (2026-11-12):** V3.0–V3.5 done (arms A and C trained to 300M). Remaining v3 scope,
-  in `V3_BLUEPRINT_PLAN.md` "Steps": V3.5b pick the base arm, V3.6 serving path, V3.7 serve
-  the Rust river solver (DCFR, alternating updates), V3.8 sub-minimum bet anchor, V3.9 river
-  menu "F", V3.10 opponent models on v3 keys, V3.11 pooled facing-jam read, V3.12
+- **Status (2026-11-13):** V3.0–V3.5b done (arms A and C trained to 300M and evaluated; C300
+  recommended). Remaining v3 scope, in `V3_BLUEPRINT_PLAN.md` "Steps": V3.6 serving path
+  (built for both arms), V3.7 serve the Rust river solver (DCFR, alternating updates), V3.8
+  sub-minimum bet anchor, V3.9 river menu "F", V3.10 pick the base arm then opponent models
+  on v3 keys, V3.11 pooled facing-jam read, V3.12
   negative-regret pruning arm, V3.13 DBR blueprint, V3.14 final pick; then Phase 7 deploy
   (separate sign-off).
 - **Environment:** a uv `.venv` (Python 3.12) at the worktree root; run Python as
