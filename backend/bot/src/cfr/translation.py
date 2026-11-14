@@ -89,7 +89,7 @@ def pseudo_harmonic_weight(x, a, b):
     return ((b - x) * (1.0 + a)) / ((b - a) * (1.0 + x))
 
 
-def translate_bet(eff_frac, grid):
+def translate_bet(eff_frac, grid, *, zero_anchor=False):
     """Map an off-grid bet fraction onto the node's trained grid.
 
     grid : sorted [(char, frac), ...] (ascending) of the sizes available at this
@@ -97,12 +97,21 @@ def translate_bet(eff_frac, grid):
     Returns [(char, weight), ...] (1 or 2 entries). A fraction on a grid point
     returns that single char; one between two returns both pseudo-harmonically
     weighted; one at/below the smallest or at/above the largest clamps.
+    With zero_anchor=True, a nonnegative fraction below the smallest positive
+    size instead blends with (None, weight), the synthetic call-only response.
+    Callers must handle None without constructing a blueprint key. This option
+    is for postflop opening bets, not preflop opens or raises.
     """
     if not grid:
         return []
     chars = [c for c, _ in grid]
     fracs = [f for _, f in grid]
 
+    if zero_anchor and 0 <= eff_frac < fracs[0]:
+        # None denotes the synthetic zero-size response: call, never fold.
+        # It is not an action character and must never enter a blueprint key.
+        w = pseudo_harmonic_weight(eff_frac, 0.0, fracs[0])
+        return [(None, w), (chars[0], 1.0 - w)]
     if eff_frac <= fracs[0]:
         return [(chars[0], 1.0)]
     if eff_frac >= fracs[-1]:

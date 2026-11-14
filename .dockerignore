@@ -48,3 +48,11 @@ backend/bot/perf_baseline.pkl
 # extends the base + runs pytest), the tests must be present in the image. Size
 # cost is ~1.7MB -- negligible. The prod image still carries them; gunicorn
 # never invokes pytest so there's no runtime impact.
+
+# Rust build outputs and local training runs never belong in an image context.
+**/target/
+**/.venv/
+.claude/
+backend/core-rs/fixtures/
+backend/core-rs/bench/*.json
+backend/bot/analysis/blueprints_rs/

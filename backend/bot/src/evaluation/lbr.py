@@ -34,6 +34,7 @@ This module is assembled in stages:
   4. main loop / CLI   -- Monte Carlo over deals, report mbb/hand.
 """
 import random
+import os
 from itertools import combinations
 
 import numpy as np
@@ -42,7 +43,7 @@ from ..cfr.poker_game import PokerGame, STARTING_STACK
 from ..cfr.keys import make_info_set_key, action_char, spr_bucket
 from ..cfr import translation
 from ..abstractions.sizing import (
-    preflop_open_chips, PREFLOP_RAISE_MULT, POSTFLOP_BET_MULT, SIZE_CHAR)
+    preflop_open_chips, PREFLOP_RAISE_MULT, POSTFLOP_BET_MULT, SIZE_CHAR, BIG_BLIND)
 from ..abstractions.card_abstractions import CardAbstraction
 from ..abstractions.hand_evaluator import HandEvaluator
 
@@ -66,7 +67,7 @@ _FULL_DECK = [s + r for r in _RANKS for s in _SUITS]
 
 class LBREvaluator:
     def __init__(self, blueprint_db, seed=None, flop_runout_samples=120,
-                 menu_mode=None):
+                 menu_mode=None, bet_fractions=None):
         from ..cfr.keys import require_key_format
         # The victim model and the belief update build keys in the blueprint's own
         # format (spr5 adds the street-start SPR bucket on flop/turn keys).
@@ -93,6 +94,10 @@ class LBREvaluator:
         self.rng = random.Random(seed)
         self._base_seed = seed
         self.flop_runout_samples = flop_runout_samples
+        self.subminimum_anchor = os.environ.get('ALLIN_SUBMINIMUM_ANCHOR') == '1'
+        self.bet_fractions = tuple(LBR_BET_FRACTIONS if bet_fractions is None else bet_fractions)
+        if not self.bet_fractions or any(not np.isfinite(f) or f <= 0 for f in self.bet_fractions):
+            raise ValueError('bet_fractions must contain finite positive sizes')
 
         # Memoized blueprint lookups (same pattern as best_response.py).
         self._strategy_cache = {}     # key -> {action: prob} or None
@@ -245,9 +250,14 @@ class LBREvaluator:
 
         if num_aggr < MAX_AGGR_PER_STREET and stack[lbr_seat] > to_call:
             seen_adds = set()
-            for frac in LBR_BET_FRACTIONS:
+            fractions = self.bet_fractions if street > 0 else LBR_BET_FRACTIONS
+            for frac in fractions:
                 total_add = int(round(to_call + frac * (pot + to_call)))
-                if total_add <= to_call or total_add >= stack[lbr_seat]:
+                # A full raise adds the call plus at least the previous increment.
+                # In heads-up alternating betting that increment is to_call; the
+                # blind/minimum opening bet supplies the floor at unopened nodes.
+                minimum = to_call + max(to_call, BIG_BLIND)
+                if total_add < minimum or total_add >= stack[lbr_seat]:
                     continue                                   # degenerate or all-in
                 if total_add in seen_adds:
                     continue
@@ -284,59 +294,29 @@ class LBREvaluator:
         if is_allin:
             char = 'a'
             translated = [('a', 1.0)]
-        elif street == 0:
-            # Preflop: the DEPLOYED bot pseudo-harmonic-translates EVERY street, so
-            # mirror that here too (was snap-to-nearest -> a preflop strawman victim
-            # the off-tree exploiter could over-beat). Build the node's preflop grid
-            # via the shared helper (same definition the live API uses), then blend
-            # the bracketing sizes -- on-grid / single-bracket reduces to one char.
-            grid = translation.preflop_grid(
-                num_aggr, committed[lbr_seat], to_call, pot,
-                preflop_open_chips(), PREFLOP_RAISE_MULT, SIZE_CHAR)
-            allin_frac = translation.eff_fraction(stack[lbr_seat], to_call, pot)
-            if allin_frac > (grid[-1][1] if grid else 0.0):
-                grid = grid + [('a', allin_frac)]
-            eff_frac = translation.eff_fraction(total_add, to_call, pot)
-            translated = translation.translate_bet(eff_frac, grid)
-            char = translation.nearest_char(eff_frac, grid)
         else:
-            # Postflop: the DEPLOYED bot translates an off-grid bet pseudo-
-            # harmonically onto its two bracketing grid sizes (cfr/translation.py,
-            # bot_strategy.py). Mirror that here so LBR measures the translating
-            # bot, not a snap-to-nearest victim that LBR could over-exploit.
             eff_frac = translation.eff_fraction(total_add, to_call, pot)
-            allin_frac = translation.eff_fraction(stack[lbr_seat], to_call, pot)
-            grid = translation.postflop_grid_for(self.menu_mode)
-            if to_call > 0 and committed[lbr_seat] > 0:
-                # A re-raise: the engine's sizes are smaller than the nominal pot
-                # fractions by what the raiser already committed (the deployed
-                # bot's GameSession._node_grid uses these real fractions).
-                pac = pot + to_call
-                grid = sorted(((c, f - committed[lbr_seat] / pac) for c, f in grid),
-                              key=lambda cf: cf[1])
-            # Append the all-in point only if it is BEYOND the top sized tier (so a
-            # capped grid whose top is 2.0x doesn't double-add when stack ~= 2x pot).
-            if allin_frac > grid[-1][1]:
-                grid.append(('a', allin_frac))
-            translated = translation.translate_bet(eff_frac, grid)
-            char = translation.nearest_char(eff_frac, grid)
+            grid = self._translation_grid(street, pot, to_call, committed[lbr_seat],
+                                          num_aggr, stack[lbr_seat])
+            if not grid:
+                char, translated = 'a', [('a', 1.0)]
+            else:
+                translated = translation.translate_bet(
+                    eff_frac, grid, zero_anchor=(self.subminimum_anchor
+                                                 and street > 0 and to_call == 0))
+                char = translation.nearest_char(eff_frac, grid)
 
-        # The bot faces LBR's bet: how often does the blueprint fold (per hand)?
-        # Blend the bracketing sizes' per-hand fold probabilities (a single
-        # bracket -- on-grid or preflop -- reduces to the exact lookup).
-        pfold = None
-        for c, w in translated:
-            # missing=1.0: an untrained bracket routes to fold, mirroring the
-            # deployed bot (translation.blend missing_action='fold'). Without this
-            # the victim is modelled as CALLING untrained off-grid lines, biasing
-            # LBR to under-value exactly the off-tree bets it exists to find.
-            # A faced all-in has no translation: an untrained 'a' key is played
-            # with the passive fold/call coin flip (restricted_probs), so price it so.
-            p = botrange.per_hand_action_prob(
-                self._raw_strategy, 'fold', street, self._pos(bot_seat),
-                pattern + c, vis, missing=0.5 if c == 'a' else 1.0,
-                spr=self._spr(street, invested, committed))
-            pfold = w * p if pfold is None else pfold + w * p
+        # Price the SAME restricted response used to execute and observe it.
+        # A singleton has no live pending translation: missing keys use the
+        # passive fallback, while missing brackets in a real blend fold.
+        response_legal = tuple(self._menu_legal(
+            street, pot + total_add, new_committed_lbr - committed[bot_seat],
+            committed[bot_seat], num_aggr + 1, stack[bot_seat]))
+        lookup = lambda key, legal: self._response_probs(key, legal, translated)
+        matrix = botrange.action_probs(lookup, street, self._pos(bot_seat),
+                                       pattern + char, response_legal, vis,
+                                       spr=self._spr(street, invested, committed))
+        pfold = matrix[:, response_legal.index('fold')]
         w = botrange.w
         wt = w.sum()
         p_fold = float((w * pfold).sum()) / wt if wt > 1e-12 else 0.0
@@ -349,6 +329,23 @@ class LBREvaluator:
         v_cont = eq * pot_after - (lbr_inv + total_add)
         value = p_fold * v_fold + (1.0 - p_fold) * v_cont
         return (value, char, total_add, True, translated)
+
+    def _translation_grid(self, street, pot, to_call, committed, num_aggr, stack):
+        """Mirror GameSession._node_grid(include_allin=False) for sub-stack bets.
+
+        Illegal small sizes and stack-clamped tiers are not lookup brackets;
+        the all-in anchor belongs only to a realized shove, not a sub-stack bet.
+        """
+        legal = self._menu_legal(street, pot, to_call, committed, num_aggr, stack)
+        chars = {action_char(a) for a in legal if a.startswith(('bet_', 'raise_'))}
+        if street == 0:
+            grid = translation.preflop_grid(num_aggr, committed, to_call, pot,
+                                            preflop_open_chips(), PREFLOP_RAISE_MULT, SIZE_CHAR)
+        else:
+            grid = translation.postflop_grid_for(self.menu_mode)
+            if to_call > 0:
+                grid = [(c, f - committed / (pot + to_call)) for c, f in grid]
+        return sorted(((c, f) for c, f in grid if c in chars), key=lambda item: item[1])
 
     def _bot_sizing(self, size, street, pot, to_call, bot_committed, num_aggr):
         """Chips the bot ADDS for an abstract bet/raise size (training sizing).
@@ -441,35 +438,36 @@ class LBREvaluator:
 
         return legal
 
+    def _response_probs(self, key, legal, translated):
+        """Live response shared by LBR pricing, execution and belief updates."""
+        if not translated or len(translated) == 1:
+            return self.restricted_probs(key, tuple(legal))
+
+        def response(char):
+            if char is None:
+                return {'call': 1.0} if 'call' in legal else {}
+            bracket = key[:-1] + char
+            stored = self._raw_strategy(bracket)
+            if not stored:
+                return {}
+            from ..game.bot_strategy import route_dropped_allin
+            weights = route_dropped_allin(
+                {a: max(0.0, stored.get(a, 0.0)) for a in legal}, stored, legal)
+            total = sum(weights.values())
+            return {a: w / total for a, w in weights.items()} if total > 1e-12 else {}
+
+        mixed = translation.blend(translated, response)
+        return np.array([mixed.get(a, 0.0) for a in legal])
+
     def _blended_probs(self, pending, street, pos, bot_hand, vis, invested, committed,
                        legal, probs):
-        """The deployed bot's response to an LBR bet (BlueprintStrategy._state_distribution
-        -> translation.blend): mix the bracketing sizes' restricted strategies by their
-        pseudo-harmonic weights; an untrained bracket's weight folds. An untrained faced
-        all-in is the exception: it is the passive coin flip, as priced in
-        _value_aggressive (prod runs an equity guard there; LBR does not jam into it)."""
-        _, before, translated = pending
-        if not translated:
+        if not pending[2] or len(pending[2]) == 1:
             return probs
         pf = self.cards.get_bucket(list(bot_hand), None)
         sb = None if street == 0 else self.cards.get_bucket(list(bot_hand), vis)
-        spr = self._spr(street, invested, committed)
-        legal_t = tuple(legal)
-
-        def strat_for_char(c):
-            key = (make_info_set_key(0, pos, pf, None, before + c) if street == 0 else
-                   make_info_set_key(street, pos, pf, sb, before + c, spr))
-            stored = self._raw_strategy(key)
-            if not stored or sum(max(0.0, stored.get(a, 0.0)) for a in legal_t) <= 1e-12:
-                if c == 'a':
-                    return {a: 0.5 for a in ('fold', 'call') if a in legal_t}
-                return {}
-            r = self.restricted_probs(key, legal_t)
-            return dict(zip(legal_t, r))
-
-        mixed = translation.blend(translated, strat_for_char)
-        out = np.array([mixed.get(a, 0.0) for a in legal_t])
-        return out / out.sum() if out.sum() > 1e-12 else probs
+        key = make_info_set_key(street, pos, pf, sb, pending[0],
+                                self._spr(street, invested, committed))
+        return self._response_probs(key, tuple(legal), pending[2])
 
     def _bot_act(self, bot_seat, bot_hand, vis, street, invested, stack, committed,
                  to_call, num_aggr, pattern, botrange, lbr_seat):
@@ -496,7 +494,11 @@ class LBREvaluator:
         action = self.rng.choices(legal, weights=probs)[0]
 
         # Bayesian belief update on the observed action (decision-time context).
-        botrange.observe(self.restricted_probs, action, street, pos, pattern, legal, vis,
+        belief_lookup = self.restricted_probs
+        if pending is not None and pending[0] == pattern:
+            def belief_lookup(key, legal_t):
+                return self._response_probs(key, legal_t, pending[2])
+        botrange.observe(belief_lookup, action, street, pos, pattern, legal, vis,
                          spr=self._spr(street, invested, committed))
 
         if action == 'fold':

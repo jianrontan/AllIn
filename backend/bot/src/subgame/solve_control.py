@@ -23,12 +23,37 @@ where the blueprint<->tree bridge is built; here the gate is a pure function ove
 an explicit baseline distribution.
 """
 import math
+import os
 import time
 
 import numpy as np
 
 from .river_cfr import RiverCFR
 from ..evaluation.showdown_kernel import compatible_mass
+
+
+def river_backend():
+    """Validate configuration before a session reaches its first river."""
+    backend = os.environ.get('ALLIN_RIVER_BACKEND', 'python')
+    if backend not in ('python', 'rust'):
+        raise ValueError(f"Unknown ALLIN_RIVER_BACKEND: {backend!r}")
+    algorithm = os.environ.get('ALLIN_RIVER_ALGORITHM', 'cfrplus')
+    if algorithm not in ('cfrplus', 'dcfr') or (algorithm == 'dcfr' and backend != 'rust'):
+        raise ValueError('ALLIN_RIVER_ALGORITHM must be cfrplus, or dcfr with the Rust backend')
+    if backend == 'rust':
+        import allin_core
+        missing_tree = not hasattr(allin_core.RiverCFR, 'from_tree')
+        missing_dcfr = algorithm == 'dcfr' and not hasattr(allin_core.RiverCFR, 'enable_dcfr')
+        if missing_tree or missing_dcfr:
+            raise RuntimeError("Rebuild allin_core: serving-tree bindings are missing")
+    return backend
+
+
+def _river_cfr(tree, ba):
+    if river_backend() == 'rust':
+        from .rust_river_cfr import RustRiverCFR
+        return RustRiverCFR(tree, ba, algorithm=os.environ.get('ALLIN_RIVER_ALGORITHM', 'cfrplus'))
+    return RiverCFR(tree, ba)
 
 
 def solve_river(tree, ba, reach0, reach1, *, max_iters=1000, check_every=50,
@@ -39,7 +64,7 @@ def solve_river(tree, ba, reach0, reach1, *, max_iters=1000, check_every=50,
     gap_threshold is in chips per dealt hand-pair (default: 1% of the entry pot).
     Returns (cfr, info) where info has iters / gap / seconds / converged.
     """
-    cfr = RiverCFR(tree, ba)
+    cfr = _river_cfr(tree, ba)
     if warm_start is not None and warm_weight > 0:
         cfr.warm_start(warm_start, warm_weight)
     if gap_threshold is None:
@@ -88,7 +113,7 @@ def solve_river_gadget(tree, ba, hero_reach, villain_reach, optout, villain_seat
     safety target. We therefore run to the iteration/time budget and report
     `converged = (ran the full max_iters within budget)` -- a budget proxy the EV gate's
     non-converged margin (H1) consumes the same way it does for solve_river."""
-    cfr = RiverCFR(tree, ba)
+    cfr = _river_cfr(tree, ba)
     hero_reach = np.asarray(hero_reach, float)
     villain_reach = np.asarray(villain_reach, float)
     optout = np.asarray(optout, float)

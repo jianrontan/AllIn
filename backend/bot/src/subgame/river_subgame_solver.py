@@ -212,9 +212,12 @@ class RiverSubgameSolver(BlueprintStrategy):
 
     def __init__(self, blueprint_db, *, max_iters=400, check_every=40,
                  time_budget=8.0, gap_threshold=None, temper_beta=DEFAULT_TEMPER_BETA,
-                 ev_margin=1.0, menu=DEFAULT_MENU, rng=None,
+                 ev_margin=1.0, menu=None, rng=None,
+                 raise_menu=None, river_menu=None, max_aggressions=None,
                  guard_confidence=0.2, guard_margin=1.0, value_jam=False,
                  safe_gadget=False, gadget_anchor='belief', purify_threshold=0.0):
+        from .solve_control import river_backend
+        self.river_backend = river_backend()
         super().__init__(blueprint_db, purify_threshold=purify_threshold)
         self.value_jam = value_jam
         # Phase 5a: solve the river under the re-solving GADGET (provably
@@ -254,7 +257,20 @@ class RiverSubgameSolver(BlueprintStrategy):
         # Min chip-EV advantage (per dealt matchup) the solved strategy must show
         # over the blueprint baseline before we deviate from the blueprint.
         self.ev_margin = ev_margin
-        self.menu = tuple(menu)
+        from .river_tree import river_menu_profile
+        if menu is None:
+            self.river_menu = river_menu or os.environ.get('ALLIN_RIVER_MENU', 'A')
+            bets, raises = river_menu_profile(self.river_menu)
+            self.menu = bets
+            self.raise_menu = raises if raise_menu is None else tuple(raise_menu)
+        else:
+            if river_menu is not None:
+                raise ValueError('Specify menu or river_menu, not both')
+            self.river_menu = 'custom'
+            self.menu = tuple(menu)
+            self.raise_menu = self.menu if raise_menu is None else tuple(raise_menu)
+        self.max_aggressions = (max_aggressions if max_aggressions is not None else
+                                (3 if self.river_menu in ('F', 'F_EXTENDED') else LIVE_RIVER_MAX_AGGRESSIONS))
         # Facing-all-in guard (flop/turn): only override the blueprint when the
         # range belief is at least this confident, and only when the call/fold EV
         # edge clears this chip margin (avoid flipping on a knife-edge / MC noise).
@@ -1001,7 +1017,7 @@ class RiverSubgameSolver(BlueprintStrategy):
         ba = build_board_arrays(board, self._evaluator, self._cards, streets=(3,))  # river solve only uses strg[3]
         idx = hand_index_map(ba)
         tree = build_river_tree(pot_entry, stacks, menu=self.menu,
-                                max_aggressions=LIVE_RIVER_MAX_AGGRESSIONS)
+                                max_aggressions=self.max_aggressions, raise_menu=self.raise_menu)
 
         villain = blend_villain(project_tracker(villain_tracker, ba, idx),
                                 confidence, self.temper_beta)

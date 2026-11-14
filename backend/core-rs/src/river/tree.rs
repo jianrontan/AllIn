@@ -267,9 +267,11 @@ impl Builder<'_> {
                 self.build(other, sc, agg, last_inc, true)
             };
             edges.push(("check".into(), child));
-            self.add_aggressive(
-                &mut edges, player, sc, agg, last_inc, pot_mid, to_call, stack_p, true,
-            );
+            if agg < self.max_aggressions {
+                self.add_aggressive(
+                    &mut edges, player, sc, agg, last_inc, pot_mid, to_call, stack_p, true,
+                );
+            }
         } else {
             let fold = self.terminal(sc, Some(player));
             edges.push(("fold".into(), fold));
@@ -386,6 +388,18 @@ mod tests {
             if let Node::Terminal(x) = n {
                 assert!((x.contrib[0] + x.contrib[1] - x.final_pot).abs() < 1e-9);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod zero_cap_test {
+    use super::*;
+    #[test]
+    fn zero_cap_is_checkdown() {
+        let tree = RiverTree::build(20.0, [90.0; 2], &DEFAULT_MENU, 0).unwrap();
+        for id in 0..tree.num_decision() {
+            assert_eq!(tree.decision_node(id).actions, vec!["check"]);
         }
     }
 }

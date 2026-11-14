@@ -592,14 +592,14 @@ play measured; BR is not used to pick it).
 | V3.5 | Evaluate (below) and pick the ship snapshot | ~4–5 h total, overnight | gates below |
 | V3.5b | ✅ results in 2026-11-13 (re-run finished, A300/C300 vs v2 added); recommendation C at 300M; the pick itself moved to V3.10 (decided 2026-11-13) | ~2 h | gates below; snapshot by play, not BR |
 | V3.6 | ✅ 2026-11-13 (see "V3.6 — done"). Serving path (Phase 6.2, extended), all behind the DB stamps; v2 behaviour unchanged: `BlueprintStrategy`, range tracker, river solver (projection, gadget CFV, guards), translation, `game_session`/`game_adapter`. Built for **both** arms (A300 and C300), with the serving memory of each measured | — | tests incl. a BUG-027 replay through `GameSession`, on A300 and C300; v2 tests unchanged |
-| V3.7 | Rust river solver, served | ~1 week | Rust == Python solve on fixed spots; p95 latency ≤ 5 s on a 0.25 vCPU profile; gadget still ≤ blueprint |
-| V3.8 | Sub-minimum bet anchor (inference only) | days | LBR at 0.1×/0.25× pot falls (z > 2); other fractions and H2H vs v2 within \|t\| < 2 |
-| V3.9 | River solver bet menu "F" | days, after V3.7 | p95 ≤ 5 s on Rust; H2H with the solver on ≥ menu A (\|t\| < 2 or better) |
+| V3.7 | Rust serving adapter, Docker wheel and DCFR experiment implemented; correctness checks pass; latency gate deferred to V3.14 / Phase 7 by user decision (2026-11-13) | ~1 week | Rust == Python solve on fixed spots; p95 latency ≤ 5 s on a 0.25 vCPU profile; gadget still ≤ blueprint |
+| V3.8 | Candidate anchor implemented, OFF by default; evaluator/range bugs fixed; powered statistical gates deferred to final hardening by user decision (2026-11-13) | days | LBR at 0.1×/0.25× pot falls (z > 2); other fractions and H2H vs v2 within \|t\| < 2 |
+| V3.9 | F / F_EXTENDED implemented; local structure/parity/safety checks pass; sustained solver-on H2H and latency gates pending | days, after V3.7 | p95 ≤ 5 s on Rust; H2H with the solver on ≥ menu A (\|t\| < 2 or better) |
 | V3.10 | **Pick the base arm** (A or C, from V3.5b's results and V3.6's memory numbers; V3.10–V3.13 build on it), then re-fit the opponent models on its v3 keys, stamped with `abstraction_id` (moved here from Phase 7: V3.11 and V3.13 need it) | ~1 day | the model guard compares abstraction ids; exploit no longer self-disables on the v3 blueprint |
 | V3.11 | Pooled facing-jam population read + logged-spot evaluator (targets BUG-027) | days | logged-spot EV(call) − EV(fold) improves over the current guard; no regression vs the human model |
 | V3.12 | Negative-regret pruning arm (Rust trainer), on the base arm's config | ~1 week + training | strategy-shape probe clean; BUG-027 replay; H2H vs the base arm and vs the human model ≥ base |
 | V3.13 | Offline data-biased-response (DBR) blueprint against the population model | 1–2 weeks, after V3.10 | BR cost vs a held-out human-model gain, swept over P_max |
-| V3.14 | Final pick among base / pruning / DBR blueprints; hardening (below) | — | the gates, re-run on the final candidates |
+| V3.14 | Final pick among base / pruning / DBR blueprints; hardening, including deferred V3.7 latency and V3.8 statistical validation (below) | — | the gates, re-run on the final candidates |
 
 The V3.6 serving work covered (all done; see "V3.6 — done" below):
 - spr5 keys, threaded through `GameSession`, the range tracker's `_action_matrix`,
@@ -699,6 +699,236 @@ One process serves one blueprint, so C does not load a second set of tables: the
 turn table is a copy of the root's (126 MB each) and the exhaustive flop table is the
 same size as the root's (11.6 MB). C costs ~12 MB more than A, from its river buckets
 and caches. The "two-abstraction memory risk" applies only if one process loaded both.
+
+### Review follow-up — verified and fixed (2026-11-14)
+
+Two independent-review findings were reproduced and corrected:
+
+1. Checkpoint guard: changing the tiny-bet policy flag previously passed resume
+   validation. The new versioned `policy_identity` includes policy sources, loaded
+   native binary identity, committed blueprint contents (WAL included), abstraction
+   assets, active mmap cache contents and effective settings/runtime versions.
+   Legacy checkpoints without the full identity are refused, not silently upgraded.
+   Seed aggregation rejects mixed complete identities; historical records without
+   them are explicitly unverified. Original completed artifacts are unchanged.
+2. LBR singleton fallback: with a missing sized key, live play folded/called 50/50
+   while LBR priced and played a certain fold; zero legal mass also diverged.
+   Pricing, execution and belief updates now share one response helper. Singletons
+   use the live passive fallback; genuine blends retain fold-on-missing-bracket.
+   Regression tests cover missing, empty and zero-legal-mass rows plus real blends.
+
+The recorded V3.9 live-session H2H is not an LBR measurement. No evidence was
+found that its policy changed during the run, but the old four-file fingerprints
+cannot retrospectively supply the stronger new provenance. Keep that limitation
+with the results. Prior LBR diagnostics do not establish the tiny-bet gate; use
+the corrected evaluator for the deferred V3.8 comparison. No menu/blueprint choice,
+candidate activation, deployment or new sustained run is implied by these fixes.
+
+Validation after fixes: all 89 affected regression tests pass. A direct CLI check
+reused ten checkpointed hands and reproduced all thirty hand records of an
+uninterrupted run exactly. SQLite WAL/asset/native-binary/flag identity changes,
+legacy-checkpoint refusal and both singleton/multi-bracket fallback paths are
+covered. No long evaluation was restarted, and historical result files were not
+rewritten.
+
+### V3.9 sustained results — complete (2026-11-14)
+
+All 24 jobs / 240,000 hands completed: three independent seeds of 10k hands for
+both candidate menus, both blueprints, and intended-live/equal-cap comparisons.
+Source fingerprints agree. No recorded solve was time-budget truncated.
+
+Intended live policies (candidate cap 3 vs existing A cap 5), AIVAT chance-control
+estimate in mbb/hand; positive favors candidate; ± is one standard error:
+
+| Candidate | A300 | C300 |
+|---|---:|---:|
+| F vs A | +40 ± 87 | +8 ± 87 |
+| F_EXTENDED vs A | +33 ± 88 | +19 ± 87 |
+
+Equal-cap comparisons are similarly unresolved. These runs show no statistically
+clear strength winner; they do NOT establish equivalence or formal non-inferiority.
+One resumed group's historical fallback counters are unavailable and explicitly
+marked incomplete; its hand-level payoffs and solve-budget records were preserved.
+
+Full results: `analysis/blueprints_rs/eval_runs/v39/sustained/summary.json` and the
+per-seed JSONs. The queue, report helper and keep-awake process have exited.
+No menu is selected; defaults remain the existing configuration. The user's
+selection decision and deferred production-profile latency gate remain open.
+
+### V3.9 — candidate menus implemented; strength/latency gates pending (2026-11-13)
+
+- Added solver-only A, F and F_EXTENDED profiles with separate bet/raise menus.
+  F_EXTENDED adds 0.25 and 3.0 opening bets to F. `ALLIN_RIVER_MENU` selects a
+  profile; default A retains the existing five-aggression live tree. F variants
+  default to the planned three. Explicit custom menus retain their old behavior.
+  No blueprint action abstraction change or retraining. Health shows actual menus.
+- Important baseline correction: the earlier review counted A at THREE
+  aggressions, but live A uses FIVE. Compare at equal caps to attribute menu effects;
+  also measure the intended complete live policies (A5 vs F3) separately.
+- Exact human edges are still injected under the configured aggression budget;
+  F3 cannot represent a fourth aggression and uses the existing fallback path.
+- Fixed an existing zero-cap edge case: Python and Rust previously still offered
+  an opening bet at aggression cap zero. Both now check down. Named production
+  profiles use positive caps; this fix does not change their default trees.
+
+Decision-node counts, same sizes as the plan's original review:
+
+| Pot / stack | A3 | F3 | F_EXTENDED3 | A5 | F5 | F_EXTENDED5 |
+|---|---:|---:|---:|---:|---:|---:|
+| 8 / 192 | 210 | 124 | 162 | 1086 | 394 | 506 |
+| 40 / 180 | 72 | 74 | 96 | 80 | 88 | 120 |
+| 80 / 96 | 16 | 24 | 32 | 16 | 24 | 32 |
+
+Local fixed-board Rust CFR+275, two repetitions (mean seconds, NOT production p95):
+- Deep spot: A3 1.06, F3 0.59, extended3 0.79; A5 5.21, F5 1.87, extended5 2.43.
+- Middle spot: A3 0.34 vs F3 0.35; short spot: A3 0.07 vs F3 0.11.
+- Each reported convergence gap is computed on its OWN tree. Gaps across different
+  menus do not establish relative playing strength. No winner/default change.
+- Full JSONL in `analysis/blueprints_rs/eval_runs/v39/fixed_spot_menu_comparison.jsonl`;
+  reproduce with `scripts/compare_river_menus.py` (includes equal-cap comparisons).
+
+Validation / match preparation:
+- 78 affected tree/CFR/control/river-serving/v3 tests pass; 35 Rust unit tests pass.
+  Checks include F/extended tree accounting, injected edges, native/reference parity
+  and the three-board correct/wrong-belief safe-gadget battery. These finite tests
+  compare against the projected blueprint, not a universal full-game safety proof.
+- `scripts/river_menu_match.py` drives TWO synchronized live GameSession views, one
+  per solver, including each player's own range chaining. It asserts matching
+  engine state and zero-sum payouts. Alternating seats, per-hand seeds and source
+  fingerprints support repeatable comparisons; depth overrides isolate size/depth.
+- Uses existing AIVAT chance controls c1/c3. Model-dependent c2 is disabled because
+  the opponent is another solver, not the blueprint assumed by the older harness.
+  Raw estimates are also retained. Smoke-test win rates are not strength evidence.
+- Initial A300 F-vs-A 200-hand smoke: both solvers fired six times each, zero
+  fallbacks. C300 extended-vs-A: thirteen solves per side, zero fallbacks.
+  Both F and F_EXTENDED completed 200-hand smokes on both A300 and C300:
+  800 hands total, 76 river solves, zero solver fallbacks. The small-sample scores
+  are not a strength verdict; F/extended even chose the same realized lines here.
+- All three profiles return healthy API responses with the expected menu/cap.
+
+Still required for promotion: sustained 30–50k-hand solver-on comparisons across
+seeds (plus equal-cap attribution) and representative p95 latency. The user approved the sustained local run on 2026-11-13; it is queued below in
+Decisions. A remains
+the default; V3.9 is NOT declared complete merely from these smoke tests.
+
+### V3.8 — candidate implemented; statistical gates pending (2026-11-13)
+
+The existing pseudo-harmonic translator mitigates interior size gaps. Its lower
+boundary clamps to the smallest grid point: this boundary behavior is confirmed
+in code, but a statistically resolved practical leak has NOT yet been established.
+
+- Added experimental `ALLIN_SUBMINIMUM_ANCHOR=1` (default OFF), for custom
+  postflop opening bets only. Below the smallest legal sized bracket, blend toward
+  a synthetic call-only zero-size response using the same pseudo-harmonic weight.
+  Preflop, raises, on-grid and larger bets retain their existing decision mapping.
+  The synthetic point never becomes a blueprint key or a human-action observation.
+- The live response, bot self-range and LBR victim use the same anchor. Health
+  exposes `subminimumAnchor`. No training/abstraction change or retraining.
+- Verification fixes found during review:
+  1. LBR candidate generation now enforces the minimum full bet/raise increment;
+     previously tiny probes could be illegal and manufacture an apparent leak.
+  2. LBR translation grids now filter unavailable sized tiers and exclude all-in
+     for sub-stack custom bets, matching GameSession's grid construction.
+  3. Both live self-range and LBR beliefs now condition on the response blend
+     actually played, rather than only its nearest-size blueprint key. This fixes
+     an existing between-size range inconsistency as well as the new anchor.
+- `lbr_paired.py --fractions` configures POSTFLOP probes only; preflop keeps its
+  original menu. Results include flag state, source hashes, paired per-hand
+  payoffs and elapsed time so superseded runs can be distinguished.
+- Earlier 1,000-hand pilot comparisons were inconclusive, then superseded by
+  the evaluator corrections above. They are diagnostics, not evidence for passing
+  a gate. Results live under `analysis/blueprints_rs/eval_runs/v38/` (git-ignored).
+  Files named `*_final_anchor*_smoke100.json` exercise both A300 and C300 on the
+  corrected model. These are smoke tests, not statistically powered EV evidence.
+- Unit/regression coverage includes weight boundaries, serialization, no synthetic
+  DB lookups, no phantom human shove, actual session self-range callback, and legal
+  LBR grids/probes. All 85 affected session/range/v3/LBR tests pass with the
+  anchor both OFF and ON. Both health flag states return 200. All four final
+  A300/C300 anchor-off/on 100-hand smoke runs completed (~26–27 seconds each);
+  they establish execution coverage only, not a statistically resolved gain.
+
+Still required before enabling: powered paired LBR by fraction on both arms,
+regression checks at other fractions and H2H vs v2. A larger local run may take
+hours; the user decided on 2026-11-13 to defer it to final hardening
+(V3.14 / Phase 7). Do not start the multi-hour run now. No claim that
+V3.8 is complete or the practical leak is resolved; keep the flag OFF.
+
+### V3.7 — implementation complete; latency gate deferred (2026-11-13)
+
+Serving integration:
+- `ALLIN_RIVER_BACKEND=python|rust` (default Python); `ALLIN_RIVER_ALGORITHM=cfrplus|dcfr`
+  (default CFR+, DCFR requires Rust). Startup checks the extension/configuration;
+  health exposes the backend and algorithm. No deployment or default switch.
+- Rust imports the exact serving tree, including injected human bets and appended
+  decision ids. Graph validation rejects cycles, shared children, disconnected
+  nodes, invalid ids, excessive depth and non-finite terminal values.
+- Warm starts, persistent iteration clocks, ordinary solves and safe gadgets are
+  supported. Read-only EV/safety walks reuse Python with cached Rust averages.
+- Docker builds a pinned-toolchain Python wheel in a separate stage. The runtime
+  gets the wheel without the compiler. Build context excludes Rust targets,
+  local virtual environments, Claude worktrees and training runs.
+
+Algorithm experiment:
+- Alternating DCFR(1.5,0,2), including the gadget's opt-out decision, with signed
+  regrets discounted after each player's update and quadratic average weights.
+  Reference: [Brown/Sandholm 2019](https://arxiv.org/abs/1809.04040).
+- Independent Python experiment in `backend/core-rs/bench/compare_dcfr.py`;
+  native/reference checks cover incremental runs and both gadget seats.
+- On one fixed board and seeded nonuniform ranges, DCFR100 gaps vs CFR+275 were
+  0.116 vs 0.157 (pot 12), 0.211 vs 0.380 (pot 30), and 0.258 vs 1.577 (pot 80).
+  DCFR uses TWO traversals per iteration: 100 iterations = 200 traversals.
+  This is preliminary convergence evidence, not a broad playing-strength result.
+- Corrected `test_safe_river_gadget` to actually use the selected serving backend
+  for its gadget (previously it constructed Python RiverCFR directly). The safety
+  battery passes with native CFR+, DCFR300 and DCFR100. Three boards / correct and
+  deliberately wrong beliefs; finite-iteration tests are not a universal proof.
+
+Latency, local ARM Linux container with `--cpus=.25`, 275 CFR+ iterations,
+10 repetitions per spot (includes construction and convergence checks):
+
+| Entry pot / stack | Ordinary p95 (s) | Gadget p95 (s) |
+|---|---:|---:|
+| 12 / 194 | 4.79 | 4.51 |
+| 30 / 185 | 2.74 | 3.05 |
+| 80 / 160 | 0.58 | 1.20 |
+
+These INITIAL six synthetic cases were below 5 seconds, but subsequent runs
+were NOT stable: do not treat this table as a passed deployment gate. This is a
+CPU-quota proxy, not Lightsail hardware or full API request latency; an auto-anchor
+request can perform more than one solve. Script: `scripts/benchmark_river_backend.py`.
+
+Both A300 and C300 completed 20-hand native DCFR100 serving probes (3 and 1 river
+solves respectively), ending around 199 / 195 MB RSS. These short probes do not
+replace the Phase-7 full frontend/API/local-DynamoDB play-through.
+
+Validation:
+- Backend suite: 562 passed, 1 skipped (567.5 seconds); excluded
+  `test_best_response_vectorized.py`, but INCLUDED the slow two-board BR/API smoke.
+- 34 native Rust unit tests; 35 focused adapter/binding tests; 7 existing river
+  parity tests. Native DCFR and CFR+ both pass the corrected gadget-safety battery.
+- Final Linux wheel: 7 adapter/reference/configuration tests pass. Non-root prod
+  image health returns 200 with Rust/DCFR and no Rust compiler installed.
+- The worktree blueprint/table symlinks point outside the Docker context. The
+  startup smoke therefore mounted a standalone read-only local blueprint copy;
+  container tests lazily bucketed missing tables. Phase 7 must ship real release
+  assets: this local image is NOT a deployment-ready asset bundle.
+- Historical fixture manifest is stale; new serving parity tests compare against
+  the current Python implementation directly. The existing fixture parity also
+  passes. No tests claim universal finite-iteration gadget safety.
+- Subsequent sequential timing on the final image failed the target: deepest
+  CFR+275 ordinary p95 11.71 s; that run was stopped after the failure was clear.
+  Optimized DCFR100 measured 4.26 s ordinary / 5.91 s gadget p95 on the deepest
+  spot, so DCFR has NOT cleared the latency gate either.
+- Diagnostic on the SAME final Linux image: at `--cpus=1`, deepest CFR+275 took
+  0.93 s wall / 0.91 s CPU (gadget 0.94 / 0.94); at `--cpus=.25`, it took 9.30 s
+  wall / 2.33 s CPU (gadget 10.10 / 2.52). Identical strategies/gaps. The quota
+  changes measured CPU cost too, consistent with host/VM scheduling or clock
+  effects, not just a fourfold wall-time multiplier. The precise host cause is
+  unproven. Do NOT tune strategy quality down merely to pass this unstable proxy.
+- Decision: retain Python/CFR+ defaults and keep Rust/DCFR opt-in. Implementation
+  and local correctness validation are complete; V3.7's latency gate remains OPEN
+  pending a stable, production-representative Linux benchmark environment. No
+  cloud resources were provisioned and nothing was committed, pushed or deployed.
 
 ### Scope added 2026-11-12: the next improvements are part of v3
 
@@ -870,6 +1100,39 @@ Gates 1 and 4 carry the decision. Gate 2 is the attribution check.
   exist to cover that.
 
 ## Decisions
+
+V3.9 sustained queue RESUMED at the user's request (2026-11-14), superseding the
+pause below. All three partial checkpoints validated against policy source hashes
+and configuration; 57,066 saved hands are reused. Complete-hand resumption avoids
+counting pause time against solves. Legacy partials did not store cumulative
+solver counters: affected results explicitly mark `stats_complete=false` instead
+of inventing historical fallback counts. Hand-level payoffs and solve-budget
+records remain intact. Queue concurrency remains three, and defaults are unchanged.
+
+V3.9 sustained queue PAUSED at the user's request (2026-11-13): 3 completed
+10k-hand jobs plus 27066 checkpointed hands in interrupted jobs
+(57066 hands retained). Workers, controller, report helper and keep-awake
+process are stopped. See sustained/paused.json; do not restart without the user's
+request. Interrupted timed hands are excluded from checkpoints.
+
+Decided 2026-11-13: user approved running V3.9's sustained local comparisons now.
+Queue: `analysis/blueprints_rs/eval_runs/v39/sustained/`. Three independent seeds
+(101/102/103), 10k hands per seed, 275 iterations, Rust CFR+, three concurrent jobs.
+Both A300/C300, F/F_EXTENDED vs A, at intended live caps AND equal cap 3:
+24 jobs / 240k hands total. V3.8 anchor forced OFF to isolate the menu experiment.
+Progress checkpoints, per-solve budget diagnostics and source fingerprints are
+retained. `summary.json` is regenerated after completion/failure; inspect its
+`complete`, `source_consistent` and budget-truncation fields before interpreting.
+This records a STARTED run, not a passed gate; no menu default or deploy change.
+
+Decided 2026-11-13: defer the larger corrected V3.8 statistical comparison to
+final hardening (V3.14 / Phase 7). Keep the sub-minimum anchor OFF until its
+gates pass. Continue subsequent implementation without starting that heavy run.
+
+Decided 2026-11-13 (Codex continuation): defer V3.7 production-profile latency
+validation to final hardening (V3.14 / Phase 7). Do not provision a cloud benchmark
+host now. This does not waive the latency gate; proceed with V3.8 and subsequent
+implementation while retaining the measured failures and experimental status.
 
 Signed off 2026-11-09:
 1. The four changes as specified, with finer flop/turn K, OCHS and more preflop

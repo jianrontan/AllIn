@@ -137,3 +137,46 @@ def test_merge_counter_overflow_is_an_error():
     w = {'regret': {key: {'check': 2.0}}, 'strategy': {}, 'legal': {key: ['check', 'bet_small']}}
     with pytest.raises(ValueError):
         allin_core.merge_round(glob, [w], 1.5, 1.0)
+
+
+def test_river_warm_start_preserves_clock_and_validates_before_mutating():
+    raw, c1, c2 = _board()
+    cfr = allin_core.RiverCFR(10.0, 100.0, [0.5, 1.0], 3, raw, c1, c2)
+    seeds = []
+    for nid in range(cfr.n_decision):
+        seed = np.zeros_like(cfr.average_strategy(nid))
+        seed[:, 0] = 1.0
+        seeds.append(seed)
+    cfr.warm_start(seeds, 10.0)
+    assert cfr.iterations == 0
+    for nid, seed in enumerate(seeds):
+        np.testing.assert_array_equal(cfr.average_strategy(nid), seed)
+    bad = [seed.copy() for seed in seeds]
+    bad[0][:] = 0.0
+    bad[0][:, -1] = 1.0
+    bad[-1][0, 0] = np.nan
+    with pytest.raises(ValueError, match='finite'):
+        cfr.warm_start(bad, 10.0)
+    # An invalid later node must not partially apply earlier seeds.
+    np.testing.assert_array_equal(cfr.average_strategy(0), seeds[0])
+    with pytest.raises(ValueError, match='shape'):
+        cfr.warm_start([seeds[0].T, *seeds[1:]], 10.0)
+    with pytest.raises(ValueError, match='finite'):
+        cfr.warm_start(seeds, np.inf)
+
+
+@pytest.mark.parametrize('fault', ['cycle', 'shared', 'orphan', 'duplicate_id', 'nan'])
+def test_serving_tree_rejects_malformed_graph(fault):
+    nodes = allin_core.river_tree_nodes(10., 20., [0.5], 2)
+    if fault == 'cycle':
+        nodes[0]['children'][0] = 0
+    elif fault == 'shared':
+        nodes[0]['children'][1] = nodes[0]['children'][0]
+    elif fault == 'orphan':
+        nodes.append(dict(terminal=True, final_pot=10., contrib=[5., 5.], folder=None))
+    elif fault == 'duplicate_id':
+        next(n for n in nodes[1:] if not n['terminal'])['node_id'] = 0
+    else:
+        next(n for n in nodes if n['terminal'])['final_pot'] = np.nan
+    with pytest.raises(ValueError):
+        allin_core.RiverCFR.from_tree(10., nodes, *_board())

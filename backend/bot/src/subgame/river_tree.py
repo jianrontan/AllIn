@@ -31,12 +31,29 @@ The default menu is deliberately SMALL ({0.5,0.75,1.0,1.5}x pot + all-in) per th
 locked design decision: start lean for solve speed + convergence, widen only
 where LBR reveals a leak.
 """
+import math
+
 from ..abstractions.sizing import BIG_BLIND
 from ..cfr.poker_game import STARTING_STACK
 
 # Solver's river bet/raise size menu, as fractions of the pot (bet) or the
 # pot-after-call (raise). All-in is added separately. Start small; grow on LBR.
 DEFAULT_MENU = (0.5, 0.75, 1.0, 1.5)
+# Solver-only profiles: these do not change the blueprint's trained sizes.
+RIVER_MENUS = {
+    'A': (DEFAULT_MENU, DEFAULT_MENU),
+    'F': ((0.33, 0.5, 0.75, 1.0, 1.5, 2.0), (0.5, 1.0)),
+    'F_EXTENDED': ((0.25, 0.33, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0), (0.5, 1.0)),
+}
+
+
+def river_menu_profile(name):
+    try:
+        return RIVER_MENUS[name]
+    except KeyError:
+        raise ValueError(f"Unknown river menu {name!r}; expected {tuple(RIVER_MENUS)}") from None
+
+
 MAX_AGGRESSIONS = 3          # 1 bet + 2 raises (PokerGame.max_raises_per_street + 1)
 MIN_BET = float(BIG_BLIND)   # 1 BB
 OOP_SEAT = 1                 # BB acts first postflop
@@ -93,8 +110,8 @@ class RiverTree:
     the CFR+ solver attaches regret/strategy tables to (indexed by node_id)."""
 
     def __init__(self, pot_entry, stacks, menu=DEFAULT_MENU,
-                 max_aggressions=MAX_AGGRESSIONS):
-        if pot_entry <= 0:
+                 max_aggressions=MAX_AGGRESSIONS, *, raise_menu=None):
+        if not math.isfinite(pot_entry) or pot_entry <= 0:
             raise ValueError("pot_entry must be positive")
         self.pot_entry = float(pot_entry)
         self.stacks = (float(stacks[0]), float(stacks[1]))
@@ -116,6 +133,14 @@ class RiverTree:
                 f"river tree assumes equal river-entry stacks (got {self.stacks}); "
                 "unequal stacks need all-in-for-less handling (see RiverTree docstring)")
         self.menu = tuple(menu)
+        self.raise_menu = self.menu if raise_menu is None else tuple(raise_menu)
+        for sizes in (self.menu, self.raise_menu):
+            if not sizes or any(not math.isfinite(f) or f <= 0 for f in sizes):
+                raise ValueError("river sizes must be finite and positive")
+        if any(not math.isfinite(s) or s < 0 for s in self.stacks):
+            raise ValueError("river stacks must be finite and nonnegative")
+        if not math.isfinite(max_aggressions) or max_aggressions < 0 or int(max_aggressions) != max_aggressions:
+            raise ValueError("max_aggressions must be a nonnegative integer")
         self.max_aggressions = int(max_aggressions)
         self.entry_contrib = self.pot_entry / 2.0   # each seat's prior-street investment
         self.decision_nodes = []
@@ -162,8 +187,9 @@ class RiverTree:
                 add('check', self._terminal(sc, folder=None))
             else:
                 add('check', self._build(other, sc, agg, last_inc, prev_check=True))
-            self._add_aggressive(node, add, player, other, sc, agg, last_inc,
-                                  pot_mid, to_call, stack_p, opening=True)
+            if agg < self.max_aggressions:
+                self._add_aggressive(node, add, player, other, sc, agg, last_inc,
+                                      pot_mid, to_call, stack_p, opening=True)
         else:
             # ---- facing a bet/raise: fold / call / (raise) ----
             add('fold', self._terminal(sc, folder=player))
@@ -188,7 +214,7 @@ class RiverTree:
             return
         need_allin = False
         seen_costs = set()
-        for frac in self.menu:
+        for frac in (self.menu if opening else self.raise_menu):
             if opening:
                 amount = frac * pot_mid                       # bet = frac * pot
                 new_sc_p = sc[player] + amount
@@ -292,7 +318,8 @@ class RiverTree:
 
 
 def build_river_tree(pot_entry, stacks, menu=DEFAULT_MENU,
-                     max_aggressions=MAX_AGGRESSIONS):
+                     max_aggressions=MAX_AGGRESSIONS, *, raise_menu=None):
     """Convenience: return a built RiverTree. `stacks` = (seat0_behind, seat1_behind)
     remaining at river entry; `pot_entry` = chips already in the middle."""
-    return RiverTree(pot_entry, stacks, menu=menu, max_aggressions=max_aggressions)
+    return RiverTree(pot_entry, stacks, menu=menu, max_aggressions=max_aggressions,
+                     raise_menu=raise_menu)

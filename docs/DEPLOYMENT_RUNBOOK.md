@@ -102,6 +102,27 @@ diagnosing CI failures, dev workflow) — that's in
     (keys on `remote_addr`) until the origin is locked to Cloudflare; XFF is client-spoofable on the raw
     Lightsail URL otherwise. `ALLIN_AB_ARM` (`on`/`off`/`random`) — live exploitation A/B arm per session.
     `ALLIN_GUARD_CONFIDENCE` (0.2) — exploit/all-in confidence gate.
+  - `ALLIN_SUBMINIMUM_ANCHOR` — experimental, default OFF. `1` blends a custom
+    postflop opening bet below the smallest legal trained size toward a call-only
+    zero-size response. No new trained keys; preflop and raises are unchanged.
+    The live decision, hero range and LBR victim share the response. Health
+    reports `subminimumAnchor`. Keep OFF until the V3.8 statistical gates pass.
+  - `ALLIN_RIVER_MENU` — solver-only profile: `A` (default; existing sizes,
+    five live aggressions), `F` (bets 0.33/0.5/0.75/1/1.5/2, raises 0.5/1,
+    three aggressions), or `F_EXTENDED` (F plus 0.25/3 opening bets). All include
+    all-in. No blueprint sizing/keys change or retraining. Health exposes the
+    actual profile, bet/raise lists and aggression cap as `riverMenu`. Candidate
+    menus remain experimental until solver-on H2H and latency gates pass.
+  - `ALLIN_RIVER_BACKEND` — `python` (default) or `rust`. Rust uses the compiled
+    `allin_core` wheel built into the image, including exact human bet trees and
+    the safe gadget. Invalid values or missing serving bindings fail at bot startup;
+    health reports `riverBackend`. Keep Python until the V3.7 performance/safety
+    gates pass.
+  - `ALLIN_RIVER_ALGORITHM` — `cfrplus` (default) or experimental `dcfr` (Rust
+    only). DCFR uses alternating updates, parameters (1.5, 0, 2), and two tree
+    traversals per iteration. Health reports `riverAlgorithm`. Do not compare
+    iteration counts as if they represent equal work or reduce the safety-gadget
+    iteration budget without validating the resulting strategy.
   - `ALLIN_GADGET_ANCHOR` — river safe-gadget anchor: `auto` (default, ≤blueprint) | `belief`
     (max-exploit, **NO safety floor — never set in prod**) | `blueprint` | `confidence`. Invalid →
     warns + `auto`. Surfaced in healthz `riverGadget`.

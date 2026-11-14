@@ -4,12 +4,12 @@
 //! `backend/core-rs/parity/test_parity.py`.
 
 use numpy::ndarray::Array2;
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1};
+use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::river::tree::Node;
+use crate::river::tree::{Decision, MAX_TREE_NODES, Node, Terminal};
 use crate::river::{Board, RiverCfr, RiverTree};
 
 fn err(e: String) -> PyErr {
@@ -196,6 +196,106 @@ impl PyRiverCfr {
         })
     }
 
+    /// Import the exact serving tree, including realized off-grid actions.
+    #[staticmethod]
+    #[pyo3(signature = (pot_entry, nodes, raw, c1, c2, exact=false))]
+    fn from_tree(
+        pot_entry: f64,
+        nodes: Vec<Bound<'_, PyDict>>,
+        raw: PyReadonlyArray1<'_, f64>,
+        c1: PyReadonlyArray1<'_, i64>,
+        c2: PyReadonlyArray1<'_, i64>,
+        exact: bool,
+    ) -> PyResult<Self> {
+        if !pot_entry.is_finite()
+            || pot_entry <= 0.0
+            || nodes.is_empty()
+            || nodes.len() > MAX_TREE_NODES
+        {
+            return Err(err("invalid serving tree size or pot".into()));
+        }
+        let mut parsed = Vec::with_capacity(nodes.len());
+        let mut decision = Vec::new();
+        let mut parents = vec![0usize; nodes.len()];
+        let mut depths = vec![0usize; nodes.len()];
+        for (i, d) in nodes.iter().enumerate() {
+            let get = |key: &str| {
+                d.get_item(key)?
+                    .ok_or_else(|| err(format!("missing {key}")))
+            };
+            if get("terminal")?.extract::<bool>()? {
+                let final_pot: f64 = get("final_pot")?.extract()?;
+                let contrib: [f64; 2] = get("contrib")?.extract()?;
+                let folder: Option<u8> = get("folder")?.extract()?;
+                if !final_pot.is_finite()
+                    || final_pot < 0.0
+                    || contrib.iter().any(|v| !v.is_finite() || *v < 0.0)
+                    || folder.is_some_and(|p| p > 1)
+                {
+                    return Err(err("invalid terminal".into()));
+                }
+                parsed.push(Node::Terminal(Terminal {
+                    final_pot,
+                    contrib,
+                    folder,
+                }));
+            } else {
+                let player: u8 = get("player")?.extract()?;
+                let node_id: usize = get("node_id")?.extract()?;
+                let actions: Vec<String> = get("actions")?.extract()?;
+                let children: Vec<usize> = get("children")?.extract()?;
+                if player > 1
+                    || node_id >= nodes.len()
+                    || actions.is_empty()
+                    || actions.len() != children.len()
+                {
+                    return Err(err("invalid decision".into()));
+                }
+                for &child in &children {
+                    if child <= i || child >= nodes.len() {
+                        return Err(err("tree children must follow their parent".into()));
+                    }
+                    parents[child] += 1;
+                    depths[child] = depths[i] + 1;
+                    if parents[child] != 1 || depths[child] > 64 {
+                        return Err(err("tree has shared children or excessive depth".into()));
+                    }
+                }
+                decision.push((node_id, i));
+                // Traversal uses only player/actions/children/id; chip payoffs live at terminals.
+                parsed.push(Node::Decision(Decision {
+                    player,
+                    node_id,
+                    actions,
+                    children,
+                    to_call: 0.0,
+                    pot_mid: 0.0,
+                    sc: [0.0; 2],
+                    agg: 0,
+                    last_inc: 0.0,
+                }));
+            }
+        }
+        if parents[1..].iter().any(|n| *n != 1) || decision.is_empty() {
+            return Err(err("disconnected tree or no decisions".into()));
+        }
+        decision.sort_unstable();
+        if decision.iter().enumerate().any(|(id, (nid, _))| id != *nid) {
+            return Err(err("decision ids must be dense and unique".into()));
+        }
+        let decision = decision.into_iter().map(|(_, i)| i).collect();
+        let tree = RiverTree {
+            nodes: parsed,
+            decision,
+            pot_entry,
+        };
+        let mut board = Board::new(&vec1(&raw), &veci(&c1), &veci(&c2)).map_err(err)?;
+        board.exact = exact;
+        Ok(Self {
+            inner: RiverCfr::new(tree, board),
+        })
+    }
+
     #[getter]
     fn n_decision(&self) -> usize {
         self.inner.tree.num_decision()
@@ -209,6 +309,39 @@ impl PyRiverCfr {
     #[getter]
     fn iterations(&self) -> u64 {
         self.inner.iterations()
+    }
+
+    /// Seed the average strategy without advancing the CFR iteration clock.
+    fn warm_start(&mut self, seeds: Vec<PyReadonlyArray2<'_, f64>>, weight: f64) -> PyResult<()> {
+        finite_scalar(weight, "warm-start weight")?;
+        if weight <= 0.0 {
+            return Ok(());
+        }
+        if seeds.len() != self.inner.tree.num_decision() {
+            return Err(err(
+                "warm start requires one strategy per decision node".into()
+            ));
+        }
+        let mut values = Vec::with_capacity(seeds.len());
+        for (nid, seed) in seeds.iter().enumerate() {
+            let a = seed.as_array();
+            if a.shape() != [self.inner.h(), self.inner.num_actions(nid)] {
+                return Err(err(format!(
+                    "warm-start strategy shape mismatch at node {nid}"
+                )));
+            }
+            if a.iter().any(|x| !x.is_finite() || *x < 0.0) {
+                return Err(err(
+                    "warm-start strategies must be finite and non-negative".into()
+                ));
+            }
+            values.push(a.iter().copied().collect());
+        }
+        self.inner.warm_start(&values, weight).map_err(err)
+    }
+
+    fn enable_dcfr(&mut self) -> PyResult<()> {
+        self.inner.enable_dcfr().map_err(err)
     }
 
     fn run(

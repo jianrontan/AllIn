@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.subgame.river_tree import build_river_tree
 from src.subgame.river_cfr import RiverCFR
-from src.subgame.solve_control import solve_river
+from src.subgame.solve_control import solve_river, solve_river_gadget
 from src.subgame.blueprint_projection import (
     blueprint_cfv, blueprint_strategy_on_tree)
 from src.evaluation.showdown_kernel import build_board_arrays, compatible_mass
@@ -108,12 +108,12 @@ def _solve_unsafe(tree, ba, hero_reach, belief, bot_seat):
 def _solve_gadget(tree, ba, raw, hero_reach, anchor_villain, villain_seat, menu):
     g0, g1 = (hero_reach, anchor_villain) if villain_seat == 1 else (anchor_villain, hero_reach)
     optout = blueprint_cfv(tree, ba, raw, g0, g1, villain_seat, menu)
-    cfr = RiverCFR(tree, ba)
-    cfr.run_gadget(hero_reach, anchor_villain, optout, villain_seat, iters=_ITERS)
+    cfr, _ = solve_river_gadget(tree, ba, hero_reach, anchor_villain, optout,
+                                villain_seat, max_iters=_ITERS, check_every=_ITERS)
     return cfr.average_strategy
 
 
-def run():
+def run(menu_name="A"):
     raw, db = _blueprint_raw()
     menu = None
     if db is not None:
@@ -125,7 +125,9 @@ def run():
     for board, hole, bot_seat, pot, behind in _SPOTS:
         ba = build_board_arrays(board, _EVAL, _CARDS)
         idx = hand_index_map(ba)
-        tree = build_river_tree(pot, (behind, behind))
+        from src.subgame.river_tree import river_menu_profile
+        bets, raises = river_menu_profile(menu_name)
+        tree = build_river_tree(pot, (behind, behind), menu=bets, raise_menu=raises)
         villain_seat = 1 - bot_seat
         meas = RiverCFR(tree, ba)               # for _br_value only
 

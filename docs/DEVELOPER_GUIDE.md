@@ -464,6 +464,35 @@ python tests/run_evaluation.py --samples 1000      # active blueprint
 
 Results are in milli-big-blinds per hand (mbb/hand); lower is better.
 
+### Resumable solver-menu comparisons
+
+`scripts/river_menu_match.py --resume` resumes only complete hands. New checkpoints
+carry `policy_identity` from `evaluation/policy_identity.py`: conservative Python
+and Rust source hashes, the loaded Rust extension binary, committed SQLite
+blueprint contents (including WAL), abstraction tables/centroids and active mmap
+caches, effective policy settings, and runtime/dependency versions and architecture. Additional `ALLIN_*`
+values are hashed rather than recorded in plaintext. Blueprints must be quiescent
+throughout a run. This intentionally refuses some harmless source/config changes
+rather than risk mixing policies.
+
+A checkpoint missing this identity, or differing in identity/configuration, is
+rejected. Keep historical results unchanged and start a fresh run; do not relabel
+an old four-file fingerprint as verified. Compare identities within each seed
+group before aggregating. Historical V3.9 results retain their original, weaker
+provenance; the review found no evidence that the completed run mixed policies.
+
+### LBR must follow the live response path
+
+A custom bet that clamps to ONE real bracket does not set live pending translation.
+Its missing/zero-legal-mass strategy uses the passive fallback (fold/call equally
+when facing a bet). A genuine MULTI-bracket blend instead routes an untrained
+bracket's weight to fold. LBR pricing, execution and belief updates share
+`LBREvaluator._response_probs` so these cases cannot disagree. Preserve both
+singleton and multi-bracket regressions when changing translation. Older LBR
+numbers that modeled missing single brackets as certain folds are superseded;
+V3.8's deferred powered comparison must use the corrected evaluator. This LBR fix
+does not change the live bot or the live-session V3.9 match estimator.
+
 ---
 
 ## 10. Testing Strategy

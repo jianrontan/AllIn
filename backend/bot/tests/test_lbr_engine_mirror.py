@@ -88,3 +88,91 @@ def test_lbr_menu_and_sizes_match_the_engine(menu_mode):
                     examples.append(('size', street, a, add, cost))
     assert checked > 500, checked
     assert legal_bad == 0 and size_bad == 0, (legal_bad, size_bad, examples)
+
+
+@pytest.mark.parametrize('to_call,pot', [(0, 10), (1, 3), (2, 10), (7, 30)])
+def test_lbr_offgrid_candidates_obey_minimum_increment(to_call, pot):
+    import numpy as np
+    from types import SimpleNamespace
+    ev = LBREvaluator.__new__(LBREvaluator)
+    ev.bet_fractions = (.01, .05, .1, .25, .5, 1., 2.5)
+    ev.equity_vs_range = lambda *args: .5
+    ev._menu_legal = lambda *args: []
+    seen = []
+    def aggressive(*args):
+        add = args[-2]
+        seen.append(add)
+        return (1., 's', add, True, [('s', 1.)])
+    ev._value_aggressive = aggressive
+    ev._lbr_decide(0, ('HA', 'DK'), [], 0 if to_call == 1 else 1,
+                   [pot / 2, pot / 2], [100, 100], [0, to_call], to_call,
+                   0, '', SimpleNamespace(hands=[], w=np.array([])), 1)
+    assert seen
+    assert all(add >= to_call + max(to_call, 2) for add in seen)
+
+
+def test_translation_grid_uses_only_live_sized_brackets():
+    ev = LBREvaluator(_NullDB(), menu_mode='control')
+    grid = ev._translation_grid(1, 4, 0, 0, 0, 198)
+    assert 's' not in dict(grid)  # 0.33 * 4 < the two-chip minimum
+    assert 'm' in dict(grid)
+    assert 'a' not in dict(grid)  # sub-stack bets never snap to a shove
+    assert 'a' not in dict(ev._translation_grid(0, 3, 1, 1, 0, 199))
+    assert ev._translation_grid(1, 30, 0, 0, 0, 2) == []
+
+
+@pytest.mark.parametrize('stored', [None, {}, {'bet_unavailable': 1.0}])
+def test_single_bracket_price_execution_and_belief_match_live(stored, monkeypatch):
+    import numpy as np
+    from src.game.game_session import GameSession
+    from src.game.bot_strategy import BlueprintStrategy
+    from src.cfr.poker_game import make_custom_action
+    from src.evaluation.lbr import BotRange
+    class DB:
+        def get_average_strategy(self, key):
+            return stored
+    session=GameSession.new('review','offline')
+    session.apply_action(make_custom_action(False,20))
+    legal=session.legal_actions()
+    key=session.info_set_key(1)
+    live=BlueprintStrategy(DB()).explain(key,legal,session.bot_public_state())
+    assert session.data.get('pending_translation') is None
+    ev=LBREvaluator(DB(),seed=1)
+    ev.equity_vs_range=lambda *args: .5
+    belief=BotRange(session.data['p0_cards'],ev.cards)
+    price=ev._value_aggressive(0,session.data['p0_cards'],[],0,[1,2],[199,198],
+                              [1,2],1,0,'',belief,1,19,False)
+    assert price[4]==[('x',1.)]
+    # Calling creates a 40-chip pot and costs the opener 20, so checkdown EV=0;
+    # folding wins two chips. The correct .5 fold probability prices this at 1.
+    assert price[0]==pytest.approx(1.)
+    pending=('x','',price[4])
+    base=ev.restricted_probs(key,tuple(legal))
+    actual=ev._blended_probs(pending,0,'oop',session.data['p1_cards'],[],
+                              [20,2],[20,2],legal,base)
+    np.testing.assert_allclose(actual,[live.get(a,0.) for a in legal])
+    rows=[]
+    belief.observe=lambda lookup,action,street,pos,pattern,legal,vis,**kw: rows.append(lookup(key,tuple(legal)))
+    monkeypatch.setattr(ev.rng,'choices',lambda *a,**kw: ['call'])
+    ev._pending=pending
+    ev._bot_act(1,session.data['p1_cards'],[],0,[20,2],[180,198],[20,2],18,1,'x',belief,0)
+    np.testing.assert_allclose(rows[0],[live.get(a,0.) for a in legal])
+
+
+def test_real_multi_bracket_missing_response_still_folds():
+    import numpy as np
+    from src.game.game_session import GameSession
+    from src.game.bot_strategy import BlueprintStrategy
+    from src.cfr.poker_game import make_custom_action
+    session=GameSession.new('review','offline')
+    session.apply_action(make_custom_action(False,6))
+    state=session.bot_public_state()
+    assert len(state['translation'])==2
+    legal=session.legal_actions()
+    key=session.info_set_key(1)
+    live=BlueprintStrategy(_NullDB()).explain(key,legal,state)
+    ev=LBREvaluator(_NullDB(),seed=1)
+    translated=[(k[-1],w) for k,w in state['translation']]
+    np.testing.assert_allclose(ev._response_probs(key,tuple(legal),translated),
+                               [live.get(a,0.) for a in legal])
+    assert live['fold']==1.

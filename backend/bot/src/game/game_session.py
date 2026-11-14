@@ -537,7 +537,9 @@ class GameSession:
                 else:
                     pot, to_call = self._current_pot(), (self._action_cost('call') if 'call' in legal else 0.0)
                     eff = translation.eff_fraction(self._action_cost(action), to_call, pot)
-                    translated = translation.translate_bet(eff, grid)
+                    translated = translation.translate_bet(
+                        eff, grid, zero_anchor=(d['street'] > 0 and to_call == 0
+                                                and os.environ.get('ALLIN_SUBMINIMUM_ANCHOR') == '1'))
                     char = translation.nearest_char(eff, grid)
                     snapped_action = self._grid_action_for_char(char, legal)
         elif action not in legal:
@@ -569,7 +571,7 @@ class GameSession:
             # snapping to the single nearest one: a more faithful range update + less confidence erosion.
             obs_blend = ([(ga, w) for c, w in translated
                           if (ga := self._grid_action_for_char(c, legal)) is not None]
-                         if translated else None)
+                         if translated and all(c is not None for c, _ in translated) else None)
             tracker.observe(self.strategy_fn, snapped_action, street, self._opp_position(),
                             d['bet_pattern'], obs_legal, board, blend=obs_blend,
                             spr=self._spr())
@@ -593,7 +595,13 @@ class GameSession:
                 # self-belief must be modeled as such. (The pre-river tilt's tiny delta-capped
                 # deviation is not separately recorded -- exact per-hand recording awaits the E5
                 # range-vs-range solve, which produces per-hand probs natively.)
-                bt.observe(self.hero_strategy_fn, snapped_action, street, self._bot_position(),
+                hero_model = self.hero_strategy_fn
+                pending = d.get('pending_translation')
+                if pending and hasattr(hero_model, 'translated'):
+                    original_model = hero_model
+                    def hero_model(key, legal):
+                        return original_model.translated(key, legal, pending['weights'])
+                bt.observe(hero_model, snapped_action, street, self._bot_position(),
                            d['bet_pattern'], obs_legal, board, spr=self._spr())
             new_bot_range = bt.to_dict()
 
@@ -852,7 +860,7 @@ class GameSession:
         pend = d.get('pending_translation')
         if pend:
             state['translation'] = [
-                (self.info_set_key(actor, pattern=pend['base_pattern'] + c), w)
+                (None if c is None else self.info_set_key(actor, pattern=pend['base_pattern'] + c), w)
                 for c, w in pend['weights']]
         return state
 

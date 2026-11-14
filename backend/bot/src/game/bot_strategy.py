@@ -192,8 +192,11 @@ class BlueprintStrategy(BotStrategy):
         is the plain single-key lookup."""
         trans = (public_state or {}).get('translation')
         if trans:
-            blended = translation.blend(
-                trans, lambda key: self._blend_lookup(key, legal_actions))
+            def response(key):
+                if key is None:
+                    return {'call': 1.0} if 'call' in legal_actions else {}
+                return self._blend_lookup(key, legal_actions)
+            blended = translation.blend(trans, response)
             if blended:
                 return blended
         return self._distribution(info_set_key, legal_actions)
@@ -242,6 +245,13 @@ class BlueprintStrategy(BotStrategy):
             w = np.array([float(dist.get(a, 0.0)) for a in legal])
             t = w.sum()
             return w / t if t > 1e-12 else np.ones(n) / n
+        def translated(key, legal, weights):
+            # The stored pattern ends in the nearest real size. Rebuild only
+            # that last response bracket, preserving card/SPR/position fields.
+            trans = [(None if c is None else key[:-1] + c, w) for c, w in weights]
+            dist = self._state_distribution(key, legal, {'translation': trans})
+            return np.array([dist.get(a, 0.0) for a in legal])
+        fn.translated = translated
         return fn
 
 

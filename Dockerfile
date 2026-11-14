@@ -20,6 +20,19 @@
 # 3.12-slim matches the project's Python (README). If a wheel (e.g. phevaluator)
 # lacks a 3.12 build, either pin 3.11-slim or add build-essential before pip.
 
+# === RUST WHEEL — compiler stays out of the runtime image ===
+FROM python:3.12-slim AS rust-wheel
+RUN apt-get update && apt-get install -y --no-install-recommends curl build-essential ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+ENV CARGO_HOME=/opt/cargo RUSTUP_HOME=/opt/rustup
+ENV PATH=/opt/cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+WORKDIR /build/core-rs
+COPY backend/core-rs/rust-toolchain.toml backend/core-rs/Cargo.toml backend/core-rs/Cargo.lock backend/core-rs/pyproject.toml ./
+RUN rustup show && pip install --no-cache-dir 'maturin>=1.16,<2'
+COPY backend/core-rs/src ./src
+RUN maturin build --release --locked --interpreter python --out /wheels
+
 # === BASE STAGE — prod deps + code, no entrypoint ===
 FROM python:3.12-slim AS base
 
@@ -35,6 +48,8 @@ ENV PYTHONDONTWRITEBYTECODE=1
 # requirements.txt, so no extra installs here.
 COPY backend/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
+COPY --from=rust-wheel /wheels /tmp/rust-wheels
+RUN pip install --no-cache-dir /tmp/rust-wheels/*.whl && rm -rf /tmp/rust-wheels
 
 # App code + committed centroids + the 25M `blueprint_final.db` + the
 # precomputed baked postflop tables. The .dockerignore keeps everything except

@@ -9,6 +9,9 @@ Run from backend/bot/:
     python scripts/lbr_paired.py --db X.db --out x.json --hands 10000 --seed 777
 """
 import argparse
+import hashlib
+import time
+from pathlib import Path
 import json
 import os
 import sys
@@ -25,13 +28,22 @@ def main():
     p.add_argument('--hands', type=int, default=10000)
     p.add_argument('--seed', type=int, default=777)
     p.add_argument('--flop-runouts', type=int, default=20)
+    p.add_argument('--fractions', help='comma-separated postflop LBR sizes; preflop stays 0.5,1,1.5')
     args = p.parse_args()
+    fractions = None if args.fractions is None else [float(x) for x in args.fractions.split(',')]
+    source_root = Path(__file__).resolve().parents[1] / 'src'
+    sources = ('evaluation/lbr.py', 'cfr/translation.py', 'game/bot_strategy.py', 'game/game_session.py')
+    fingerprints = {name: hashlib.sha256((source_root / name).read_bytes()).hexdigest()
+                    for name in sources}
+    started = time.perf_counter()
     db = BlueprintDB(args.db, read_only=True)
-    ev = LBREvaluator(db, seed=args.seed, flop_runout_samples=args.flop_runouts)
+    ev = LBREvaluator(db, seed=args.seed, flop_runout_samples=args.flop_runouts, bet_fractions=fractions)
     r = ev.evaluate(num_hands=args.hands, progress_every=0, paired=True)
     with open(args.out, 'w') as f:
         json.dump({'db': args.db, 'seed': args.seed, 'hands': args.hands,
-                   'lbr_mbb': r['lbr_mbb'], 'per_hand': r['per_hand']}, f)
+                   'postflop_fractions': list(ev.bet_fractions),
+                   'anchor_enabled': ev.subminimum_anchor, 'source_sha256': fingerprints,
+                   'seconds': time.perf_counter() - started, 'lbr_mbb': r['lbr_mbb'], 'per_hand': r['per_hand']}, f)
     print(args.out, r['lbr_mbb'])
 
 

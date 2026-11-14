@@ -2159,6 +2159,12 @@ def _health_payload():
         # mode (BOT failed to load), so guard against it (healthz must still answer).
         "riverGadget": (None if BOT is None
                         else ("off" if not BOT.safe_gadget else BOT.gadget_anchor)),
+        "riverBackend": (None if BOT is None else BOT.river_backend),
+        "riverAlgorithm": os.environ.get("ALLIN_RIVER_ALGORITHM", "cfrplus"),
+        "riverMenu": (None if BOT is None else {
+            "name": BOT.river_menu, "bets": BOT.menu, "raises": BOT.raise_menu,
+            "maxAggressions": BOT.max_aggressions}),
+        "subminimumAnchor": os.environ.get("ALLIN_SUBMINIMUM_ANCHOR") == "1",
         "purify": (None if BOT is None else BOT.purify_threshold),
         # Phase 6 opponent exploitation: false when off (default), else #player models + tilt budget.
         "exploit": (False if HUMAN_MODEL is None

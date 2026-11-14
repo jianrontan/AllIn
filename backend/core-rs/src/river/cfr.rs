@@ -33,6 +33,8 @@ struct Tables {
     strat_sum: Vec<Vec<f64>>,
     iter: u64,
     t_weight: f64,
+    dcfr: bool,
+    updating: Option<u8>,
     /// Gadget regret `[H, 2]` (Follow, Terminate), persisted across calls.
     g_regret: Option<Vec<f64>>,
 }
@@ -211,7 +213,12 @@ fn child_values(
 
 impl Tables {
     fn current_strategy(&self, nid: usize, a: usize, out: &mut [f64]) {
-        normalise(&self.regret[nid], self.h, a, out);
+        if self.dcfr {
+            let positive: Vec<f64> = self.regret[nid].iter().map(|r| r.max(0.0)).collect();
+            normalise(&positive, self.h, a, out);
+        } else {
+            normalise(&self.regret[nid], self.h, a, out);
+        }
     }
 
     fn average_strategy(&self, nid: usize, a: usize) -> Vec<f64> {
@@ -223,7 +230,7 @@ impl Tables {
 
 /// One CFR+ traversal (`RiverCFR._cfr`), writing the root values into v0 / v1.
 #[allow(clippy::too_many_arguments)]
-fn cfr(
+fn cfr<const DCFR: bool>(
     tree: &RiverTree,
     board: &Board,
     tb: &mut Tables,
@@ -242,7 +249,12 @@ fn cfr(
     let nid = d.node_id;
     let p = d.player as usize;
     let mut strat = vec![0.0; h * a];
-    tb.current_strategy(nid, a, &mut strat);
+    if DCFR {
+        let positive: Vec<f64> = tb.regret[nid].iter().map(|r| r.max(0.0)).collect();
+        normalise(&positive, h, a, &mut strat);
+    } else {
+        normalise(&tb.regret[nid], h, a, &mut strat);
+    }
     let (r_p, r_opp) = if p == 0 { (r0, r1) } else { (r1, r0) };
 
     let mut u = vec![0.0; h * a];
@@ -266,7 +278,7 @@ fn cfr(
             &mut stats,
             uk,
             &mut tmp,
-            &mut |c, a0, a1, o0, o1| cfr(tree, board, tb, c, a0, a1, o0, o1),
+            &mut |c, a0, a1, o0, o1| cfr::<DCFR>(tree, board, tb, c, a0, a1, o0, o1),
         );
         for i in 0..h {
             v_other[i] += tmp[i];
@@ -279,16 +291,18 @@ fn cfr(
             v_p[i] += s[i] * uk[i];
         }
     }
-    let tw = tb.t_weight;
-    let reg = &mut tb.regret[nid];
-    let ss = &mut tb.strat_sum[nid];
-    for k in 0..a {
-        let o = k * h;
-        for i in 0..h {
-            let j = o + i;
-            let r = reg[j] + (u[j] - v_p[i]);
-            reg[j] = if r > 0.0 { r } else { 0.0 };
-            ss[j] += (r_p[i] * strat[j]) * tw;
+    if !DCFR || tb.updating.is_none_or(|seat| seat as usize == p) {
+        let tw = tb.t_weight;
+        let reg = &mut tb.regret[nid];
+        let ss = &mut tb.strat_sum[nid];
+        for k in 0..a {
+            let o = k * h;
+            for i in 0..h {
+                let j = o + i;
+                let r = reg[j] + (u[j] - v_p[i]);
+                reg[j] = if DCFR || r > 0.0 { r } else { 0.0 };
+                ss[j] += (r_p[i] * strat[j]) * tw;
+            }
         }
     }
     let (out_p, out_o) = if p == 0 { (v0, v1) } else { (v1, v0) };
@@ -424,6 +438,8 @@ impl RiverCfr {
             strat_sum: sizes.iter().map(|&s| vec![0.0; s]).collect(),
             iter: 0,
             t_weight: 1.0,
+            dcfr: false,
+            updating: None,
             g_regret: None,
         };
         RiverCfr {
@@ -455,17 +471,50 @@ impl RiverCfr {
     fn root(&mut self, r0: &[f64], r1: &[f64]) -> (Vec<f64>, Vec<f64>) {
         let h = self.board.h;
         let (mut v0, mut v1) = (vec![0.0; h], vec![0.0; h]);
-        cfr(
-            &self.tree,
-            &self.board,
-            &mut self.tables,
-            0,
-            r0,
-            r1,
-            &mut v0,
-            &mut v1,
-        );
+        if self.tables.dcfr {
+            cfr::<true>(
+                &self.tree,
+                &self.board,
+                &mut self.tables,
+                0,
+                r0,
+                r1,
+                &mut v0,
+                &mut v1,
+            );
+        } else {
+            cfr::<false>(
+                &self.tree,
+                &self.board,
+                &mut self.tables,
+                0,
+                r0,
+                r1,
+                &mut v0,
+                &mut v1,
+            );
+        }
         (v0, v1)
+    }
+
+    /// Experimental alternating DCFR(1.5,0,2); enable only before solving.
+    pub fn enable_dcfr(&mut self) -> Result<(), String> {
+        if self.tables.iter != 0 {
+            return Err("cannot change algorithm after solving".into());
+        }
+        self.tables.dcfr = true;
+        Ok(())
+    }
+
+    fn discount_player(&mut self, seat: u8) {
+        let t = (self.tables.iter as f64).powf(1.5);
+        for (nid, r) in self.tables.regret.iter_mut().enumerate() {
+            if self.tree.decision_node(nid).player == seat {
+                for x in r {
+                    *x *= if *x >= 0.0 { t / (t + 1.0) } else { 0.5 };
+                }
+            }
+        }
     }
 
     /// `run(reach0, reach1, iters)`.
@@ -475,7 +524,17 @@ impl RiverCfr {
         for _ in 0..iters {
             self.tables.iter += 1;
             self.tables.t_weight = self.tables.iter as f64;
-            self.root(r0, r1);
+            if self.tables.dcfr {
+                self.tables.t_weight *= self.tables.t_weight;
+                for seat in 0..2 {
+                    self.tables.updating = Some(seat);
+                    self.root(r0, r1);
+                    self.discount_player(seat);
+                }
+                self.tables.updating = None;
+            } else {
+                self.root(r0, r1);
+            }
         }
         Ok(())
     }
@@ -494,6 +553,9 @@ impl RiverCfr {
         self.check_len("optout", optout)?;
         if villain_seat > 1 {
             return Err(format!("villain_seat must be 0 or 1, got {villain_seat}"));
+        }
+        if self.tables.dcfr {
+            return self.run_dcfr_gadget(hero, vg, optout, villain_seat, iters);
         }
         let h = self.board.h;
         let mut g = self
@@ -532,6 +594,60 @@ impl RiverCfr {
                 g[2 * i + 1] = if t > 0.0 { t } else { 0.0 };
             }
         }
+        self.tables.g_regret = Some(g);
+        Ok(())
+    }
+
+    fn run_dcfr_gadget(
+        &mut self,
+        hero: &[f64],
+        vg: &[f64],
+        optout: &[f64],
+        villain_seat: u8,
+        iters: u64,
+    ) -> Result<(), String> {
+        let h = self.board.h;
+        let mut g = self
+            .tables
+            .g_regret
+            .take()
+            .unwrap_or_else(|| vec![0.0; 2 * h]);
+        for _ in 0..iters {
+            self.tables.iter += 1;
+            self.tables.t_weight = (self.tables.iter as f64).powi(2);
+            let t = (self.tables.iter as f64).powf(1.5);
+            for seat in 0..2 {
+                let mut follow = vec![0.0; h];
+                let mut term = vec![0.0; h];
+                let mut villain = vec![0.0; h];
+                for i in 0..h {
+                    let f = g[2 * i].max(0.0);
+                    let q = g[2 * i + 1].max(0.0);
+                    let sum = f + q;
+                    follow[i] = if sum > EPS { f / sum } else { 0.5 };
+                    term[i] = if sum > EPS { q / sum } else { 0.5 };
+                    villain[i] = vg[i] * follow[i];
+                }
+                self.tables.updating = Some(seat);
+                let values = if villain_seat == 0 {
+                    self.root(&villain, hero).0
+                } else {
+                    self.root(hero, &villain).1
+                };
+                self.discount_player(seat);
+                if seat == villain_seat {
+                    for i in 0..h {
+                        let value = follow[i] * values[i] + term[i] * optout[i];
+                        g[2 * i] += values[i] - value;
+                        g[2 * i + 1] += optout[i] - value;
+                    }
+                    for r in &mut g {
+                        *r *= if *r >= 0.0 { t / (t + 1.0) } else { 0.5 };
+                    }
+                }
+            }
+        }
+        self.tables.updating = None;
         self.tables.g_regret = Some(g);
         Ok(())
     }
