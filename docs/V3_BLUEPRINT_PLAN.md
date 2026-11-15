@@ -600,7 +600,7 @@ play measured; BR is not used to pick it).
 | V3.12 | Negative-regret pruning arm (Rust trainer), on the base arm's config | ~1 week + training | strategy-shape probe clean; BUG-027 replay; H2H vs the base arm and vs the human model ≥ base |
 | V3.13 | Offline data-biased-response (DBR) blueprint against the population model | 1–2 weeks, after V3.10 | BR cost vs a held-out human-model gain, swept over P_max |
 | V3.14 | Final pick among base / pruning / DBR blueprints; hardening, including deferred V3.7 latency and V3.8 statistical validation (below) | — | the gates, re-run on the final candidates |
-| V3.15 | Measure what forgetting earlier streets costs (see "V3.15 — street history"); if it is large, a history-token arm joins V3.14's pick (or v4) | minutes to measure; an arm is a retrain | range divergence across the histories that share a key |
+| V3.15 | ✅ measured 2026-11-16: flop fine, turn not (a quarter of turn-start hand mass is off by more than 5 equity points); a previous-street-aggressor token halves it. Measure what forgetting earlier streets costs (see "V3.15 — street history"); if it is large, a history-token arm joins V3.14's pick (or v4) | minutes to measure; an arm is a retrain | range divergence across the histories that share a key |
 
 The V3.6 serving work covered (all done; see "V3.6 — done" below):
 - spr5 keys, threaded through `GameSession`, the range tracker's `_action_matrix`,
@@ -626,7 +626,7 @@ The V3.6 serving work covered (all done; see "V3.6 — done" below):
 - the remaining coin-flip fallbacks (e.g. an untrained faced jam) replaced by the
   equity-vs-belief guard.
 
-### V3.15 — street history (to measure; added 2026-11-15)
+### V3.15 — street history (measured 2026-11-16; added 2026-11-15)
 
 Postflop keys carry only the current street's betting (`make_info_set_key`'s
 `bet_pattern`); earlier streets survive only through the SPR bucket (how big the pot got,
@@ -643,6 +643,50 @@ Libratus and Pluribus, as published, keep the full betting history and abstract 
 - **If large:** a small history token (preflop pot type srp/3bp/4bp plus the previous
   street's last aggressor, ~6× postflop keys) as a training arm judged like A and C;
   full action history is a v4 question.
+
+**Measured 2026-11-16 (C300, 48 boards, `scripts/measure_street_history.py`):**
+
+The script walks C300's public betting tree on each board, carrying both players'
+per-hand reach under the blueprint. At the first decision of the flop and the turn it
+groups the earlier-street lines that share a key. For the player deciding at the key, it
+then compares each hand's equity against the line's real opponent range with its equity
+against the range the key pools for that hand's bucket. Each line's weight in that pool
+is its joint reach, which is what training sees. Turn equities are exact over the river;
+flop equities use 40 sampled runouts. 0.18% of line mass is pruned.
+
+| Street start | Key | Keys/board | Mean equity error (ip / oop) | Hand mass off by > 5 points |
+|---|---|---|---|---|
+| flop | street only (reference) | 1 | 4.45 / 2.36 | 34.8 / 12.2% |
+| flop | **today: street + SPR** | 5 | 1.54 / 1.38 | 6.5 / 5.4% |
+| flop | + pot type | 9 | 1.24 / 1.23 | 4.5 / 4.1% |
+| flop | + previous street's last aggressor | 9 | 1.02 / 1.06 | 2.2 / 2.3% |
+| flop | + both | 17 | 0.89 / 0.90 | 1.5 / 1.4% |
+| turn | street only (reference) | 1 | 7.10 / 5.63 | 55.4 / 40.5% |
+| turn | **today: street + SPR** | 5 | 3.98 / 3.51 | 28.2 / 23.9% |
+| turn | + pot type | 12 | 3.55 / 3.23 | 23.9 / 21.6% |
+| turn | + previous street's last aggressor | 13 | 2.60 / 2.58 | 15.6 / 15.7% |
+| turn | + both | 27 | 2.19 / 2.35 | 12.3 / 13.9% |
+
+- **The flop is fine.** SPR already carries most of the preflop line: 1.5 points mean
+  error, about 6% of hand mass off by more than 5.
+- **The turn is not.** A quarter of the turn-start hand mass has its equity mis-stated by
+  more than 5 points, because a check-raised flop and a bet-called flop share turn keys.
+- **Most of the fix is one 3-value token:** who made the previous street's last
+  aggression (none/ip/oop). It cuts the turn's >5-point share from 28/24% to 16/16% for
+  ~2.6× the street-start key groups. Pot type adds little on top (12–14%) and doubles
+  the keys again.
+- **Caveats:**
+  - Equity error is not EV loss: the key's strategy is a compromise, and this measures
+    how far apart the merged situations are, not what the compromise costs.
+  - Ranges are the blueprint's own self-play lines, not human lines.
+  - Measured at street starts only; within a street the key keeps the street's betting.
+  - The river is not measured. The live bot solves the river from the range tracker,
+    which keeps full history.
+- **Next (a retrain, not started):** an arm `spr5+aggr` adds the previous-street
+  aggressor to flop and turn keys. That is at most 3× the postflop info sets (C300:
+  414k → ≤1.2M), so it probably needs more than 300M iterations. Judge it like A vs C:
+  strategy-shape probe, H2H vs C300 and vs the human model, LBR. It is a key-format
+  change, so it joins V3.14's final pick or moves to v4.
 
 ### V3.11 — done 2026-11-15
 
