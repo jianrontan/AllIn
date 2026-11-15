@@ -596,7 +596,7 @@ play measured; BR is not used to pick it).
 | V3.8 | Candidate anchor implemented, OFF by default; evaluator/range bugs fixed; powered statistical gates deferred to final hardening by user decision (2026-11-13) | days | LBR at 0.1×/0.25× pot falls (z > 2); other fractions and H2H vs v2 within \|t\| < 2 |
 | V3.9 | F / F_EXTENDED implemented; local structure/parity/safety checks pass; sustained solver-on H2H and latency gates pending | days, after V3.7 | p95 ≤ 5 s on Rust; H2H with the solver on ≥ menu A (\|t\| < 2 or better) |
 | V3.10 | ✅ 2026-11-15 (see "V3.10 — done"): base arm **C at 300M**. **Pick the base arm** (A or C, from V3.5b's results and V3.6's memory numbers; V3.10–V3.13 build on it), then re-fit the opponent models on its v3 keys, stamped with `abstraction_id` (moved here from Phase 7: V3.11 and V3.13 need it) | ~1 day | the model guard compares abstraction ids; exploit no longer self-disables on the v3 blueprint |
-| V3.11 | ✅ 2026-11-15 (see "V3.11 — done"): humans jam wider than assumed, so the read mostly calls more. Gate 1 passes after the review fixes; gate 2's rerun after them is pending. Pooled facing-jam population read + logged-spot evaluator (targets BUG-027) | days | logged-spot EV(call) − EV(fold) improves over the current guard; no regression vs the human model |
+| V3.11 | ✅ 2026-11-15 (see "V3.11 — done"): humans jam wider than assumed, so the read mostly calls more. Both gates pass after the review fixes (gate 1 +7.6 / +6.1 chips/spot; gate 2 +33.3 ± 4.8 mbb/hand). Pooled facing-jam population read + logged-spot evaluator (targets BUG-027) | days | logged-spot EV(call) − EV(fold) improves over the current guard; no regression vs the human model |
 | V3.12 | Negative-regret pruning arm (Rust trainer), on the base arm's config | ~1 week + training | strategy-shape probe clean; BUG-027 replay; H2H vs the base arm and vs the human model ≥ base |
 | V3.13 | Offline data-biased-response (DBR) blueprint against the population model | 1–2 weeks, after V3.10 | BR cost vs a held-out human-model gain, swept over P_max |
 | V3.14 | Final pick among base / pruning / DBR blueprints; hardening, including deferred V3.7 latency and V3.8 statistical validation (below) | — | the gates, re-run on the final candidates |
@@ -766,14 +766,14 @@ always-fold = 0:
 - **Sensitivity** (before the fixes): p_max 1.0 → +7.6; conf 0.95 → +8.0; alpha 40 → +8.3.
   The defaults stay.
 
-**Gate 2: no regression against the human model. ✔ before the review fixes; rerun
-pending** (the bin-equity fix changes the read's decisions; 4 cores × ~16 min).
-`h2h_eval.py --jam-read-a`
+**Gate 2: no regression against the human model. ✔, rerun after the review fixes
+(2026-11-16).** `h2h_eval.py --jam-read-a`
 re-scores C300's faced flop/turn jams against the human population model. Calling a jam
 that commits the stack ends the decisions, so the counterfactual is exact per spot, with
 no second run or pairing. Over 4 seeds × 40k hands:
-- **The read gains +32.8 ± 4.7 mbb/hand.** Every seed is positive (+27, +40, +29, +35),
-  and it changed 1,963 of 4,586 spots.
+- **The read gains +33.3 ± 4.8 mbb/hand after the fixes.** Every seed is positive
+  (+26.6, +43.6, +28.7, +34.1), and it changed 1,965 of 4,586 spots. Before the fixes it
+  was +32.8 ± 4.7 (1,963 changed): the bin-equity fix moved two decisions.
 - **C300 vs the model:** +618 ± 45.
 - **Caveats:** the human model comes from the same export as the read, so this is not
   independent evidence. The match has no tracker, so the read runs unblended (p_max
