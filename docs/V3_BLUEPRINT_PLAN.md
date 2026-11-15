@@ -1,4 +1,4 @@
-# v3 blueprint — plan and progress log (V3.0–V3.6 done; V3.7–V3.14 pending, base-arm pick before V3.10; see Steps)
+# v3 blueprint — plan and progress log (V3.0–V3.6 and V3.10 done, base arm C300; V3.7–V3.9 built, gates deferred; V3.11–V3.14 pending; see Steps)
 
 Branch `rust-core`. Written 2026-11-09 after the BUG-027 investigation.
 Follows [PHASE6_ABSTRACTION_PLAN.md](PHASE6_ABSTRACTION_PLAN.md) (SPR buckets built,
@@ -595,7 +595,7 @@ play measured; BR is not used to pick it).
 | V3.7 | Rust serving adapter, Docker wheel and DCFR experiment implemented; correctness checks pass; latency gate deferred to V3.14 / Phase 7 by user decision (2026-11-13) | ~1 week | Rust == Python solve on fixed spots; p95 latency ≤ 5 s on a 0.25 vCPU profile; gadget still ≤ blueprint |
 | V3.8 | Candidate anchor implemented, OFF by default; evaluator/range bugs fixed; powered statistical gates deferred to final hardening by user decision (2026-11-13) | days | LBR at 0.1×/0.25× pot falls (z > 2); other fractions and H2H vs v2 within \|t\| < 2 |
 | V3.9 | F / F_EXTENDED implemented; local structure/parity/safety checks pass; sustained solver-on H2H and latency gates pending | days, after V3.7 | p95 ≤ 5 s on Rust; H2H with the solver on ≥ menu A (\|t\| < 2 or better) |
-| V3.10 | **Pick the base arm** (A or C, from V3.5b's results and V3.6's memory numbers; V3.10–V3.13 build on it), then re-fit the opponent models on its v3 keys, stamped with `abstraction_id` (moved here from Phase 7: V3.11 and V3.13 need it) | ~1 day | the model guard compares abstraction ids; exploit no longer self-disables on the v3 blueprint |
+| V3.10 | ✅ 2026-11-15 (see "V3.10 — done"): base arm **C at 300M**. **Pick the base arm** (A or C, from V3.5b's results and V3.6's memory numbers; V3.10–V3.13 build on it), then re-fit the opponent models on its v3 keys, stamped with `abstraction_id` (moved here from Phase 7: V3.11 and V3.13 need it) | ~1 day | the model guard compares abstraction ids; exploit no longer self-disables on the v3 blueprint |
 | V3.11 | Pooled facing-jam population read + logged-spot evaluator (targets BUG-027) | days | logged-spot EV(call) − EV(fold) improves over the current guard; no regression vs the human model |
 | V3.12 | Negative-regret pruning arm (Rust trainer), on the base arm's config | ~1 week + training | strategy-shape probe clean; BUG-027 replay; H2H vs the base arm and vs the human model ≥ base |
 | V3.13 | Offline data-biased-response (DBR) blueprint against the population model | 1–2 weeks, after V3.10 | BR cost vs a held-out human-model gain, swept over P_max |
@@ -624,6 +624,55 @@ The V3.6 serving work covered (all done; see "V3.6 — done" below):
      blueprint: count it and fall back explicitly;
 - the remaining coin-flip fallbacks (e.g. an untrained faced jam) replaced by the
   equity-vs-belief guard.
+
+### V3.10 — done 2026-11-15
+
+**Base arm: C at 300M** (C300, `blueprint_par_cappedpj_spr5_v3_rs_20261110_013712_8d0598_snaps/
+snap_300000000.db`), picked 2026-11-15. C300 beats A300 head-to-head (+79 ± 30 mbb/hand) and
+beats v2 by more (+381 vs +280); LBR is level within noise (599 vs 710, each ±300). It costs
+~12 MB more to serve (V3.6). The BR gap that favoured A (+353) was not used: the repo's BR
+lets the exploiter see the whole board at every street (verified 2026-11-15), so it is
+neither exploitability nor a lower bound. V3.11–V3.13 build on C300.
+
+**Stamped models.** `opponent_model.blueprint_model_stamp(db)` is what a model's keys
+depend on: the key format, the abstraction id (plus its name, for reading) and `cap_jam`
+(a preflop 5-bet into a 4-bet is the trained jam). Every model file (per-player counts,
+built model, population) carries it. `HumanModel` and `build_opponent_model.py` refuse a
+file whose stamp differs from the blueprint's (`check_model_stamp`). An unstamped file is
+the legacy v2 setup (v2 keys, root abstraction, no cap jam), so the v2 models load
+unchanged. This replaces the old check that guessed bucket counts from the blueprint's
+keys (and its full key scan at load).
+
+**Refit.** `fit_opponent_models.py --db <blueprint>` re-derives keys from the raw recaps
+with that blueprint's key format, card abstraction and cap jam. Without `--db` it fits
+the v2 setup, so the CI refit workflow is unchanged. `replay_hand(..., cap_jam=True)`
+records any preflop 5-bet into a 4-bet, by either player, as `a`, as `GameSession` does
+live. Live last-N refits replay the same way (`HumanModel.cap_jam`).
+
+| Fit on 6,664 recaps (15 players) | v2 keys | C300 keys |
+|---|---|---|
+| human decisions | 17,534 | 17,534 |
+| on keys the blueprint trained | 100% | 100% |
+| river buckets | 0–9 | 0–19 |
+| flop/turn keys with an SPR bucket | — | all (r3 the most common) |
+| human 5-bets into a 4-bet recorded as `a` | 16 of 104 | 104 of 104 |
+
+The C300 models are in `backend/bot/analysis/opponent_models/c300/` (git-ignored; rebuild
+with `fit_opponent_models.py --db <C300> --out-dir ...` then `build_opponent_model.py
+--dir ... --db <C300>`).
+
+**API check.**
+- C300, `ALLIN_EXPLOIT=1`, C300 models: healthz reports 15 player models. A 12-hand smoke
+  played 34 bot decisions in `exploit_tilt` mode, and all 43 bot keys were trained.
+- C300 with the old v2 models: refused with a stamp mismatch, so exploitation stays off.
+- v2 with the old models: unchanged (15 player models, the Hand Explorer answers).
+- Full backend suite: 605 passed, 1 skipped.
+
+**Not done here.**
+- The offline exploit scoreboard (`measure_exploit.py`) and the alpha tuning were not
+  re-run on v3 keys; alpha 10 / 160 is carried over.
+- The CI population refit still fits v2. Serving v3 in prod (Phase 7) needs that workflow
+  to pass `--db` with the served blueprint.
 
 ### V3.6 — done 2026-11-13
 
@@ -1147,7 +1196,7 @@ Decided 2026-11-13: the base-arm pick waits until V3.10, the first step that nee
 it. V3.6–V3.9 are built and tested for both arms, and V3.6 measures C's extra serving
 memory first.
 
+Decided 2026-11-15: the base arm is C at 300M (see "V3.10 — done").
+
 Still open:
-- the base arm (A or C) and its snapshot, at V3.10: V3.5b recommends C at 300M (see
-  "V3.5 re-run on the fixed harness"); V3.6 found C costs ~12 MB more to serve than A;
 - Phase 7 deployment, which needs its own sign-off.

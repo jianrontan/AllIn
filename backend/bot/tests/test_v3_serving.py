@@ -168,12 +168,126 @@ def test_opponent_model_levels_parse_spr5_keys():
         ['pf_3_7_ip_flop_r2_km']
 
 
-def test_human_model_refuses_a_v3_blueprint(tmp_path):
-    from src.exploitation.opponent_model import HumanModel
-    db = BlueprintDB(str(tmp_path / 'bp.db'))
+# ------------------------------------------- V3.10: opponent models on v3 keys
+
+def _five_bet_rec(fifth='raise_large', then=None):
+    """The human (seat 1, BB) 5-bets into the bot's 4-bet; `then` = the next logged actions."""
+    log = [{'player': 0, 'street': 'preflop', 'action': 'bet_small', 'chips': 3.0},
+           {'player': 1, 'street': 'preflop', 'action': 'raise_medium', 'chips': 8.0},
+           {'player': 0, 'street': 'preflop', 'action': 'raise_medium', 'chips': 20.0},
+           {'player': 1, 'street': 'preflop', 'action': fifth, 'chips': 60.0}]
+    return {'humanSeat': 1, 'humanHole': ['Ah', 'Ad'], 'community': [],
+            'actionLog': log + (then or [])}
+
+
+def test_replay_records_a_preflop_five_bet_as_the_cap_jam():
+    from src.exploitation.replay import replay_hand, _CAP_AGGRESSIONS
+    from src.abstractions.card_abstractions import shared_card_abstraction
+    from src.game import game_session
+    assert _CAP_AGGRESSIONS == game_session._TRAINED_AGGRESSIONS
+    ca = shared_card_abstraction()
+    for fifth in ('raise_large', 'raise_small', 'raise_custom_150', 'allin'):
+        recs = []
+        replay_hand(_five_bet_rec(fifth), ca, defaultdict(Counter), recs, cap_jam=True)
+        assert recs[-1] == (recs[-1][0], 'a') and recs[-1][0].endswith('_oop_smm'), (fifth, recs)
+    # Without the cap jam (a v2 blueprint) the sized 5-bet keeps its own char.
+    recs = []
+    replay_hand(_five_bet_rec(), ca, defaultdict(Counter), recs, cap_jam=False)
+    assert recs[-1][1] == 'l'
+    # After the jam the pattern carries 'a', and nothing later is treated as the cap.
+    rec = _five_bet_rec(then=[
+        {'player': 0, 'street': 'preflop', 'action': 'raise_large', 'chips': 100.0},
+        {'player': 1, 'street': 'preflop', 'action': 'raise_small', 'chips': 50.0}])
+    recs = []
+    replay_hand(rec, ca, defaultdict(Counter), recs, cap_jam=True)
+    assert [c for _, c in recs] == ['m', 'a', 's'] and recs[-1][0].endswith('_oop_smmal'), recs
+    # A 4-bet that is already all-in is not the cap.
+    rec = _five_bet_rec()
+    rec['actionLog'][2]['action'] = 'allin'
+    recs = []
+    replay_hand(rec, ca, defaultdict(Counter), recs, cap_jam=True)
+    assert recs[-1][1] == 'l'
+
+
+def _v3_blueprint(tmp_path, name='bp.db'):
+    db = BlueprintDB(str(tmp_path / name))
     db.set_metadata('key_format', 'spr5')
-    with pytest.raises(ValueError, match='HumanModel'):
-        HumanModel(str(tmp_path), db)
+    db.set_metadata('menu_mode', 'capped_pj')
+    for k, v in A.stamp_for(A.abstraction_dir('v3')).items():
+        db.set_metadata(k, v)
+    return db
+
+
+def _write_models(d, stamp):
+    import json
+    os.makedirs(d, exist_ok=True)
+    body = {'playerId': 'p1', 'handle': 'anon', 'hands': 200,
+            'levels': {'so': {}, 'sf': {}, 'full': {}}}
+    pop = {'counts': {'pf_168_oop_smm': {'a': 3.0, 'c': 1.0}}}
+    if stamp is not None:
+        body['stamp'] = pop['stamp'] = stamp
+    with open(os.path.join(d, 'model_built_p1.json'), 'w') as f:
+        json.dump(body, f)
+    with open(os.path.join(d, 'model_population.json'), 'w') as f:
+        json.dump(pop, f)
+
+
+def test_model_stamp_follows_the_blueprint(tmp_path):
+    from src.exploitation.opponent_model import blueprint_model_stamp
+    db = _v3_blueprint(tmp_path)
+    s = blueprint_model_stamp(db)
+    assert (s['key_format'], s['abstraction'], s['cap_jam']) == ('spr5', 'v3', True)
+    assert s['abstraction_id'] == A.abstraction_id(A.abstraction_dir('v3'))
+    db.close()
+    legacy = blueprint_model_stamp(None)
+    assert (legacy['key_format'], legacy['abstraction'], legacy['cap_jam']) == ('v2', None, False)
+    assert legacy['abstraction_id'] == A.LEGACY_ABSTRACTION_ID
+
+
+def test_human_model_needs_models_stamped_for_the_blueprint(tmp_path):
+    """V3.10: the guard compares stamps. Legacy (unstamped, v2) models are refused on a v3
+    blueprint; models fit for it load and are served on its keys."""
+    from src.exploitation.opponent_model import HumanModel, blueprint_model_stamp
+    db = _v3_blueprint(tmp_path)
+    _write_models(str(tmp_path / 'legacy'), None)
+    with pytest.raises(ValueError, match='stamp mismatch'):
+        HumanModel(str(tmp_path / 'legacy'), db)
+    other = dict(blueprint_model_stamp(db), cap_jam=False)
+    _write_models(str(tmp_path / 'nojam'), other)
+    with pytest.raises(ValueError, match='cap_jam'):
+        HumanModel(str(tmp_path / 'nojam'), db)
+    _write_models(str(tmp_path / 'v3'), blueprint_model_stamp(db))
+    hm = HumanModel(str(tmp_path / 'v3'), db)
+    assert (hm.key_format, hm.cap_jam) == ('spr5', True)
+    assert hm.has_player('p1')
+    # The population counts are read on the blueprint's own keys (no blueprint prior here).
+    est = hm.chardist_for('p1')('pf_168_oop_smm')
+    assert est['a'] > est['c'], est
+    db.close()
+
+
+def test_human_model_still_loads_legacy_models_on_a_v2_blueprint(tmp_path):
+    from src.exploitation.opponent_model import HumanModel, blueprint_model_stamp
+    db = BlueprintDB(str(tmp_path / 'v2.db'))
+    db.set_metadata('menu_mode', 'capped')
+    _write_models(str(tmp_path / 'legacy'), None)
+    hm = HumanModel(str(tmp_path / 'legacy'), db)
+    assert (hm.key_format, hm.cap_jam) == ('v2', False)
+    _write_models(str(tmp_path / 'v2'), blueprint_model_stamp(None))   # the CI refit's stamp
+    HumanModel(str(tmp_path / 'v2'), db)
+    db.close()
+
+
+def test_live_last_n_replays_the_cap_jam(tmp_path):
+    from src.exploitation.opponent_model import HumanModel, blueprint_model_stamp
+    from src.abstractions.card_abstractions import shared_card_abstraction
+    db = _v3_blueprint(tmp_path)
+    _write_models(str(tmp_path / 'v3'), blueprint_model_stamp(db))
+    hm = HumanModel(str(tmp_path / 'v3'), db)
+    cd = hm.chardist_from_recent([_five_bet_rec()] * 40, shared_card_abstraction(), alpha=1.0,
+                                 min_recorded=1)
+    est = cd('pf_168_oop_smm')
+    assert est.get('a', 0) > 0.9 and est.get('l', 0) < 0.05, est
     db.close()
 
 

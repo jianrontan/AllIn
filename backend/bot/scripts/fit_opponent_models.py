@@ -18,9 +18,15 @@ Keys are reconstructed exactly as the trainer builds them:
   * postflop board for a street = community[:BOARD_COUNT[street]] (NOT the full revealed
     runout -- an all-in flop decision must bucket on 3 cards, not the 5 that got dealt out).
 
+Keys and buckets follow the blueprint the models are for (`--db`): its key format (spr5 keys
+carry the SPR bucket), its card abstraction, and its menu (capped_pj records a preflop 5-bet
+into a 4-bet as the trained jam). Every output file is stamped with these
+(`opponent_model.blueprint_model_stamp`) and HumanModel refuses a model whose stamp differs from
+the served blueprint's. Without `--db`: the legacy v2 setup (v2 keys, root abstraction).
+
 Run from backend/bot (set a small river-board cache to bound RAM -- the 125MB turn table loads):
   ALLIN_RIVER_CACHE_BOARDS=20000 python scripts/fit_opponent_models.py \
-      --in analysis/opponent_models/hands_export.jsonl
+      --in analysis/opponent_models/hands_export.jsonl [--db <blueprint.db> --out-dir <dir>]
 """
 import argparse
 import json
@@ -30,10 +36,11 @@ from collections import Counter, defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.abstractions.card_abstractions import CardAbstraction       # noqa: E402
-from src.cfr.keys import make_info_set_key, action_char, BOARD_COUNT  # noqa: E402
-from src.game.cards import to_engine                                 # noqa: E402
-from src.exploitation.replay import replay_hand, _street_idx         # noqa: E402  (shared impl)
+from src.abstractions.card_abstractions import shared_card_abstraction  # noqa: E402
+from src.abstractions.abstraction_set import abstraction_dir          # noqa: E402
+from src.storage.blueprint_db import BlueprintDB                      # noqa: E402
+from src.exploitation.opponent_model import blueprint_model_stamp     # noqa: E402
+from src.exploitation.replay import replay_hand                       # noqa: E402  (shared impl)
 
 _STREET_NAMES = ('preflop', 'flop', 'turn', 'river')
 
@@ -56,15 +63,27 @@ def main():
     ap.add_argument('--out-dir', default='analysis/opponent_models')
     ap.add_argument('--thresh', type=int, default=5,
                     help='visits-per-key threshold for the "rich keys" coverage column')
-    ap.add_argument('--records-out', default='analysis/opponent_models/decisions.jsonl',
+    ap.add_argument('--db', default=None,
+                    help='the blueprint the models are for: keys, buckets and the cap jam follow '
+                         'it and every output is stamped with it (default: legacy v2 setup)')
+    ap.add_argument('--records-out', default=None,
                     help='also dump per-decision (player, hand, key, char) records IN ORDER, '
-                         'for the hand-boundary-split alpha tuner')
+                         'for the hand-boundary-split alpha tuner (default: '
+                         '<out-dir>/decisions.jsonl)')
     ap.add_argument('--pop-cap', type=float, default=15.0,
                     help="cap each player's contribution to a population-prior key at this many "
                          "effective visits (defangs the whale AND down-weights 1-shot noise)")
     args = ap.parse_args()
+    if args.records_out is None:
+        args.records_out = os.path.join(args.out_dir, 'decisions.jsonl')
 
-    ca = CardAbstraction()
+    db = BlueprintDB(args.db, read_only=True) if args.db else None
+    stamp = blueprint_model_stamp(db)                 # verifies the abstraction dir too
+    if db is not None:
+        db.close()
+    ca = shared_card_abstraction(abstraction_dir(stamp['abstraction']))
+    print(f"stamp: key_format={stamp['key_format']} abstraction={stamp['abstraction'] or 'root'} "
+          f"({stamp['abstraction_id'][:12]}) cap_jam={stamp['cap_jam']}")
     per_player = defaultdict(lambda: defaultdict(Counter))   # pid -> key -> Counter(char)
     population = defaultdict(Counter)                        # key -> Counter(char)
     meta = {}                                               # pid -> {handle, hands, recorded, skipped}
@@ -82,7 +101,8 @@ def main():
             if pid is None:
                 continue
             hand_recs = []
-            rec_n, skip_n = replay_hand(rec, ca, per_player[pid], hand_recs)
+            rec_n, skip_n = replay_hand(rec, ca, per_player[pid], hand_recs,
+                                        key_format=stamp['key_format'], cap_jam=stamp['cap_jam'])
             for k, ch in hand_recs:                 # 'h' = a unique hand id so the tuner can
                 rec_fh.write(json.dumps({'p': pid, 'h': hidx, 'k': k, 'a': ch},  # split on HAND
                                         separators=(',', ':')) + '\n')           # boundaries
@@ -111,11 +131,11 @@ def main():
     # Per-player count tables (one file each, keyed by playerId).
     for pid, counts in per_player.items():
         out = {'playerId': pid, 'handle': meta[pid]['handle'], 'hands': meta[pid]['hands'],
-               'counts': {k: dict(c) for k, c in counts.items()}}
+               'stamp': stamp, 'counts': {k: dict(c) for k, c in counts.items()}}
         with open(os.path.join(args.out_dir, f'model_{pid}.json'), 'w', encoding='utf-8') as f:
             json.dump(out, f, separators=(',', ':'))
     with open(os.path.join(args.out_dir, 'model_population.json'), 'w', encoding='utf-8') as f:
-        json.dump({'counts': {k: {c: round(v, 4) for c, v in d.items()}
+        json.dump({'stamp': stamp, 'counts': {k: {c: round(v, 4) for c, v in d.items()}
                               for k, d in population.items()}}, f, separators=(',', ':'))
 
     # Coverage report -- the REAL answer to "is the data enough", at the key level.

@@ -26,10 +26,10 @@ import sys
 from collections import Counter, defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.abstractions.postflop_features import load_centroids      # noqa: E402
 from src.storage.blueprint_db import BlueprintDB                   # noqa: E402
 from src.exploitation.opponent_model import (                      # noqa: E402  the SHARED estimator
-    _levels, _eb, _bp_chardist, estimate, _player_levels)          #   (one impl, used by serving too)
+    _levels, _eb, _bp_chardist, estimate, _player_levels,          #   (one impl, used by serving too)
+    blueprint_model_stamp, check_model_stamp)
 
 _CHAR_NAME = {'f': 'fold', 'c': 'call', 'k': 'check', 's': 'bet/raise-small',
               'm': 'bet/raise-med', 'l': 'bet/raise-large', 'x': 'open-xlarge',
@@ -39,40 +39,6 @@ _CHAR_NAME = {'f': 'fold', 'c': 'call', 'k': 'check', 's': 'bet/raise-small',
 def build_player(level_counts, key, bp, alpha):
     """Serving estimate: fetch the blueprint prior for `key`, then run the shared estimator."""
     return estimate(level_counts, key, _bp_chardist(bp, key), alpha)
-
-
-def check_abstraction(bp):
-    """Guard the silent strength-bucket misalignment (audit C1): the fitted model's keys are
-    bucketed by the LOCAL centroids, but the prior comes from --db. If --db was trained under a
-    DIFFERENT-K abstraction, the strength digit means different things in the two and lookups are
-    silently wrong. We can't read the DB's K directly (not stamped), so we infer it from the
-    largest strength index actually seen in the DB's keys (== K-1 once every bucket is used over
-    a long run) and compare to the centroid K per street."""
-    ck = {s: len(load_centroids(s)[0]) for s in ('flop', 'turn', 'river')}
-    obs = {'flop': -1, 'turn': -1, 'river': -1}
-    for (key,) in bp.conn.execute("SELECT key FROM info_sets"):
-        p = key.split('_')
-        if len(p) >= 5 and p[4] in obs:                 # pf_C_S_pos_street_pattern
-            try:
-                obs[p[4]] = max(obs[p[4]], int(p[2]))
-            except ValueError:
-                pass
-    print("  abstraction check (centroid K vs blueprint observed strength):")
-    fatal = []
-    for s in ('flop', 'turn', 'river'):
-        db_k = obs[s] + 1
-        gap = ck[s] - db_k
-        tag = ('OK' if gap == 0 else
-               'minor (unused top bucket?)' if gap == 1 else 'MISMATCH')
-        print(f"    {s:<6} centroids K={ck[s]:>3}  blueprint max-strength+1={db_k:>3}   {tag}")
-        if gap < 0 or gap >= 2:                          # DB finer, or centroids >=2 finer than DB
-            fatal.append(s)
-    if fatal:
-        raise SystemExit(
-            f"\nABSTRACTION MISMATCH on {fatal}: the local postflop centroids do NOT match the "
-            f"--db blueprint's bucketing -> the model's strength buckets would be keyed to a "
-            f"different quantization than the blueprint (silently wrong lookups). Point --db at "
-            f"the blueprint trained under THESE centroids, or re-bake/re-fit. Aborting.")
 
 
 def main():
@@ -90,7 +56,10 @@ def main():
     args = ap.parse_args()
 
     bp = BlueprintDB(args.db, read_only=True)
-    check_abstraction(bp)                              # audit C1: fail fast on a wrong --db
+    # Fail fast on a wrong --db: every count file must have been fit for this blueprint (same
+    # key format, abstraction id and cap jam), else the prior is looked up on keys that mean
+    # something else. (Replaces the pre-V3.10 inferred-bucket-count check.)
+    stamp = blueprint_model_stamp(bp)
     files = sorted(glob.glob(os.path.join(args.dir, 'model_*.json')))
     players = []
     for f in files:
@@ -99,6 +68,7 @@ def main():
             continue
         with open(f, encoding='utf-8') as fh:
             m = json.load(fh)
+        check_model_stamp(m, stamp, f)
         players.append(m)
     players.sort(key=lambda m: m['hands'], reverse=True)
 
@@ -108,6 +78,7 @@ def main():
         # 'hands' lets the serve-time min-hands gate (HumanModel) skip thin per-player models;
         # alpha is NOT stored -- serving sets it from env (ALLIN_EXPLOIT_ALPHA), one knob for all.
         out = {'playerId': m['playerId'], 'handle': m['handle'], 'hands': m['hands'],
+               'stamp': stamp,
                'levels': {r: {k: dict(c) for k, c in tbl.items()} for r, tbl in lv.items()}}
         with open(os.path.join(args.dir, f"model_built_{m['playerId']}.json"), 'w',
                   encoding='utf-8') as fh:

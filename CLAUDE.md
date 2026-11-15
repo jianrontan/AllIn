@@ -132,13 +132,11 @@ python tests/run_evaluation.py --db analysis/blueprints/blueprint_20260518_16090
 ### Branch rust-core (Rust core + v3 blueprint work; not on main yet)
 Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN.md`,
 `docs/V3_BLUEPRINT_PLAN.md` — read the relevant one first.
-- **Status (2026-11-13):** V3.0–V3.5b done (arms A and C trained to 300M and evaluated; C300
-  recommended). Remaining v3 scope, in `V3_BLUEPRINT_PLAN.md` "Steps": V3.6 serving path
-  (built for both arms), V3.7 serve the Rust river solver (DCFR, alternating updates), V3.8
-  sub-minimum bet anchor, V3.9 river menu "F", V3.10 pick the base arm then opponent models
-  on v3 keys, V3.11 pooled facing-jam read, V3.12
-  negative-regret pruning arm, V3.13 DBR blueprint, V3.14 final pick; then Phase 7 deploy
-  (separate sign-off).
+- **Status (2026-11-15):** V3.0–V3.6 done; V3.7–V3.9 built with their gates deferred to
+  V3.14; V3.10 done: the base arm is **C at 300M** and the opponent models are re-fit on its
+  keys. Remaining v3 scope, in `V3_BLUEPRINT_PLAN.md` "Steps": V3.11 pooled facing-jam read,
+  V3.12 negative-regret pruning arm, V3.13 DBR blueprint, V3.14 final pick; then Phase 7
+  deploy (separate sign-off).
 - **Environment:** a uv `.venv` (Python 3.12) at the worktree root; run Python as
   `../../.venv/bin/python` from `backend/bot/`. Rust is Homebrew rustup (keg-only):
   `env PATH=/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/usr/bin:/bin cargo test --release`
@@ -161,10 +159,15 @@ Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN
   `shared_card_abstraction(dir)` per process. `BlueprintStrategy`, the river solver, the API and
   auto-resolution accept stamped spr5 / `capped_pj` / named-abstraction blueprints. At the
   preflop cap a live 5-bet of any size is recorded as the trained jam `a`, and the bot plays
-  exactly fold/call/allin there. Still v2-only and failing closed: the PyPokerEngine `Player`,
-  `HumanModel` (exploit self-disables until the V3.10 refit) and the Hand Explorer
-  (`/api/strategy/from-hand` returns 501; Phase 7). `scripts/measure_serving_memory.py` reports
+  exactly fold/call/allin there. Still v2-only and failing closed: the PyPokerEngine `Player`
+  and the Hand Explorer (`/api/strategy/from-hand` returns 501; Phase 7). `scripts/measure_serving_memory.py` reports
   a blueprint's serving RSS.
+- **Opponent models on v3 keys (V3.10):** `fit_opponent_models.py --db <blueprint>` fits on
+  that blueprint's key format, card abstraction and cap jam (a preflop 5-bet into a 4-bet is
+  `a`), and stamps every model file (`opponent_model.blueprint_model_stamp`). `HumanModel`
+  refuses a model whose stamp differs from the served blueprint's (unstamped = the legacy v2
+  setup), so exploitation self-disables on a mismatch. C300's models:
+  `analysis/opponent_models/c300/` (git-ignored).
 - **Evaluation scripts** (`backend/bot/scripts/`): `h2h_eval.py` (AIVAT head-to-head; plays an
   untrained faced jam with prod's guard; `--db-b model` = the fitted human population model,
   `--model-dir`), `lbr_paired.py` (per-hand LBR for paired comparisons), `br_attr.py` (BR with

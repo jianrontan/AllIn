@@ -164,9 +164,8 @@ def _spr5_db(d):
 
 
 def test_readers_and_spr5_blueprints():
-    """Fail closed: v2-only readers (the opponent model until V3.10) must refuse an
-    spr5 blueprint instead of silently missing every flop/turn lookup; the serving
-    bot (V3.6) and the evaluation harness accept it."""
+    """The serving bot (V3.6), the opponent model (V3.10: it checks each model file's
+    stamp instead) and the evaluation harness accept an spr5 blueprint."""
     from src.storage.blueprint_db import BlueprintDB
     from src.game.bot_strategy import BlueprintStrategy
     from src.exploitation.opponent_model import HumanModel
@@ -177,8 +176,7 @@ def test_readers_and_spr5_blueprints():
         db = BlueprintDB(_spr5_db(d), read_only=True)
         assert db_key_format(db) == 'spr5'
         BlueprintStrategy(db)
-        with pytest.raises(ValueError, match='key_format'):
-            HumanModel(d, db)
+        assert HumanModel(d, db).key_format == 'spr5'      # no model files -> no stamps
         assert LBREvaluator(db, seed=1).key_format == 'spr5'
         assert BestResponseEvaluator(db, seed=1).key_format == 'spr5'
         assert require_key_format(db, ('v2', 'spr5'), 't') == 'spr5'

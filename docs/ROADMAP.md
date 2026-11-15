@@ -853,15 +853,16 @@ combination — so people can solve *real* H2H games — is filed as a post-Step
 ## v3 blueprint + Rust core (branch rust-core) 🚧
 
 Tracked in [V3_BLUEPRINT_PLAN.md](V3_BLUEPRINT_PLAN.md) (steps, results, gates) and
-[RUST_CORE_PLAN.md](RUST_CORE_PLAN.md) (the Rust trainer). Status 2026-11-12:
+[RUST_CORE_PLAN.md](RUST_CORE_PLAN.md) (the Rust trainer). Status 2026-11-15:
 - ✅ Rust trainer (~50k it/s on 12 cores), spr5 keys, the preflop 5-bet jam (`capped_pj`),
   versioned card abstractions; arms A (v2 cards) and C (v3 cards) trained to 300M. Both
   beat v2 by ~+200 mbb/hand head-to-head on the fixed harness.
 - ✅ V3.5b evaluation finished (C at 300M recommended; the pick waits until V3.10).
 - ✅ V3.6 serving path (both arms; 2026-11-13).
-- ⏳ V3.7 Rust river solver served → V3.8
-  sub-minimum bet anchor → V3.9 river menu "F" → V3.10 base-arm pick + opponent models on v3 keys →
-  V3.11 pooled facing-jam read → V3.12 pruning arm → V3.13 DBR blueprint → V3.14 final
+- ✅ V3.7–V3.9 built (Rust river solver, sub-minimum anchor, river menu "F"); their gates are
+  deferred to V3.14.
+- ✅ V3.10 (2026-11-15): base arm C at 300M; opponent models re-fit on its keys and stamped.
+- ⏳ V3.11 pooled facing-jam read → V3.12 pruning arm → V3.13 DBR blueprint → V3.14 final
   pick, then deployment (separate sign-off).
 
 ## References
