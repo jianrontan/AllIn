@@ -34,6 +34,7 @@ from ..abstractions.hand_evaluator import HandEvaluator
 from ..abstractions.card_abstractions import shared_card_abstraction
 from ..abstractions.sizing import POSTFLOP_BET_MULT
 from ..cfr.poker_game import make_custom_action
+from ..cfr.keys import spr_bucket
 from ..evaluation.showdown_kernel import build_board_arrays
 from .river_tree import build_river_tree, is_sized, sized_chips, DEFAULT_MENU
 from .river_cfr import RiverCFR  # noqa: F401  (re-exported convenience)
@@ -276,6 +277,9 @@ class RiverSubgameSolver(BlueprintStrategy):
         # edge clears this chip margin (avoid flipping on a knife-edge / MC noise).
         self.guard_confidence = guard_confidence
         self.guard_margin = guard_margin
+        # V3.11 pooled read on how strong human jams are (exploitation.jam_read.JamRead,
+        # immutable once loaded). None = off: the facing-jam guard behaves as before.
+        self.jam_read = None
         # The served BOT is a MODULE-LEVEL SINGLETON shared across concurrent gunicorn
         # threads (--threads 4). The two LRU equity caches below and the numpy RNG are
         # mutable shared state: an unsynchronised OrderedDict move_to_end/popitem can
@@ -310,7 +314,7 @@ class RiverSubgameSolver(BlueprintStrategy):
         # Diagnostics: why does / doesn't the solver change the bot's action?
         self.stats = {'river_calls': 0, 'solved': 0, 'fallback': 0,
                       'deviated': 0, 'kept_blueprint': 0, 'allin_guard': 0,
-                      'deep_raise_guard': 0, 'premium_no_fold': 0,
+                      'deep_raise_guard': 0, 'premium_no_fold': 0, 'jam_read': 0,
                       # Safe-gadget anchor outcome (Phase 5a): how often the gadget
                       # EXPLOITED (unsafe-v1 cleared by pre-filter/self-check) vs CLAMPED
                       # to a safe gadget solve. 0/0 when safe_gadget is off.
@@ -599,6 +603,13 @@ class RiverSubgameSolver(BlueprintStrategy):
         bot_stack = float(ps['p0_stack'] if seat == 0 else ps['p1_stack'])
         if to_call <= 0.0 or to_call < bot_stack - 1e-6:
             return None                              # call leaves money behind -> not near-terminal
+        # V3.11: a flop/turn jam is judged first by the pooled read of how strong human
+        # jams are (gated on its own credible interval, not the tracker's confidence);
+        # when it is not confident the guard continues exactly as before.
+        if self.jam_read is not None and street in ('flop', 'turn'):
+            act = self._jam_read_decision(ps, hole, board, street, to_call, bot_stack, tracker)
+            if act is not None:
+                return act
         # Trust the tracked range only when CONFIDENT *and* INFORMATIVE. A uniform belief
         # held at high confidence (e.g. an on-menu-but-unmodeled jam that left the range
         # unmoved) must NOT be acted on for a whole-stack decision -- that is the BUG-022
@@ -636,6 +647,33 @@ class RiverSubgameSolver(BlueprintStrategy):
         if ev_call < -self.guard_margin:
             return 'fold'
         return None                                  # too close -> defer to blueprint
+
+    def _jam_read_decision(self, ps, hole, board, street, to_call, bot_stack, tracker):
+        """The V3.11 jam read's call/fold at a faced flop/turn all-in, or None (not
+        confident -> the guard's usual path). Mixes in the tracker's equity by the read's
+        data weight (JamRead.decide); any fault -> None, never a crashed hand."""
+        from ..exploitation.jam_read import pot_type
+        try:
+            pot_mid = float(ps.get('pot') or 0.0)
+            call_cost = min(to_call, bot_stack)
+            final_pot = (pot_mid + to_call if to_call <= bot_stack + 1e-9
+                         else pot_mid - to_call + 2.0 * bot_stack)
+            st_idx = 1 if street == 'flop' else 2
+            spr = spr_bucket('spr5', st_idx, float(ps.get('street_pot') or 3.0))
+            tracker_eq = None
+            if tracker is not None and self.jam_read.params['p_max'] < 1.0:
+                tracker_eq = float(tracker.hero_equity(list(hole), list(board), n_runouts=200))
+            act, dbg = self.jam_read.decide(
+                list(hole), list(board), street, pot_type(ps.get('preflop_actions') or []),
+                spr, final_pot, call_cost, self._combo_strength, tracker_eq=tracker_eq)
+        except Exception:
+            self._fallback_count += 1
+            _LOG.warning("jam read failed; using the usual facing-jam guard", exc_info=True)
+            return None
+        self._tls.allin_guard_dbg = {**dbg, 'jamRead': act}
+        if act is not None:
+            self.stats['jam_read'] += 1
+        return act
 
     # -- facing-a-deep-raise guard (preflop / flop / turn, money behind) --------
     def _facing_deep_raise_guard(self, info_set_key, legal_actions, ps, allow_river=False):

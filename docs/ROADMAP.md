@@ -862,7 +862,9 @@ Tracked in [V3_BLUEPRINT_PLAN.md](V3_BLUEPRINT_PLAN.md) (steps, results, gates) 
 - ✅ V3.7–V3.9 built (Rust river solver, sub-minimum anchor, river menu "F"); their gates are
   deferred to V3.14.
 - ✅ V3.10 (2026-11-15): base arm C at 300M; opponent models re-fit on its keys and stamped.
-- ⏳ V3.11 pooled facing-jam read → V3.12 pruning arm → V3.13 DBR blueprint → V3.14 final
+- ✅ V3.11 (2026-11-15): pooled jam read + logged-spot evaluator; humans jam wider than
+  assumed, and the read gains on logged jams and against the human model.
+- ⏳ V3.12 pruning arm → V3.13 DBR blueprint → V3.14 final
   pick, then deployment (separate sign-off).
 
 ## References

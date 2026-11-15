@@ -139,6 +139,12 @@ fuzz the copy against it. A test helper that doesn't raise isn't a test.
 | **Area** | Abstraction (`cfr/keys.make_info_set_key` postflop key + equity-vs-uniform postflop buckets) |
 | **Severity** | Medium (real EV leak in big pots) · **Status** | Partly fixed on branch rust-core — the preflop 5-bet jam (`capped_pj`) is built and trained (V3.4); the replay (`scripts/bug027_replay.py`, V3.5) shows 4-bet pots polarised and J9 reaching the spot 2–6× less often, but the call is still +EV against the blueprint's own shove range. The remaining gap (humans shove narrower than equilibrium) is for the exploitation layer. Servable since V3.6 (not deployed). |
 
+> **Update 2026-11-15 (V3.11) — on the logged data, the call was right.** Of 92 logged
+> human flop jams the bot faced, calling was +EV in 75; human 4-bet-pot flop jams are wide
+> (28% from the top 20% of hands). The pooled jam read calls J9 here (equity ~0.65 vs 0.39
+> needed) and beats the current guard out of sample. The lost hand was a human who had it.
+> See V3_BLUEPRINT_PLAN.md "V3.11 — done".
+>
 > **Update 2026-11-09 — the root cause below is wrong; SPR buckets do NOT fix this.** Three
 > checks on branch rust-core:
 > - **No code bug.** The live bot, the Python trainer, the Rust trainer and an exhaustive

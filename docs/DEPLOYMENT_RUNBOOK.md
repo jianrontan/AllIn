@@ -123,6 +123,10 @@ diagnosing CI failures, dev workflow) — that's in
     traversals per iteration. Health reports `riverAlgorithm`. Do not compare
     iteration counts as if they represent equal work or reduce the safety-gadget
     iteration budget without validating the resulting strategy.
+  - `ALLIN_JAM_READ` — path to a fitted V3.11 jam read (`scripts/fit_jam_read.py`, branch
+    rust-core). When set, the facing-jam guard judges flop/turn jams against the pooled read of
+    how strong human jams are, in both A/B arms. Unset (default) = off. A read fit for another
+    blueprint (stamp mismatch) is logged and left off. Surfaced in healthz `jamRead`.
   - `ALLIN_GADGET_ANCHOR` — river safe-gadget anchor: `auto` (default, ≤blueprint) | `belief`
     (max-exploit, **NO safety floor — never set in prod**) | `blueprint` | `confidence`. Invalid →
     warns + `auto`. Surfaced in healthz `riverGadget`.

@@ -134,8 +134,8 @@ Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN
 `docs/V3_BLUEPRINT_PLAN.md` — read the relevant one first.
 - **Status (2026-11-15):** V3.0–V3.6 done; V3.7–V3.9 built with their gates deferred to
   V3.14; V3.10 done: the base arm is **C at 300M** and the opponent models are re-fit on its
-  keys. Remaining v3 scope, in `V3_BLUEPRINT_PLAN.md` "Steps": V3.11 pooled facing-jam read,
-  V3.12 negative-regret pruning arm, V3.13 DBR blueprint, V3.14 final pick; then Phase 7
+  keys; V3.11 done: the pooled jam read (`ALLIN_JAM_READ`). Remaining v3 scope, in
+  `V3_BLUEPRINT_PLAN.md` "Steps": V3.12 negative-regret pruning arm, V3.13 DBR blueprint, V3.14 final pick; then Phase 7
   deploy (separate sign-off).
 - **Environment:** a uv `.venv` (Python 3.12) at the worktree root; run Python as
   `../../.venv/bin/python` from `backend/bot/`. Rust is Homebrew rustup (keg-only):
@@ -168,9 +168,16 @@ Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN
   refuses a model whose stamp differs from the served blueprint's (unstamped = the legacy v2
   setup), so exploitation self-disables on a mismatch. C300's models:
   `analysis/opponent_models/c300/` (git-ignored).
+- **Jam read (V3.11):** `exploitation/jam_read.py` pools every logged human flop/turn jam into
+  a histogram of the jammer's strength percentile (backoff: all → street → pot type → SPR).
+  With `ALLIN_JAM_READ=<jam_read.json>` (`scripts/fit_jam_read.py --db`, stamped), the
+  facing-jam guard judges a flop/turn jam against it first, acting only when its credible
+  interval agrees, else the old path. `scripts/eval_facing_jams.py` scores any facing-jam
+  policy exactly on the logged jams (both hole cards are in the recaps); `--jam-read lopo`
+  refits leaving each spot's player out.
 - **Evaluation scripts** (`backend/bot/scripts/`): `h2h_eval.py` (AIVAT head-to-head; plays an
   untrained faced jam with prod's guard; `--db-b model` = the fitted human population model,
-  `--model-dir`), `lbr_paired.py` (per-hand LBR for paired comparisons), `br_attr.py` (BR with
+  `--model-dir`; `--jam-read-a` re-scores A's faced jams with a jam read), `lbr_paired.py` (per-hand LBR for paired comparisons), `br_attr.py` (BR with
   per-street gain attribution), `bug027_replay.py` (the BUG-027 hand through any blueprint).
   `match.py` plays each side on its own `PokerGame` state machine, so the legal actions, stack
   clamps and chip costs are the engine's. Overnight eval runs and their results live in
@@ -381,6 +388,9 @@ The full, authoritative list is in [docs/DEPLOYMENT_RUNBOOK.md](docs/DEPLOYMENT_
   - `ALLIN_GADGET_ANCHOR` — safe-gadget anchor for the river solve: `auto` (default, ≤blueprint) |
     `belief` (max exploit, NO safety floor — local testing only) | `blueprint` | `confidence`. Invalid →
     warns + falls back to `auto`. Surfaced in healthz `riverGadget`.
+  - `ALLIN_JAM_READ` — (branch rust-core, V3.11) path to a fitted jam read; the facing-jam guard
+    judges flop/turn jams against it in both A/B arms. Unset = off; a stamp mismatch is logged
+    and left off. Surfaced in healthz `jamRead`.
   - `ALLIN_MMAP_POSTFLOP` — `1` extracts the baked `.npz` table members to `.npy` and memory-maps them
     (keeps the ~107MB turn `ids` off the heap). Dev/measurement aid on a WRITABLE box; OFF in the image
     (the instance handles the full load + its table dir is read-only → graceful full-load fallback).

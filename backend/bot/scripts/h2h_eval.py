@@ -23,6 +23,14 @@ Two departures from tests/run_match.py, both to play blueprints the way prod doe
   at low-SPR stack clamps) sits on deep keys too and would otherwise make the model
   shove ~5x more than humans do.
 
+* --jam-read-a <jam_read.json> (V3.11): after the match, re-score every flop/turn jam A
+  faced (calling commits A's stack, so nothing follows but the runout) with the pooled
+  jam read instead of A's own call probability. The difference is exact per spot (both
+  hands are known): (P_read(call) - P_A(call)) * (equity * final pot - call cost), with
+  P_read = A's own probability where the read is not confident (the served guard then
+  falls through to the same path). Reported as jam_read_a (mbb/hand, A's perspective).
+  The match itself is unchanged, so this needs no second run and no pairing.
+
 Run from backend/bot/:
     python scripts/h2h_eval.py --db-a A.db --db-b {B.db|model} --hands 40000 --seed 101 --out x.json
 """
@@ -146,6 +154,60 @@ class ModelPlayer(GuardedPlayer):
         return probs
 
 
+def score_jam_read(rec, path, db_a, hands):
+    """The jam read's exact counterfactual gain at A's faced flop/turn jams (see the
+    module docstring), in mbb/hand over all `hands`."""
+    from src.cfr.keys import spr_bucket
+    from src.cfr.poker_game import STARTING_STACK
+    from src.exploitation.jam_read import JamRead, pot_type
+    from src.subgame.river_subgame_solver import RiverSubgameSolver
+    from eval_facing_jams import exact_equity
+    read = JamRead.load(path, db_a)
+    strength = RiverSubgameSolver(db_a)._combo_strength
+    per_hand = []
+    spots = changed = 0
+    for r in rec:
+        a = r['seat_of_A']
+        b = 1 - a
+        gain = 0.0
+        pre = [e['action'] for e in r['events'] if e['type'] == 'action' and e['street'] == 0]
+        street_pot = {}
+        for e in r['events']:
+            if e['type'] == 'street_start':
+                street_pot[e['street']] = e['pot']
+                continue
+            if (e['type'] != 'action' or e.get('seat') != a or e['street'] not in (1, 2)
+                    or not e['pattern'].endswith('a') or e['action'] not in ('call', 'fold')):
+                continue
+            inv = e['invested']
+            to_call = inv[b] - inv[a]
+            stack = STARTING_STACK - inv[a]
+            if to_call <= 0 or to_call < stack - 1e-6:
+                continue                              # money behind: not the jam guard's spot
+            pot = inv[0] + inv[1]
+            cost = min(to_call, stack)
+            final_pot = pot + cost if to_call <= stack else pot - to_call + 2.0 * stack
+            legal = e['legal']
+            probs = np.asarray(e['probs'], dtype=float)
+            p_a = float(probs[legal.index('call')] / probs.sum())
+            street = ('flop', 'turn')[e['street'] - 1]
+            act, _ = read.decide(list(r['hand_a']), list(e['vis']), street, pot_type(pre),
+                                 spr_bucket('spr5', e['street'], street_pot[e['street']]),
+                                 final_pot, cost, strength)
+            spots += 1
+            if act is None:
+                continue
+            p_read = 1.0 if act == 'call' else 0.0
+            if abs(p_read - p_a) > 1e-12:
+                changed += 1
+                eq = exact_equity(list(r['hand_a']), list(r['hand_b']), list(e['vis']), seed='h2h')
+                gain += (p_read - p_a) * (eq * final_pot - cost)
+        per_hand.append(gain)
+    x = np.asarray(per_hand + [0.0] * (hands - len(per_hand))) * 500.0     # chips -> mbb
+    return {'spots': spots, 'changed': changed, 'delta_mbb': float(x.mean()),
+            'se_mbb': float(x.std(ddof=1) / np.sqrt(len(x)))}
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     p.add_argument('--db-a', required=True)
@@ -155,6 +217,8 @@ def main():
     p.add_argument('--hands', type=int, default=40000)
     p.add_argument('--seed', type=int, default=101)
     p.add_argument('--out', required=True)
+    p.add_argument('--jam-read-a', default=None,
+                   help="a fitted jam read for --db-a: re-score A's faced flop/turn jams with it")
     args = p.parse_args()
 
     da = BlueprintDB(args.db_a, read_only=True)
@@ -190,6 +254,8 @@ def main():
                guard_a=[m.pa.n_guard, m.pa.n_guard_call],
                guard_b=[m.pb.n_guard, m.pb.n_guard_call],
                model_jam_capped=getattr(m.pb, 'n_capped', 0), seconds=time.time() - t0)
+    if args.jam_read_a:
+        out['jam_read_a'] = score_jam_read(rec, args.jam_read_a, da, args.hands)
     with open(args.out, 'w') as f:
         json.dump(out, f, indent=1)
     print(json.dumps(out, indent=1))

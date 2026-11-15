@@ -215,6 +215,21 @@ if BLUEPRINT_DB is not None and os.environ.get('ALLIN_EXPLOIT', '0') == '1':
         _LOG.error("opponent exploitation requested but failed to load (%s); "
                    "falling back to the blueprint opponent model", exc)
 
+# V3.11 pooled read on how strong human jams are (default OFF): ALLIN_JAM_READ=<fitted
+# jam_read.json> lets the facing-jam guard judge a flop/turn jam against it, in both A/B
+# arms (it reads the population, not the player). A read fit for another blueprint (a
+# stamp mismatch) or a missing file is logged and left off.
+if BOT is not None and os.environ.get('ALLIN_JAM_READ'):
+    try:
+        from bot.src.exploitation.jam_read import JamRead
+        BOT.jam_read = JamRead.load(os.environ['ALLIN_JAM_READ'], BLUEPRINT_DB)
+        _LOG.info("jam read ENABLED: %d jams from %s", BOT.jam_read.n_jams(),
+                  os.environ['ALLIN_JAM_READ'])
+    except Exception as exc:
+        BOT.jam_read = None
+        _LOG.error("jam read requested but failed to load (%s); the facing-jam guard "
+                   "runs without it", exc)
+
 
 # Live A/B arm for exploitation measurement. 'on' (treatment) plays the exploit; 'off' (control) plays
 # the PURE BLUEPRINT even with HUMAN_MODEL loaded. `ALLIN_AB_ARM` forces it ('on'/'off' for dev to play
@@ -2169,6 +2184,9 @@ def _health_payload():
         # Phase 6 opponent exploitation: false when off (default), else #player models + tilt budget.
         "exploit": (False if HUMAN_MODEL is None
                     else {"players": len(HUMAN_MODEL.players), "delta": _EXPLOIT_DELTA}),
+        # V3.11 pooled jam read: false when off (default), else how many jams it was fit on.
+        "jamRead": (False if BOT is None or BOT.jam_read is None
+                    else {"jams": BOT.jam_read.n_jams()}),
         "commit": os.environ.get('ALLIN_GIT_SHA'),
     }
 

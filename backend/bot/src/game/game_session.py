@@ -806,6 +806,11 @@ class GameSession:
             # The SPR bucket of this street's keys (spr5 flop/turn; None otherwise), so a
             # strategy that builds its own keys (the exploit tilt) matches info_set_key.
             'spr': self._spr(),
+            # The street-start pot and the hand's preflop actions (history resets each
+            # street): the context the V3.11 jam read looks up (SPR bucket, pot type).
+            'street_pot': d['starting_pot'],
+            'preflop_actions': [e['action'] for e in d['action_log']
+                                if e.get('street') == 'preflop'],
             'opp_range': self._load_range(),
             # Phase 6: opaque per-player exploitation payload ({chardist, delta}) when the
             # transport sets session.exploit; the game core just passes it through, the bot

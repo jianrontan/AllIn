@@ -1,4 +1,4 @@
-# v3 blueprint — plan and progress log (V3.0–V3.6 and V3.10 done, base arm C300; V3.7–V3.9 built, gates deferred; V3.11–V3.14 pending; see Steps)
+# v3 blueprint — plan and progress log (V3.0–V3.6, V3.10 and V3.11 done, base arm C300; V3.7–V3.9 built, gates deferred; V3.12–V3.14 pending; see Steps)
 
 Branch `rust-core`. Written 2026-11-09 after the BUG-027 investigation.
 Follows [PHASE6_ABSTRACTION_PLAN.md](PHASE6_ABSTRACTION_PLAN.md) (SPR buckets built,
@@ -596,7 +596,7 @@ play measured; BR is not used to pick it).
 | V3.8 | Candidate anchor implemented, OFF by default; evaluator/range bugs fixed; powered statistical gates deferred to final hardening by user decision (2026-11-13) | days | LBR at 0.1×/0.25× pot falls (z > 2); other fractions and H2H vs v2 within \|t\| < 2 |
 | V3.9 | F / F_EXTENDED implemented; local structure/parity/safety checks pass; sustained solver-on H2H and latency gates pending | days, after V3.7 | p95 ≤ 5 s on Rust; H2H with the solver on ≥ menu A (\|t\| < 2 or better) |
 | V3.10 | ✅ 2026-11-15 (see "V3.10 — done"): base arm **C at 300M**. **Pick the base arm** (A or C, from V3.5b's results and V3.6's memory numbers; V3.10–V3.13 build on it), then re-fit the opponent models on its v3 keys, stamped with `abstraction_id` (moved here from Phase 7: V3.11 and V3.13 need it) | ~1 day | the model guard compares abstraction ids; exploit no longer self-disables on the v3 blueprint |
-| V3.11 | Pooled facing-jam population read + logged-spot evaluator (targets BUG-027) | days | logged-spot EV(call) − EV(fold) improves over the current guard; no regression vs the human model |
+| V3.11 | ✅ 2026-11-15 (see "V3.11 — done"): both gates pass; humans jam wider than assumed, so the read mostly calls more. Pooled facing-jam population read + logged-spot evaluator (targets BUG-027) | days | logged-spot EV(call) − EV(fold) improves over the current guard; no regression vs the human model |
 | V3.12 | Negative-regret pruning arm (Rust trainer), on the base arm's config | ~1 week + training | strategy-shape probe clean; BUG-027 replay; H2H vs the base arm and vs the human model ≥ base |
 | V3.13 | Offline data-biased-response (DBR) blueprint against the population model | 1–2 weeks, after V3.10 | BR cost vs a held-out human-model gain, swept over P_max |
 | V3.14 | Final pick among base / pruning / DBR blueprints; hardening, including deferred V3.7 latency and V3.8 statistical validation (below) | — | the gates, re-run on the final candidates |
@@ -624,6 +624,86 @@ The V3.6 serving work covered (all done; see "V3.6 — done" below):
      blueprint: count it and fall back explicitly;
 - the remaining coin-flip fallbacks (e.g. an untrained faced jam) replaced by the
   equity-vs-belief guard.
+
+### V3.11 — done 2026-11-15
+
+**The data contradicts BUG-027's premise.** The plan assumed humans jam narrower than
+equilibrium. The logged jams say the opposite. The server deals the cards, so every recap
+holds both hole cards, even on folds. Across the 6,664 logged hands:
+
+| Human jams the bot faced | flop (92, 13 players) | turn (50, 11 players) |
+|---|---|---|
+| Jammer's strength percentile on the board, median (1 = the strongest hand) | 0.66 | 0.75 |
+| Share from the top 20% of hands (the guard's fixed assumption) | 32% | 44% |
+| Pot odds the bot needed, median | 0.20 | 0.23 |
+| Calling was right (EV(call) > EV(fold)) | 75 of 92 | 32 of 50 |
+
+80 of the 92 flop jams are in 4-bet pots, and those are the widest (28% from the top 20%).
+On this data, the leak is folding too much, not calling too much.
+
+**Logged-spot evaluator** (`scripts/eval_facing_jams.py`). Each logged human jam before the
+river that the bot answered is replayed through a `GameSession` bound to the blueprint:
+real cards, logged actions, the blueprint's range tracker. The served bot then decides, and
+its P(call) is read off the path its decision took. Each spot scores
+P(call) × (equity × final pot − call cost), exact from both real hands (flop/turn:
+every runout). The estimate is unbiased, with no response variance, and runs in seconds.
+
+**The read** (`src/exploitation/jam_read.py`, fit by `scripts/fit_jam_read.py`). It
+models where human flop/turn jams fall in strength. Each jam is ranked among all hands
+on its board with the blueprint's own ordering (`_combo_strength`), and counted in 10
+percentile bins. The counts back off from all jams, to street, to pot type
+(srp/3bp/4bp), to SPR bucket, each rung a Dirichlet whose prior is the coarser rung. At
+a faced flop/turn jam, `_facing_allin_guard` asks the read first:
+- it computes the bot's equity against each bin, then EV(call) under 400 Dirichlet draws;
+- it acts only when P(EV > 0) or P(EV < 0) is at least 0.9 and the mean edge clears
+  the 1-chip margin;
+- the read's EV is mixed with the tracker's, weighted p_max·n/(s + n) (p_max 0.9,
+  s 20);
+- otherwise the guard continues exactly as before.
+
+It is behind `ALLIN_JAM_READ` (default off) and applies in both A/B arms. It is stamped
+like the opponent models and refused for another blueprint (healthz `jamRead`). C300's
+read: `backend/bot/analysis/opponent_models/c300/jam_read.json` (142 jams, git-ignored).
+
+**Gate 1: logged-spot EV improves over the current guard. ✔** C300, 158 spots
+(2 skipped: a bot 5-bet that `capped_pj` plays as its jam). Leave-one-player-out: each
+player's spots are scored with a read fit on the other players. Chips summed over spots;
+always-fold = 0:
+
+| Policy | control arm | exploit arm (C300 models) |
+|---|---|---|
+| the bot that played (v2) | +18,076 | +18,076 |
+| C300 served today | +18,707 | +19,114 |
+| C300 + jam read | **+19,969** | **+20,207** |
+| always call | +19,785 | +19,785 |
+| perfect decisions | +21,942 | +21,942 |
+| read − served, chips/spot | +8.0 (SE 3.7; by player 4.8) | +6.9 (SE 3.3; by player 3.7) |
+
+- **Control arm:** the read calls more in 70 spots (calling averaged +111 chips there) and
+  less in 9 (+7.6).
+- **Sensitivity:** p_max 1.0 → +7.6; conf 0.95 → +8.0; alpha 40 → +8.3. The defaults stay.
+
+**Gate 2: no regression against the human model. ✔** `h2h_eval.py --jam-read-a`
+re-scores C300's faced flop/turn jams against the human population model. Calling a jam
+that commits the stack ends the decisions, so the counterfactual is exact per spot, with
+no second run or pairing. Over 4 seeds × 40k hands:
+- **The read gains +32.8 ± 4.7 mbb/hand.** Every seed is positive (+27, +40, +29, +35),
+  and it changed 1,963 of 4,586 spots.
+- **C300 vs the model:** +618 ± 45.
+- **Caveats:** the human model comes from the same export as the read, so this is not
+  independent evidence. The match has no tracker, so the read runs unblended (p_max
+  applies only when a tracker is present).
+
+**BUG-027 itself:** the read calls J9hh on Q♠9♣3♣ (flop|4bp|r0). Its equity against the
+logged human 4-bet-pot flop jams is ~0.65, against 0.39 needed. On today's data, that
+call was right and the human had it that hand.
+
+**Open.**
+- 142 jams from 13 players, three of them over half the spots. Refit as data grows.
+- Preflop jams are untouched (16 spots, the guard's top-20% path).
+- River bets that close the action are not scored yet; the evaluator covers preflop,
+  flop and turn.
+- The CI refit doesn't fit the read; Phase 7 needs that, like the opponent models.
 
 ### V3.10 — done 2026-11-15
 
