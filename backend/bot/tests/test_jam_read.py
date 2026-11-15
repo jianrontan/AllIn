@@ -95,9 +95,20 @@ def test_decide_folds_to_strong_jams_and_calls_weak_ones():
 def test_decide_defers_when_the_read_is_unsure():
     c = np.zeros(jr.BINS)
     c[-1] = c[0] = 1.0                                # two jams: one nut, one air
-    read = jr.JamRead({'all': c}, stamp={}, alpha=1.0)
+    read = jr.JamRead({'all': c}, stamp={}, alpha=1.0, min_jams=0)
     act, dbg = read.decide(DRAW, BOARD, 'flop', '4bp', 1, 200.0, 80.0, made_strength)
     assert act is None and 0.05 < dbg['jamReadPPos'] < 0.95, dbg
+
+
+def test_decide_stays_silent_below_the_data_floor():
+    """With no jams the root prior alone ('any hand') can look confident; the floor
+    keeps the read silent until the street has min_jams jams."""
+    act, dbg = jr.JamRead({}, stamp={}).decide(DRAW, BOARD, 'flop', '4bp', 1, 200.0, 80.0,
+                                               made_strength)
+    assert act is None and dbg['jamReadThin'] and dbg['jamReadN'] == 0
+    act, _ = jr.JamRead({}, stamp={}, min_jams=0).decide(DRAW, BOARD, 'flop', '4bp', 1,
+                                                         200.0, 80.0, made_strength)
+    assert act == 'call'                                  # what the floor prevents
 
 
 def test_decide_mixes_in_the_tracker_by_the_data_weight():
@@ -189,3 +200,74 @@ def test_evaluator_spots_and_exact_equity():
     assert ev.exact_equity(['HA', 'DA'], ['CK', 'DK'], river, seed='x') == 0.0
     aa_kk = ev.exact_equity(['HA', 'DA'], ['CK', 'DK'], [], seed='x', n_mc=4000)
     assert 0.78 < aa_kk < 0.86
+
+
+# ------------------------------------------------------------------ review fixes (2026-11-15)
+
+def test_untrusted_tracker_never_decides_through_the_blend():
+    """An untrusted tracker used to be blended in regardless (with no jam data its weight
+    is ~1, so it decided the stack-off alone). Now it is never mixed in."""
+    s = RiverSubgameSolver(None, guard_confidence=0.2, guard_margin=1.0)
+    s._combo_strength = made_strength
+    # A well-fit read of strong jams folds the draw; blended 50/50 with a tracker that
+    # says equity 1.0 it would call.
+    s.jam_read = _read(top=True, p_max=0.5, s=0.0)
+    untrusted = _Tracker(1.0, confidence=0.0)
+    assert s._facing_allin_guard(['fold', 'call'], _ps(untrusted)) == 'fold'
+    assert s._tls.allin_guard_dbg['jamReadW'] == 1.0    # tracker not blended
+    trusted = _Tracker(1.0, confidence=1.0)
+    assert s._facing_allin_guard(['fold', 'call'], _ps(trusted)) == 'call'
+    assert s._tls.allin_guard_dbg['jamReadW'] == 0.5    # a trusted one still is
+    # No jam data and an untrusted tracker: the guard defers exactly as before the read.
+    s.jam_read = jr.JamRead({}, stamp={})
+    assert s._facing_allin_guard(['fold', 'call'], _ps(untrusted)) is None
+
+
+def test_bin_equity_weights_every_hand_runout_pair_equally():
+    """Exhaustive turn: one bin holding every live hand must equal the exact equity over
+    all compatible (hand, river) pairs, not the average of per-river ratios."""
+    from itertools import combinations
+    from src.game.range_tracker import _FULL_DECK
+    hero, board = ['HA', 'HK'], ['H2', 'H7', 'SQ', 'D9']
+    dead = set(hero) | set(board)
+    deck = [c for c in _FULL_DECK if c not in dead]
+    hands = list(combinations(deck, 2))
+    wins = pairs = 0.0
+    for r in deck:
+        full = board + [r]
+        hr = rank7(hero + full)
+        for h in hands:
+            if r in h:
+                continue
+            o = rank7(list(h) + full)
+            wins += 1.0 if hr < o else 0.5 if hr == o else 0.0
+            pairs += 1.0
+    got = jr.JamRead._bin_equities(hero, board, hands, np.zeros(len(hands), dtype=int), 200)
+    assert got[0] == pytest.approx(wins / pairs, abs=1e-12)
+    assert np.isnan(got[1:]).all()
+
+
+def test_evaluator_replays_the_logged_chips_of_a_custom_bet():
+    """A custom open is logged under its snapped grid name with the real chips; the
+    replay must reproduce the logged pot and call cost at the jam."""
+    import eval_facing_jams as ev
+    rec = {'humanSeat': 0, 'humanHole': ['As', 'Kd'], 'botHole': ['7c', '2d'],
+           'community': ['Qh', '9c', '3c', '5s', '8d'], 'playerId': 'p',
+           'actionLog': [
+               # SB opens to 4BB (8 chips): 7 more than the posted 1. bet_large is 3.5BB.
+               {'player': 0, 'street': 'preflop', 'action': 'bet_large', 'chips': 7.0},
+               {'player': 1, 'street': 'preflop', 'action': 'call', 'chips': 6.0},
+               {'player': 1, 'street': 'flop', 'action': 'check', 'chips': 0.0},
+               {'player': 0, 'street': 'flop', 'action': 'allin', 'chips': 192.0},
+               {'player': 1, 'street': 'flop', 'action': 'fold', 'chips': 0.0}]}
+    (sp,) = ev.facing_jam_spots(rec)
+    assert (sp['cost'], sp['final_pot']) == (192.0, 400.0)
+    s = ev.replay_to(rec, sp['index'], {}, None, None)
+    assert s is not None and ev.same_spot(s, sp)
+    # the grid open alone would have reached a different pot
+    rec['actionLog'][0]['chips'] = 6.0
+    rec['actionLog'][1]['chips'] = 5.0
+    rec['actionLog'][3]['chips'] = 193.0
+    (sp2,) = ev.facing_jam_spots(rec)
+    s2 = ev.replay_to(rec, sp2['index'], {}, None, None)
+    assert ev.same_spot(s2, sp2) and not ev.same_spot(s2, sp)

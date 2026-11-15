@@ -651,7 +651,10 @@ class RiverSubgameSolver(BlueprintStrategy):
     def _jam_read_decision(self, ps, hole, board, street, to_call, bot_stack, tracker):
         """The V3.11 jam read's call/fold at a faced flop/turn all-in, or None (not
         confident -> the guard's usual path). Mixes in the tracker's equity by the read's
-        data weight (JamRead.decide); any fault -> None, never a crashed hand."""
+        data weight (JamRead.decide) only when the tracker's read is TRUSTED (`_trust_read`,
+        the same gate the guard applies): an untrusted tracker must never decide a stack-off
+        through the blend (with little jam data its weight is near 1). Any fault -> None,
+        never a crashed hand."""
         from ..exploitation.jam_read import pot_type
         try:
             pot_mid = float(ps.get('pot') or 0.0)
@@ -661,7 +664,8 @@ class RiverSubgameSolver(BlueprintStrategy):
             st_idx = 1 if street == 'flop' else 2
             spr = spr_bucket('spr5', st_idx, float(ps.get('street_pot') or 3.0))
             tracker_eq = None
-            if tracker is not None and self.jam_read.params['p_max'] < 1.0:
+            if (tracker is not None and self.jam_read.params['p_max'] < 1.0
+                    and self._trust_read(tracker)):
                 tracker_eq = float(tracker.hero_equity(list(hole), list(board), n_runouts=200))
             act, dbg = self.jam_read.decide(
                 list(hole), list(board), street, pot_type(ps.get('preflop_actions') or []),

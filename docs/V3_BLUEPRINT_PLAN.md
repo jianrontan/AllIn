@@ -596,10 +596,11 @@ play measured; BR is not used to pick it).
 | V3.8 | Candidate anchor implemented, OFF by default; evaluator/range bugs fixed; powered statistical gates deferred to final hardening by user decision (2026-11-13) | days | LBR at 0.1×/0.25× pot falls (z > 2); other fractions and H2H vs v2 within \|t\| < 2 |
 | V3.9 | F / F_EXTENDED implemented; local structure/parity/safety checks pass; sustained solver-on H2H and latency gates pending | days, after V3.7 | p95 ≤ 5 s on Rust; H2H with the solver on ≥ menu A (\|t\| < 2 or better) |
 | V3.10 | ✅ 2026-11-15 (see "V3.10 — done"): base arm **C at 300M**. **Pick the base arm** (A or C, from V3.5b's results and V3.6's memory numbers; V3.10–V3.13 build on it), then re-fit the opponent models on its v3 keys, stamped with `abstraction_id` (moved here from Phase 7: V3.11 and V3.13 need it) | ~1 day | the model guard compares abstraction ids; exploit no longer self-disables on the v3 blueprint |
-| V3.11 | ✅ 2026-11-15 (see "V3.11 — done"): both gates pass; humans jam wider than assumed, so the read mostly calls more. Pooled facing-jam population read + logged-spot evaluator (targets BUG-027) | days | logged-spot EV(call) − EV(fold) improves over the current guard; no regression vs the human model |
+| V3.11 | ✅ 2026-11-15 (see "V3.11 — done"): humans jam wider than assumed, so the read mostly calls more. Gate 1 passes after the review fixes; gate 2's rerun after them is pending. Pooled facing-jam population read + logged-spot evaluator (targets BUG-027) | days | logged-spot EV(call) − EV(fold) improves over the current guard; no regression vs the human model |
 | V3.12 | Negative-regret pruning arm (Rust trainer), on the base arm's config | ~1 week + training | strategy-shape probe clean; BUG-027 replay; H2H vs the base arm and vs the human model ≥ base |
 | V3.13 | Offline data-biased-response (DBR) blueprint against the population model | 1–2 weeks, after V3.10 | BR cost vs a held-out human-model gain, swept over P_max |
 | V3.14 | Final pick among base / pruning / DBR blueprints; hardening, including deferred V3.7 latency and V3.8 statistical validation (below) | — | the gates, re-run on the final candidates |
+| V3.15 | Measure what forgetting earlier streets costs (see "V3.15 — street history"); if it is large, a history-token arm joins V3.14's pick (or v4) | minutes to measure; an arm is a retrain | range divergence across the histories that share a key |
 
 The V3.6 serving work covered (all done; see "V3.6 — done" below):
 - spr5 keys, threaded through `GameSession`, the range tracker's `_action_matrix`,
@@ -624,6 +625,24 @@ The V3.6 serving work covered (all done; see "V3.6 — done" below):
      blueprint: count it and fall back explicitly;
 - the remaining coin-flip fallbacks (e.g. an untrained faced jam) replaced by the
   equity-vs-belief guard.
+
+### V3.15 — street history (to measure; added 2026-11-15)
+
+Postflop keys carry only the current street's betting (`make_info_set_key`'s
+`bet_pattern`); earlier streets survive only through the SPR bucket (how big the pot got,
+not how) and, outside the blueprint, through the range tracker, which the river solver
+and the guards use. So preflop/flop/turn play averages over every line that reaches the
+same key: a check-raised flop and a check-called flop share turn keys. C300 has 444,217
+info sets (192k flop, 165k turn, 57k river, 30k preflop) and 288 within-street patterns
+per postflop street; full action history would multiply turn and river keys many times.
+Libratus and Pluribus, as published, keep the full betting history and abstract only cards.
+
+- **Measure first:** for common postflop keys, compare the opponent ranges the tracker
+  holds across the histories that share each key (e.g. total-variation distance by
+  history, weighted by reach). Offline, minutes.
+- **If large:** a small history token (preflop pot type srp/3bp/4bp plus the previous
+  street's last aggressor, ~6× postflop keys) as a training arm judged like A and C;
+  full action history is a v4 question.
 
 ### V3.11 — done 2026-11-15
 
@@ -657,33 +676,55 @@ a faced flop/turn jam, `_facing_allin_guard` asks the read first:
 - it computes the bot's equity against each bin, then EV(call) under 400 Dirichlet draws;
 - it acts only when P(EV > 0) or P(EV < 0) is at least 0.9 and the mean edge clears
   the 1-chip margin;
-- the read's EV is mixed with the tracker's, weighted p_max·n/(s + n) (p_max 0.9,
-  s 20);
+- when the tracker's read is trusted, the read's EV is mixed with the tracker's,
+  weighted p_max·n/(s + n) (p_max 0.9, s 20); an untrusted tracker is never mixed in;
+- it stays silent until its street has 20 logged jams;
 - otherwise the guard continues exactly as before.
 
 It is behind `ALLIN_JAM_READ` (default off) and applies in both A/B arms. It is stamped
 like the opponent models and refused for another blueprint (healthz `jamRead`). C300's
 read: `backend/bot/analysis/opponent_models/c300/jam_read.json` (142 jams, git-ignored).
 
-**Gate 1: logged-spot EV improves over the current guard. ✔** C300, 158 spots
-(2 skipped: a bot 5-bet that `capped_pj` plays as its jam). Leave-one-player-out: each
-player's spots are scored with a read fit on the other players. Chips summed over spots;
+**Review (2026-11-15, three agents in Codex) — three findings, all confirmed and fixed:**
+1. **An untrusted tracker could decide through the blend.** The tracker's equity was
+   mixed in whatever its trust; with little jam data its weight is near 1, so an
+   untrusted tracker decided the stack-off. Now it is mixed in only when `_trust_read`
+   passes. Writing the regression test exposed a second sparse-data hole: with no jams
+   the read's uniform root prior ("humans jam any hand") is tight enough to look
+   confident, so the read now stays silent below 20 jams on the street (`min_jams`).
+2. **Bin equities mis-weighted runouts.** Per-runout ratios were averaged, but card
+   removal leaves runouts with different numbers of live hands; wins and pairs are now
+   pooled over all (hand, runout) pairs (test: exact on an exhaustive turn).
+   `RangeTracker.hero_equity` averages per runout the same way (not changed here).
+3. **The evaluator replayed custom bets at grid size.** A custom bet is logged under its
+   snapped grid name with the real chips; it is now replayed as a custom bet to the real
+   total, and every replayed spot is checked against the logged pot and call cost
+   (within 0.05 chips: the log rounds chips to 2 decimals).
+
+**Gate 1: logged-spot EV improves over the current guard. ✔** (after the review fixes)
+C300, 158 spots (2 skipped: a bot 5-bet that `capped_pj` plays as its jam); every
+replayed spot matches the logged pot and call cost. Leave-one-player-out: each player's
+spots are scored with a read fit on the other players. Chips summed over spots;
 always-fold = 0:
 
 | Policy | control arm | exploit arm (C300 models) |
 |---|---|---|
 | the bot that played (v2) | +18,076 | +18,076 |
 | C300 served today | +18,707 | +19,114 |
-| C300 + jam read | **+19,969** | **+20,207** |
+| C300 + jam read | **+19,912** | **+20,069** |
 | always call | +19,785 | +19,785 |
 | perfect decisions | +21,942 | +21,942 |
-| read − served, chips/spot | +8.0 (SE 3.7; by player 4.8) | +6.9 (SE 3.3; by player 3.7) |
+| read − served, chips/spot | +7.6 (SE 3.6; by player 4.7) | +6.1 (SE 3.3; by player 3.7) |
 
-- **Control arm:** the read calls more in 70 spots (calling averaged +111 chips there) and
-  less in 9 (+7.6).
-- **Sensitivity:** p_max 1.0 → +7.6; conf 0.95 → +8.0; alpha 40 → +8.3. The defaults stay.
+- **Control arm:** the read calls more in 69 spots (calling averaged +109 chips there) and
+  less in 6 (+16).
+- **Before the fixes** it was +8.0 / +6.9 chips per spot.
+- **Sensitivity** (before the fixes): p_max 1.0 → +7.6; conf 0.95 → +8.0; alpha 40 → +8.3.
+  The defaults stay.
 
-**Gate 2: no regression against the human model. ✔** `h2h_eval.py --jam-read-a`
+**Gate 2: no regression against the human model. ✔ before the review fixes; rerun
+pending** (the bin-equity fix changes the read's decisions; 4 cores × ~16 min).
+`h2h_eval.py --jam-read-a`
 re-scores C300's faced flop/turn jams against the human population model. Calling a jam
 that commits the stack ends the decisions, so the counterfactual is exact per spot, with
 no second run or pairing. Over 4 seeds × 40k hands:

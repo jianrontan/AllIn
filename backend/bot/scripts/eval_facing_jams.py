@@ -41,6 +41,7 @@ from src.cfr.keys import BOARD_COUNT, STREET_NAMES                  # noqa: E402
 from src.game import game_session as gs_mod                         # noqa: E402
 from src.game.cards import to_engine                                # noqa: E402
 from src.game.game_session import GameSession, session_kwargs, GameError  # noqa: E402
+from src.cfr.poker_game import make_custom_action                   # noqa: E402
 from src.game.range_tracker import _FULL_DECK                       # noqa: E402
 from src.storage.blueprint_db import BlueprintDB                    # noqa: E402
 
@@ -116,6 +117,38 @@ def _fixed_deck(rec):
     return p[0] + p[1] + comm + pad
 
 
+def _replay_action(s, a):
+    """The action that reproduces log entry `a` in session `s`. A logged custom bet is
+    recorded under its snapped grid name with the real chips, so a sized bet whose
+    grid cost differs from the logged chips is replayed as a custom bet to the real
+    raise-to total (the player's street contribution plus the chips). Otherwise the
+    candidate would decide in a different pot from the one being scored."""
+    act = a['action']
+    if not act.startswith(('bet_', 'raise_')) or '_custom_' in act:
+        return act
+    chips = float(a.get('chips') or 0.0)
+    if abs(s._action_cost(act) - chips) <= 1e-6:
+        return act
+    d = s.data
+    contrib = s.game.get_player_contribution_this_round(
+        d['history'], d['street'], d['starting_pot'], s.current_player(),
+        d['p0_invested'], d['p1_invested'])
+    return make_custom_action(act.startswith('raise_'), contrib + chips)
+
+
+def same_spot(s, sp, tol=0.05):
+    """True when the replayed decision has the logged call cost and final pot (the log
+    rounds chips to 2 decimals, so a few actions can leave a cent of drift)."""
+    d = s.data
+    bot = s.current_player()
+    stack = d['p0_stack'] if bot == 0 else d['p1_stack']
+    to_call = s._action_cost('call')
+    pot = s._current_pot()
+    cost = min(to_call, stack)
+    final_pot = pot + cost if to_call <= stack else pot - to_call + 2 * stack
+    return abs(cost - sp['cost']) <= tol and abs(final_pot - sp['final_pot']) <= tol
+
+
 def replay_to(rec, idx, kw, strategy_fn, hero_fn, exploit=None):
     """A GameSession at the bot's decision after log entry `idx`, or None when the logged
     line is illegal under this blueprint's menu (e.g. a bot 5-bet that capped_pj plays
@@ -135,7 +168,7 @@ def replay_to(rec, idx, kw, strategy_fn, hero_fn, exploit=None):
         if s.data['status'] != 'in_hand' or s.current_player() != a['player']:
             return None
         try:
-            s.apply_action(a['action'])
+            s.apply_action(_replay_action(s, a))
         except GameError:
             return None
     bot = 1 - rec['humanSeat']
@@ -226,7 +259,7 @@ def main():
             read = jr.JamRead.load(args.jam_read, db, **params)
             reads = defaultdict(lambda: read)
 
-    rows, skipped = [], 0
+    rows, skipped, mismatched = [], 0, 0
     for rec in recs:
         for sp in facing_jam_spots(rec):
             st_idx = STREET_NAMES.index(sp['street'])
@@ -250,6 +283,9 @@ def main():
             if s is None:
                 skipped += 1
                 continue
+            if not same_spot(s, sp):
+                mismatched += 1          # the candidate would decide a different pot
+                continue
             row['served'], row['served_mode'] = served_call_prob(bot, s)
             if reads:
                 bot.jam_read = reads[pid]
@@ -260,7 +296,8 @@ def main():
                     bot.jam_read = None
             rows.append(row)
 
-    print(f"{len(rows)} spots scored ({skipped} skipped: line illegal under this menu)")
+    print(f"{len(rows)} spots scored ({skipped} skipped: line illegal under this menu; "
+          f"{mismatched} skipped: replayed pot/call cost differ from the log)")
     policies = ['logged', 'served'] + (['jam_read'] if reads else []) + ['always_call', 'oracle']
     print(f"  {'policy':<12}" + ''.join(f"{st:>16}" for st in ('preflop', 'flop', 'turn', 'all')))
     summary = {}
