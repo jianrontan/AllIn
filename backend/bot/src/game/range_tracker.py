@@ -202,7 +202,7 @@ class RangeTracker:
         return pf, strength
 
     def _action_matrix(self, strategy_fn, street, position, bet_pattern, legal, board,
-                       spr=None):
+                       spr=None, key_format=None, tags=None):
         """[n_hands, n_legal] model probabilities per opponent hand at this node.
         Hands sharing an info-set key share a row, so the model is queried once
         per distinct bucket key. `spr` is the street's SPR bucket for an spr5
@@ -222,7 +222,7 @@ class RangeTracker:
                     key = make_info_set_key(0, position, pf[i], None, bet_pattern)
                 else:
                     key = make_info_set_key(street, position, pf[i], strength[i], bet_pattern,
-                                            spr=spr)
+                                            spr=spr, key_format=key_format, tags=tags)
                 row = strategy_fn(key, legal_t)
                 seen[gid] = row
             mat[i] = row
@@ -230,7 +230,7 @@ class RangeTracker:
 
     # -- Bayesian update + confidence ---------------------------------
     def observe(self, strategy_fn, action, street, position, bet_pattern, legal, board, blend=None,
-                spr=None):
+                spr=None, key_format=None, tags=None):
         """Condition the belief on the opponent having taken `action` here, and update confidence by
         how well it matched the model. `blend` (optional) is the pseudo-harmonic translation of an
         OFF-GRID bet -- [(grid_action, weight), ...] -- so the bet is credited to BOTH bracketing sizes
@@ -248,7 +248,7 @@ class RangeTracker:
             self.confidence *= _OFF_MENU_CONFIDENCE_DECAY
             return
         mat = self._action_matrix(strategy_fn, street, position, bet_pattern, legal, board,
-                                  spr=spr)
+                                  spr=spr, key_format=key_format, tags=tags)
         idx = [(legal.index(a), w) for a, w in obs]
         col = sum(w * mat[:, i] for i, w in idx)         # per-hand P(observed | hand), blended over brackets
 

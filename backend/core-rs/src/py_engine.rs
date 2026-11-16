@@ -126,7 +126,7 @@ fn history(h: &[String]) -> PyResult<Vec<Action>> {
 }
 
 #[pyfunction]
-#[pyo3(signature = (street, position, preflop_bucket, strength, pattern, spr=None))]
+#[pyo3(signature = (street, position, preflop_bucket, strength, pattern, spr=None, *, key_format=None, tags=None))]
 fn make_info_set_key(
     street: i64,
     position: &str,
@@ -134,9 +134,15 @@ fn make_info_set_key(
     strength: Option<i64>,
     pattern: &str,
     spr: Option<u8>,
+    key_format: Option<&str>,
+    tags: Option<&str>,
 ) -> PyResult<String> {
     let street = street_arg(street)?;
-    if street == 0 {
+    let fmt = key_format
+        .map(keys::KeyFormat::parse)
+        .transpose()
+        .map_err(err)?;
+    if street == 0 && fmt != Some(keys::KeyFormat::Spr5a) {
         if spr.is_some() {
             return Err(err("preflop keys carry no SPR bucket".into()));
         }
@@ -144,7 +150,7 @@ fn make_info_set_key(
         return Ok(format!("{preflop_bucket}_{position}_{pattern}"));
     }
     let fine = keys::parse_bucket(preflop_bucket).map_err(err)?;
-    keys::make_info_set_key(
+    keys::make_context_key(
         street,
         position,
         fine,
@@ -152,6 +158,8 @@ fn make_info_set_key(
         pattern,
         crate::buckets::fine_to_coarse(),
         spr,
+        fmt,
+        tags,
     )
     .map_err(err)
 }

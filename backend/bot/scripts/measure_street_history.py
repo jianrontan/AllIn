@@ -156,18 +156,24 @@ class Walker:
         nodes = []          # (street, tag dict, r0, r1)
         pruned = [0.0]
 
-        def probs_matrix(street, pattern, legal, pos, spr):
+        def probs_matrix(street, pattern, legal, pos, spr, prior):
+            from src.cfr.keys import history_tags
+            patterns = ['', '', '', '']
+            for st, actions in prior:
+                patterns[st] = ''.join(action_char(a) for a in actions)
+            ktags = history_tags(self.kf, street, patterns)
             from src.cfr.keys import make_info_set_key
             mat = np.empty((H, len(legal)))
             for gi, (mask, rep) in enumerate(ba['groups'][street]):
-                kc = (street, gi, pattern, pos, spr)
+                kc = (street, gi, pattern, pos, spr, ktags)
                 key = key_cache.get(kc)
                 if key is None:
                     if street == 0:
                         key = make_info_set_key(0, pos, ba['pf'][rep], None, pattern)
                     else:
                         key = make_info_set_key(street, pos, ba['pf'][rep],
-                                                ba['strg'][street][rep], pattern, spr)
+                                                ba['strg'][street][rep], pattern, spr,
+                                                key_format=self.kf, tags=ktags)
                     key_cache[kc] = key
                 mat[mask] = ev._restricted_probs(key, legal)
             return mat
@@ -202,7 +208,7 @@ class Walker:
                 if street >= self.max_street:
                     return
             spr = spr_bucket(self.kf, street, starting_pot)
-            probs = probs_matrix(street, pattern, tuple(legal), _POS[cp], spr)
+            probs = probs_matrix(street, pattern, tuple(legal), _POS[cp], spr, prior)
             for ai, a in enumerate(legal):
                 n0 = r0 * probs[:, ai] if cp == 0 else r0
                 n1 = r1 * probs[:, ai] if cp == 1 else r1

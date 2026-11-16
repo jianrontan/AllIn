@@ -18,6 +18,8 @@ chip costs all come from the same state machine training used
 (`state_legal_actions` / `state_action_cost` / `advance_node_state`), so a
 blueprint is only ever offered the actions it was trained on.
 """
+
+from ..cfr.keys import history_tags
 import os
 import random
 
@@ -102,7 +104,7 @@ class BlueprintPlayer:
         from ..cfr.keys import require_key_format
         # Each player builds keys in its OWN blueprint's format (a v3/spr5 player
         # can face a v2 one).
-        self.key_format = require_key_format(strategy_source, ('v2', 'spr5'), 'match') or 'v2'
+        self.key_format = require_key_format(strategy_source, ('v2', 'spr5', 'spr5a'), 'match') or 'v2'
         self.src = strategy_source
         self.cards = cards
         self.rng = rng
@@ -158,7 +160,8 @@ class BlueprintPlayer:
             key = make_info_set_key(
                 street, pos, self.cards.get_bucket(list(hand), None),
                 self.cards.get_bucket(list(hand), vis), pattern,
-                spr_bucket(self.key_format, street, street_pot))
+                spr_bucket(self.key_format, street, street_pot), key_format=self.key_format,
+                tags=history_tags(self.key_format, street, getattr(self, 'street_patterns', None)))
         probs = self._restricted(key, tuple(legal))
         idx = self.rng.choices(range(len(legal)), weights=probs)[0]
         info = {'seat': seat, 'key': key, 'legal': list(legal), 'probs': probs, 'choice': idx}
@@ -205,7 +208,11 @@ class HeadToHeadMatch:
         allin_street = None        # street at which betting locked all-in (board cards known)
         events = [] if record is not None else None
 
+        patterns = ['', '', '', '']
         for street in range(4):
+            for player in players.values():
+                if isinstance(player, BlueprintPlayer):
+                    player.street_patterns = patterns
             vis = [] if street == 0 else board[:2 + street]
             st = games[0].init_node_state(street, street_pot)
             if events is not None:
@@ -235,6 +242,7 @@ class HeadToHeadMatch:
                         'add': cost, 'aggr': action not in ('check', 'call', 'fold')})
                 st = game.advance_node_state(st, action, street, actor, stack, prev)
                 pattern += char
+                patterns[street] = pattern
                 if action == 'fold':
                     folded = actor
                     break

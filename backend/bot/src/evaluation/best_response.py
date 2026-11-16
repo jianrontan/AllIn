@@ -63,6 +63,8 @@ off-tree complement that probes exactly that. Treat this number as "exploitabili
 reachable within the betting abstraction": good for tracking convergence and
 comparing blueprints, but do not over-claim it as the true game-theoretic value.
 """
+
+from ..cfr.keys import history_tags
 import random
 import numpy as np
 
@@ -81,7 +83,7 @@ class BestResponseEvaluator:
     def __init__(self, blueprint_db, seed=None, menu_mode=None, purify_threshold=0.0):
         from ..cfr.keys import require_key_format
         self.key_format = require_key_format(
-            blueprint_db, ('v2', 'spr5'), 'BestResponseEvaluator') or 'v2'
+            blueprint_db, ('v2', 'spr5', 'spr5a'), 'BestResponseEvaluator') or 'v2'
         self.db = blueprint_db
         # Strategy purification of the (villain) blueprint before the BR walk -- the
         # A/B knob for the purification experiment. 0.0 = off (default). The hero then
@@ -211,22 +213,24 @@ class BestResponseEvaluator:
         # ~thousands. _restricted_probs is still separately cached by (key, legal).
         key_cache = {}
 
-        def probs_matrix(street, pattern, legal, pos, starting_pot):
+        def probs_matrix(street, pattern, legal, pos, starting_pot, patterns):
             """[H, n_legal] blueprint probs per hand at `pos`, grouped by key. (Used
             for the villain split, and for the hero when it plays the blueprint -- a
             restricted-BR off-street node or the gain-logging baseline.)"""
             mat = np.empty((H, len(legal)))
             # spr5: flop/turn keys carry the street-start SPR bucket (None otherwise).
             spr = spr_bucket(self.key_format, street, starting_pot)
+            tags = history_tags(self.key_format, street, patterns)   # constant per node
             for gi, (mask, rep) in enumerate(ba['groups'][street]):
-                kc = (street, gi, pattern, pos, spr)
+                kc = (street, gi, pattern, pos, spr, tags)
                 key = key_cache.get(kc)
                 if key is None:
                     if street == 0:
                         key = make_info_set_key(0, pos, pf[rep], None, pattern)
                     else:
                         key = make_info_set_key(
-                            street, pos, pf[rep], strg[street][rep], pattern, spr)
+                            street, pos, pf[rep], strg[street][rep], pattern, spr,
+                            key_format=self.key_format, tags=tags)
                     key_cache[kc] = key
                 mat[mask] = self._restricted_probs(key, legal)
             return mat
@@ -250,7 +254,7 @@ class BestResponseEvaluator:
             return self._showdown_measure(ba, rv, final_pot, hero_total)
 
         def walk(history, street, starting_pot, p0_inv, p1_inv,
-                 p0_stack, p1_stack, pattern, rv, depth, hr=None):
+                 p0_stack, p1_stack, pattern, rv, depth, hr=None, patterns=('', '', '', '')):
             # hr: the hero's BLUEPRINT reach per hero hand (only tracked when logging
             # gains; None otherwise, keeping the scoreboard path unchanged).
             if depth > 50 or street > 3:
@@ -275,7 +279,8 @@ class BestResponseEvaluator:
                     new_p1_inv = p1_inv + p1_this
                     return walk([], street + 1, new_pot, new_p0_inv, new_p1_inv,
                                 STARTING_STACK - new_p0_inv, STARTING_STACK - new_p1_inv,
-                                '', rv, depth + 1, hr)
+                                '', rv, depth + 1, hr,
+                                patterns[:street] + (pattern,) + patterns[street+1:])
                 return terminal_value(history, street, starting_pot, p0_inv, p1_inv, rv)
 
             legal_t = tuple(legal)
@@ -288,9 +293,9 @@ class BestResponseEvaluator:
                 if current_player == 0:
                     return walk(nh, street, starting_pot, p0_inv, p1_inv,
                                 p0_stack - cost, p1_stack, npat, child_rv, depth + 1,
-                                child_hr)
+                                child_hr, patterns)
                 return walk(nh, street, starting_pot, p0_inv, p1_inv,
-                            p0_stack, p1_stack - cost, npat, child_rv, depth + 1, child_hr)
+                            p0_stack, p1_stack - cost, npat, child_rv, depth + 1, child_hr, patterns)
 
             if current_player == hero_seat:
                 # Same villain reach down every hero branch (the hero's action does
@@ -298,7 +303,7 @@ class BestResponseEvaluator:
                 if gain_acc is None or hr is None:
                     vals = [child(a, rv) for a in legal]
                 else:
-                    hp = probs_matrix(street, pattern, legal_t, hero_pos, starting_pot)
+                    hp = probs_matrix(street, pattern, legal_t, hero_pos, starting_pot, patterns)
                     vals = [child(a, rv, hr * hp[:, ai]) for ai, a in enumerate(legal)]
                 if br_streets is None or street in br_streets:
                     # Hero best-responds (elementwise max over actions).
@@ -312,14 +317,14 @@ class BestResponseEvaluator:
                 # Restricted: hero plays the BLUEPRINT on this off-target street, so
                 # the value isolates the leak reachable only on its BR streets.
                 if gain_acc is None or hr is None:
-                    hp = probs_matrix(street, pattern, legal_t, hero_pos, starting_pot)
+                    hp = probs_matrix(street, pattern, legal_t, hero_pos, starting_pot, patterns)
                 total = np.zeros(H)
                 for ai in range(len(legal)):
                     total = total + vals[ai] * hp[:, ai]
                 return total
 
             # Villain node: split reach by blueprint strategy, sum children.
-            probs = probs_matrix(street, pattern, legal_t, villain_pos, starting_pot)
+            probs = probs_matrix(street, pattern, legal_t, villain_pos, starting_pot, patterns)
             total = np.zeros(H)
             for ai, a in enumerate(legal):
                 total = total + child(a, rv * probs[:, ai], hr)

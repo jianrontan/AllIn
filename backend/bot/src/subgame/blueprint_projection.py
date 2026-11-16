@@ -16,6 +16,8 @@ For each tree decision node and each hand:
 Hands sharing a (preflop, strength) bucket share a key, so the blueprint is
 queried once per bucket group per node (reusing ba['groups'][3]).
 """
+
+from ..cfr.keys import spr_bucket, db_key_format
 import numpy as np
 
 from ..abstractions.sizing import POSTFLOP_BET_MULT
@@ -64,7 +66,7 @@ def _node_patterns(tree, postflop_menu=None):
     return pat
 
 
-def blueprint_strategy_on_tree(tree, ba, raw_strategy, postflop_menu=None):
+def blueprint_strategy_on_tree(tree, ba, raw_strategy, postflop_menu=None, key_format=None):
     """Per-node blueprint strategy on the tree.
 
     raw_strategy(key) -> {action: prob} or None (e.g. BlueprintDB.get_average_strategy).
@@ -77,11 +79,11 @@ def blueprint_strategy_on_tree(tree, ba, raw_strategy, postflop_menu=None):
     set -- pass postflop_menu_for(db_menu_mode(db)). Default = control menu.
     """
     return _project(tree, ba, raw_strategy, 3, ba['strg'][3], ba['groups'][3],
-                    postflop_menu)
+                    postflop_menu, key_format=key_format)
 
 
 def blueprint_cfv(tree, ba, raw_strategy, reach0, reach1, villain_seat,
-                  postflop_menu=None):
+                  postflop_menu=None, key_format=None):
     """Per-villain-hand counterfactual value at the river-entry root, with BOTH
     players playing the blueprint from the root to showdown -- the opt-out values
     for the safe-solving gadget (Phase 5a, SAFE_RIVER_SOLVING_PLAN.md piece 1).
@@ -101,7 +103,7 @@ def blueprint_cfv(tree, ba, raw_strategy, reach0, reach1, villain_seat,
     from .river_cfr import RiverCFR
 
     cfr = RiverCFR(tree, ba)
-    strat = blueprint_strategy_on_tree(tree, ba, raw_strategy, postflop_menu)
+    strat = blueprint_strategy_on_tree(tree, ba, raw_strategy, postflop_menu, key_format=key_format)
     v0, v1 = cfr._eval(tree.root, np.asarray(reach0, float),
                        np.asarray(reach1, float), lambda nid: strat[nid])
     return v1 if villain_seat == 1 else v0
@@ -114,6 +116,8 @@ def blueprint_turn_strategy_on_tree(tree, ba, raw_strategy, postflop_menu=None):
     build_turn_board_arrays(board4, cards) so it carries pf/strg2/groups2. Keys are
     street-2 turn keys; the turn pattern resets at the tree root (current-street only),
     matching the blueprint's turn key format."""
+    from ..cfr.keys import require_key_format
+    require_key_format(getattr(raw_strategy, '__self__', None), ('v2',), 'legacy turn projection')
     return _project(tree, ba, raw_strategy, 2, ba['strg2'], ba['groups2'], postflop_menu)
 
 
@@ -143,11 +147,14 @@ def blueprint_cfv_turn(tree, ba, raw_strategy, reach0, reach1, villain_seat,
     return v1 if villain_seat == 1 else v0
 
 
-def _project(tree, ba, raw_strategy, street, strg, groups, postflop_menu):
+def _project(tree, ba, raw_strategy, street, strg, groups, postflop_menu, key_format=None):
     """Shared projection: street 3 (river, strg[3]/groups[3]) or 2 (turn,
     strg2/groups2). _node_patterns + tree_action_char + blueprint_to_tree_dist are
     street-agnostic (they read node.pot_mid/to_call/actions), so only the key street +
     bucket arrays differ."""
+    source = getattr(raw_strategy, '__self__', None)
+    if key_format is None and hasattr(source, 'get_metadata'):
+        key_format = db_key_format(source)
     patterns = _node_patterns(tree, postflop_menu)
     pf = ba['pf']
     out = [None] * len(tree.decision_nodes)
@@ -157,7 +164,9 @@ def _project(tree, ba, raw_strategy, street, strg, groups, postflop_menu):
         pattern = patterns[nid]
         mat = np.zeros((ba['H'], len(node.actions)))
         for mask, rep in groups:
-            key = make_info_set_key(street, pos, pf[rep], strg[rep], pattern)
+            key = make_info_set_key(street, pos, pf[rep], strg[rep], pattern,
+                                    spr=spr_bucket(key_format, street, tree.pot_entry) if key_format else None,
+                                    key_format=key_format, tags='' if key_format == 'spr5a' else None)
             tree_dist = blueprint_to_tree_dist(raw_strategy(key) or {}, node, postflop_menu)
             mat[mask] = np.array([tree_dist[a] for a in node.actions])
         out[nid] = mat

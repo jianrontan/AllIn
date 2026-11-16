@@ -166,7 +166,7 @@ def replay(path):
     bot.reveal(FLOP)
     spr = spr_bucket(kf, 1, FLOP_POT)
     pf, st = vil._buckets(1, FLOP)
-    keys = {i: make_info_set_key(1, 'oop', pf[i], st[i], '', spr=spr)
+    keys = {i: make_info_set_key(1, 'oop', pf[i], st[i], '', spr=spr, key_format=kf, tags='i' if kf == 'spr5a' else None)
             for i in range(len(vil.hands)) if vil.w[i] > 0}
     legal = sorted({a for k in set(keys.values()) for a in (db.get_average_strategy(k) or {})})
     if 'allin' not in legal:
@@ -205,7 +205,7 @@ def replay(path):
     for i, h in enumerate(bot.hands):
         if bw[i] <= 0:
             continue
-        k = make_info_set_key(1, 'ip', bpf[i], bst[i], 'a', spr=spr)
+        k = make_info_set_key(1, 'ip', bpf[i], bst[i], 'a', spr=spr, key_format=kf, tags='i' if kf == 'spr5a' else None)
         if h == hero_t:
             hero_key = k
         callmass += bw[i] * fn(k, ('fold', 'call'))[1]

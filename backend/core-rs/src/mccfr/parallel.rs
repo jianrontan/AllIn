@@ -55,11 +55,15 @@ pub struct WorkerDelta {
     pub legal: FxHashMap<u64, Legal>,
     pub ev_sum: f64,
     pub ev_count: i64,
+    pub pruning: super::pruning::PruneTable,
+    pub prune_stats: super::pruning::PruneStats,
 }
 
 impl Trainer {
     fn into_delta(self) -> WorkerDelta {
         let mut d = WorkerDelta {
+            pruning: self.prune_table,
+            prune_stats: self.prune_stats,
             ev_sum: self.ev_sum,
             ev_count: self.ev_count,
             ..Default::default()
@@ -262,11 +266,14 @@ pub fn train_parallel<A: Abstraction + ?Sized>(
         let round_total = per_round.min(iterations - stats.iterations);
         let cursor = start + stats.iterations as i64;
         let base = Arc::new(std::mem::take(&mut master.table));
+        let prune_base = Arc::new(std::mem::take(&mut master.prune_table));
+        let prune_config = master.pruning;
         let next = AtomicU64::new(0);
         let results: Vec<Result<WorkerDelta, String>> = std::thread::scope(|s| {
             let handles: Vec<_> = (0..workers)
                 .map(|_| {
                     let base = Arc::clone(&base);
+                    let prune_base = Arc::clone(&prune_base);
                     let (next, mode) = (&next, &mode);
                     // Builder::spawn_scoped returns an error (instead of
                     // panicking) if the OS refuses a thread.
@@ -275,6 +282,8 @@ pub fn train_parallel<A: Abstraction + ?Sized>(
                         move || -> Result<WorkerDelta, String> {
                             let mut wt = Trainer::worker(mode, sched, base)?;
                             wt.key_format = key_format;
+                            wt.pruning = prune_config;
+                            wt.prune_base = Some(prune_base);
                             loop {
                                 let k = next.fetch_add(BLOCK, Ordering::Relaxed);
                                 if k >= round_total {
@@ -306,10 +315,52 @@ pub fn train_parallel<A: Abstraction + ?Sized>(
         // workers are joined here, so the Arc is unique (clone defensively
         // rather than ever lose the blueprint).
         master.table = Arc::try_unwrap(base).unwrap_or_else(|a| (*a).clone());
+        master.prune_table = Arc::try_unwrap(prune_base).unwrap_or_else(|a| (*a).clone());
         let deltas = results.into_iter().collect::<Result<Vec<_>, String>>()?;
         let touched = merge_round(&mut master.table, &deltas, sched.alpha, sched.gamma)?;
+        if let Some(config) = master.pruning {
+            for &key in &touched {
+                let Some(_) = deltas.iter().find(|w| w.pruning.contains_key(&key)) else {
+                    continue;
+                };
+                let base = master.prune_table.get(&key).copied().unwrap_or_default();
+                let t = master.table[&key].visit_count;
+                let decay = if t > 1 {
+                    ((t - 1) as f64 / t as f64).powf(sched.alpha)
+                } else {
+                    1.0
+                };
+                let mut state = base;
+                let inc = increment(
+                    &base.shadow,
+                    deltas
+                        .iter()
+                        .filter_map(|w| w.pruning.get(&key).map(|s| &s.shadow)),
+                )?;
+                state.shadow = merged(&base.shadow, &inc, decay, false)?;
+                state.visits = base.visits * decay;
+                state.dormant = 0;
+                for w in &deltas {
+                    if let Some(p) = w.pruning.get(&key) {
+                        state.visits += p.visits - base.visits;
+                        state.pot = state.pot.max(p.pot);
+                        state.dormant |= p.dormant;
+                    }
+                }
+                state.floor(config)?;
+                // Newly dormant actions are counted once here: each worker starts from
+                // the same base, so per-worker counts would repeat the same action.
+                master.prune_stats.dormant += (state.dormant & !base.dormant).count_ones() as u64;
+                master.prune_stats.reactivated +=
+                    state.refresh_dormant(&master.table[&key].regrets, config) as u64;
+                master.prune_table.insert(key, state);
+            }
+        }
         master.dirty.extend(touched);
         for d in &deltas {
+            let mut ws = d.prune_stats;
+            ws.dormant = 0; // counted at the merge above
+            master.prune_stats.add(ws);
             master.ev_sum += d.ev_sum;
             master.ev_count += d.ev_count;
             stats.ev_sum += d.ev_sum;

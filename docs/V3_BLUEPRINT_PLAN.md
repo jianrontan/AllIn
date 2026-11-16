@@ -608,14 +608,32 @@ others.
 | 1 | V3.16 code: key format `spr5a`, Python + Rust + parity | light |
 | 2 | V3.12 code: pruning in the Rust trainer, off by default, bit-identical when off | light |
 | 3 | Short `spr5a` runs: measure it/s on the bigger table; calibrate the prune threshold; read the pruning telemetry | ~1 h, plugged in |
-| 4 | Train C-long, D, E to the budget from step 3 (~1.6B iterations at today's speed: C-long ~7.5 h from 300M, D and E ~9.5 h each). Resumable: run whenever the laptop is idle | heavy, idle laptop |
+| 4 | Train C-long, D, E to the budget from step 3 (~1.6B iterations at today's speed: C-long ~7.5 h from 300M, D and E ~9.5 h each), with the recipes below. Resumable: run whenever the laptop is idle | heavy, idle laptop |
 | 5 | Evaluate (see "Evaluation for these arms"): screen, pick, confirm | heavy, a few hours per comparison |
 | 6 | Refit and restamp the opponent models and the jam read on `spr5a` (needed before any exploit-on evaluation of D/E) | light |
 | 7 | V3.13 code (two tables, fork mode), then DBR forks per P_max | code days; each fork a few hours |
 | 8 | V3.14: final pick among C300 / C-long / D / E / DBR, hardening, then Phase 7 (separate sign-off) | — |
 
 Disk: snapshots every 100M at ~430 MB each are ~7 GB per arm (E's prune scores are
-stripped from served snapshots); check free space before step 4.
+stripped from served snapshots); 732 GB were free on 2026-11-16.
+
+**Run recipes (step 4).** All three arms use C's settings so that only the named change
+differs: `--workers 12 --merge-every 2000 --alpha 1.5 --gamma 1.0 --menu-mode capped_pj
+--abstraction v3 --river-cache-boards 140000 --snapshot-every 100000000 --seed 20261110`
+(V3.4's recipe; per-iteration deals come from `iteration_rng(seed, iteration)`, so arms
+with the same seed see the same deal at the same iteration, and pruning's coin uses its
+own RNG).
+- **C-long:** copy C's training DB (`blueprint_par_cappedpj_spr5_v3_rs_20261110_013712_8d0598.db`,
+  not a snapshot) and `--resume` the copy with `--key-format spr5` up to D's iteration
+  count, so C300 itself stays untouched.
+- **D:** a new run, `--key-format spr5a`, to the step-3 budget.
+- **E:** D's exact command plus `--prune --prune-c <c> --prune-min-visits <n_min>
+  --prune-probability 0.95`, with c and n_min from step 3 (the CLI defaults 0.01 / 100
+  are uncalibrated). Resume an E run from its training DB, never a served snapshot.
+- Stopping and resuming any arm with the same command (plus `--resume`) continues the
+  same deal stream. It is not guaranteed bit-identical to an uninterrupted run (merge
+  rounds can fall on different iterations after a resume), which does not matter for the
+  comparison.
 
 ### V3.16 — history tags in the keys (`spr5a`)
 
@@ -689,8 +707,13 @@ stripped from served snapshots); check free space before step 4.
   that case more.
 - **Rule:** at a traverser node, action a is skipped only if all hold:
   1. its CFR+ regret is 0 (current probability 0) and the node's positive-regret sum is
-     > 0, so skipping it is exactly CFR+ for the node value and every sibling (flooring
-     would have discarded its increment anyway);
+     > 0. Skipping it leaves this visit's node value and every sibling's regret update
+     exactly as CFR+ computes them (a zero-probability action contributes nothing to the
+     node value). It is NOT equivalent to unpruned CFR+ overall: the skipped action's own
+     increment is lost, and that increment can be positive (an action at zero regret can
+     turn profitable), so its re-activation waits for a probe visit. The shadow
+     threshold and the 5% probes make this an approximate experiment, which is why E
+     keeps its own quality gates (review, 2026-11-16);
   2. its shadow score S(a), divided by the key's discounted raw-visit count N, is below
      −c × pot at that node, with N ≥ n_min (per-key warm-up instead of a global one);
   3. at least one action is still explored;
@@ -719,6 +742,55 @@ stripped from served snapshots); check free space before step 4.
 - **Gates:** strategy-shape probe (with the postflop checks below); BUG-027 replay; it/s
   vs D; H2H vs D at equal wall time (primary) and no worse at equal iterations; LBR no
   worse.
+
+### V3.16 / V3.12 — implementation 2026-11-16 (calibration and training pending)
+
+The code for steps 1–2 is implemented; this does **not** mark the training/evaluation
+steps or either arm's quality gates passed. C300 remains the selected base; production
+and its exploitation settings are unchanged.
+
+- `spr5a` is explicit in Python and Rust. Flop keys carry `t{preflop aggressor}`;
+  turn keys carry `t{flop aggressor}{preflop aggressor}`; river keys carry SPR with
+  no tag. n/i/o means no aggressor / IP / OOP. Packed Rust keys use 6 strength bits
+  and 4 history bits. Existing v2/spr5 key strings and training fixtures are unchanged.
+- Live sessions persist completed street patterns and reconstruct them from the action
+  log for older sessions. The range trackers, tilt, recap fitter, match/LBR/AIVAT readers,
+  river blueprint projection, history-measurement script and Python oracle thread the
+  same context. Missing `spr5a` tags fail loudly. Legacy turn-solving paths refuse formats
+  they cannot project. Opponent-model backoff reads the final pattern token, not the tag.
+- Rust pruning is opt-in (`--prune`). Defaults `--prune-c 0.01`,
+  `--prune-min-visits 100`, `--prune-probability 0.95` are **uncalibrated starting
+  values**, not a selected E configuration. Only zero-probability traverser actions may
+  be skipped; never river, fold, or a showdown call. A separate RNG leaves deal generation
+  untouched. Shadow scores and raw visits use the regret discount; workers carry raw
+  increments and the master floors once per merge. The recovery floor uses the largest
+  pot observed at a shared key, conservatively retaining its negative evidence.
+- Resumable checkpoints include an atomic `pruning_state` table and exact pruning
+  parameter/version metadata. A changed configuration or missing state is refused.
+  Served snapshots strip the table and are marked as such; resume an E run from its
+  training DB, not its served snapshot.
+- Progress reports skipped/explored actions, dormant/reactivation events, and absolute
+  postflop regret-update mass on own-reach < 1e-3 paths (also collected with pruning off).
+  Checkpoints print active dormant-pair counts and a bounded key/action/score/visit sample.
+  Counters describe the current process; the per-key shadow scores and visits persist.
+- Lightweight verification covers new-format Python/Rust fixture parity, packed-key
+  collisions, live roundtrips and recap replay, mixed-format matches/LBR, disabled-pruning
+  value identity, actual skips/reactivations, shadow bounds, parallel merging, exact
+  checkpoint continuation and stripped snapshots. The expensive BR smoke is excluded
+  from the broad backend check because BR work remains parked.
+
+Verification: 623 backend tests passed, one skipped, and the expensive BR smoke was
+excluded; subsequent focused history/projection checks passed (8 tests). Rust: 40
+unit tests and 51 parity/robustness tests passed. A 1,000-iteration, 2-worker `spr5a`
+run on the real v3 tables, with deliberately aggressive **test-only** pruning settings
+(c=1e-8, n_min=1), completed checkpointing and exercised skips and reactivations. This
+is a functional smoke, not a throughput calibration or a strategy-quality result.
+
+Next is step 3, with approval before the ~hour-long local calibration. Do not start the
+C-long/D/E overnight runs or quote their speed until that calibration is measured.
+The new models and jam read still need refitting/restamping before exploit-on D/E
+quality evaluation (step 6). No production deployment, base/menu switch, commit or push
+is part of this implementation.
 
 ### V3.13 — population-biased (DBR) blueprint (design revised after review)
 
@@ -753,7 +825,10 @@ stripped from served snapshots); check free space before step 4.
 
 - **Power:** paired AIVAT H2H has SE ≈ ±30 mbb/hand at 240k hands, so |t| > 2 only
   detects gains of ~60+. For 80% power, n ≈ 240k·(84/δ)²: ~680k hands for δ = 50, ~1.9M
-  for δ = 30. LBR (paired ±200 at 10k hands) needs ~30k paired hands for a 200 margin.
+  for δ = 30. LBR: ±200 at 10k paired hands is a standard error, so for a non-inferiority
+  margin of 200 at true difference 0, 30k hands gives only ~53% power; 80% power needs
+  ~62k paired hands with a one-sided 95% test, ~79k with a two-sided 95% interval
+  (n = 10k·((z_α + z_0.8)·200/200)²; review 2026-11-16).
 - **Margins, set before running:** every "no worse" gate states its non-inferiority
   margin and sample size up front.
 - **Snapshot choice without selection bias:** picking the best of ~16 snapshots on the

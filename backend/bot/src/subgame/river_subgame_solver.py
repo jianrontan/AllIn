@@ -34,7 +34,7 @@ from ..abstractions.hand_evaluator import HandEvaluator
 from ..abstractions.card_abstractions import shared_card_abstraction
 from ..abstractions.sizing import POSTFLOP_BET_MULT
 from ..cfr.poker_game import make_custom_action
-from ..cfr.keys import spr_bucket
+from ..cfr.keys import spr_bucket, db_key_format
 from ..evaluation.showdown_kernel import build_board_arrays
 from .river_tree import build_river_tree, is_sized, sized_chips, DEFAULT_MENU
 from .river_cfr import RiverCFR  # noqa: F401  (re-exported convenience)
@@ -1157,7 +1157,7 @@ class RiverSubgameSolver(BlueprintStrategy):
             if optout is None:
                 # Opt-out CFVs must be on the SAME reaches the gadget weights with.
                 optout = blueprint_cfv(tree, ba, raw, g0, g1, villain_seat,
-                                       self._postflop_menu)
+                                       self._postflop_menu, key_format=db_key_format(self.db) if self.db else None)
             # The rest of the shared budget, but never less than the reserved share.
             budget = max(2.0, self.time_budget * self._GADGET_RESERVE,
                          _deadline - time.time())
@@ -1197,7 +1197,8 @@ class RiverSubgameSolver(BlueprintStrategy):
             return cfr_g, info_g
         # B 'auto': self-check -- villain best-response (over the robust UNIFORM range) to
         # the unsafe strategy vs to the blueprint -- the exact comparison the battery makes.
-        bp_strat = blueprint_strategy_on_tree(tree, ba, raw, self._postflop_menu)
+        bp_strat = blueprint_strategy_on_tree(tree, ba, raw, self._postflop_menu,
+                                               key_format=db_key_format(self.db) if self.db else None)
         e_unsafe = float((uniform_villain * cfr._br_value(
             tree.root, villain_seat, hero, cfr.average_strategy)).sum())
         e_bp = float((uniform_villain * cfr._br_value(

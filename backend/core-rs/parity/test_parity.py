@@ -328,9 +328,9 @@ def _db_rows(path):
 
 
 @pytest.mark.parametrize('name', ['mccfr_control_g1', 'mccfr_capped_g1', 'mccfr_control_g2',
-                                  'mccfr_capped_spr5_g1', 'mccfr_capped_pj_spr5_g1'])
+                                  'mccfr_capped_spr5_g1', 'mccfr_capped_pj_spr5_g1', 'mccfr_capped_pj_spr5a_g1'])
 def test_mccfr(name, tmp_path):
-    component = 'mccfr_pj' if '_pj_' in name else 'mccfr_spr' if 'spr' in name else 'mccfr'
+    component = 'mccfr_spr5a' if 'spr5a' in name else 'mccfr_pj' if '_pj_' in name else 'mccfr_spr' if 'spr' in name else 'mccfr'
     core = need(component, f'{name}.json', f'{name}.db')
     with open(fixture_path(f'{name}.json')) as f:
         d = json.load(f)
@@ -371,7 +371,8 @@ def test_keys_spr():
     for c in d['cases']:
         assert core.spr_bucket(c['key_format'], c['street'], c['street_pot']) == c['spr'], c
         got = core.make_info_set_key(c['street'], c['position'], c['preflop_bucket'],
-                                     c['strength'], c['pattern'], c['spr'])
+                                     c['strength'], c['pattern'], c['spr'],
+                                     key_format=c['key_format'], tags=c.get('tags'))
         assert got == c['key'], c
 
 

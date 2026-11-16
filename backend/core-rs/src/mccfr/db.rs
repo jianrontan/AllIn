@@ -90,7 +90,25 @@ impl BlueprintDb {
         keys: impl Iterator<Item = &'k u64>,
         meta: &[(&str, String)],
     ) -> Result<usize, String> {
+        self.save_checkpoint_with_pruning(table, keys, meta, None)
+    }
+
+    pub fn save_checkpoint_with_pruning<'k>(
+        &mut self,
+        table: &Table,
+        keys: impl Iterator<Item = &'k u64>,
+        meta: &[(&str, String)],
+        pruning: Option<&super::pruning::PruneTable>,
+    ) -> Result<usize, String> {
         let tx = self.conn.transaction().map_err(e)?;
+        if pruning.is_some() {
+            tx.execute_batch(
+                "CREATE TABLE IF NOT EXISTS pruning_state (
+                key TEXT PRIMARY KEY, shadow TEXT NOT NULL, visits REAL NOT NULL,
+                pot REAL NOT NULL, dormant INTEGER NOT NULL)",
+            )
+            .map_err(e)?;
+        }
         let mut n = 0;
         {
             let mut stmt = tx
@@ -127,6 +145,30 @@ impl BlueprintDb {
                     is.last_strategy
                 ])
                 .map_err(e)?;
+                if let Some(state) = pruning.and_then(|p| p.get(k)) {
+                    if !state.visits.is_finite()
+                        || !state.pot.is_finite()
+                        || state.shadow.iter().any(|(_, v)| !v.is_finite())
+                    {
+                        return Err("non-finite pruning state".into());
+                    }
+                    let shadow: serde_json::Map<String, Value> = state
+                        .shadow
+                        .iter()
+                        .map(|(a, v)| (id_action(a).name(), Value::from(v)))
+                        .collect();
+                    tx.execute(
+                        "INSERT OR REPLACE INTO pruning_state VALUES (?1,?2,?3,?4,?5)",
+                        params![
+                            key_string(*k),
+                            Value::Object(shadow).to_string(),
+                            state.visits,
+                            state.pot,
+                            state.dormant
+                        ],
+                    )
+                    .map_err(e)?;
+                }
                 n += 1;
             }
             let mut ms = tx
@@ -158,6 +200,43 @@ impl BlueprintDb {
                     .map_err(|x| format!("metadata {key:?}: {x}"))
             }
         }
+    }
+
+    pub fn load_pruning(&self) -> Result<super::pruning::PruneTable, String> {
+        use super::pruning::{PruneState, PruneTable};
+        let mut out = PruneTable::default();
+        let mut stmt = self
+            .conn
+            .prepare("SELECT key,shadow,visits,pot,dormant FROM pruning_state")
+            .map_err(e)?;
+        let mut rows = stmt.query([]).map_err(e)?;
+        while let Some(r) = rows.next().map_err(e)? {
+            let mut state = PruneState {
+                visits: r.get(2).map_err(e)?,
+                pot: r.get(3).map_err(e)?,
+                dormant: r.get(4).map_err(e)?,
+                ..Default::default()
+            };
+            let m: Value = serde_json::from_str(&r.get::<_, String>(1).map_err(e)?)
+                .map_err(|e| e.to_string())?;
+            for (a, v) in m.as_object().ok_or("invalid shadow map")? {
+                state.shadow.set(
+                    id_from_name(a)?,
+                    v.as_f64()
+                        .filter(|v| v.is_finite())
+                        .ok_or("invalid shadow value")?,
+                )?;
+            }
+            if !state.visits.is_finite()
+                || state.visits < 0.0
+                || !state.pot.is_finite()
+                || state.pot < 0.0
+            {
+                return Err("invalid pruning visits/pot".into());
+            }
+            out.insert(parse_key(&r.get::<_, String>(0).map_err(e)?)?, state);
+        }
+        Ok(out)
     }
 
     /// Every info set (`load_all_to_memory`).

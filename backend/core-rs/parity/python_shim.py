@@ -82,9 +82,9 @@ class Buckets:
 
 
 # -- keys ---------------------------------------------------------------------
-def make_info_set_key(street, position, preflop_bucket, strength, pattern, spr=None):
+def make_info_set_key(street, position, preflop_bucket, strength, pattern, spr=None, *, key_format=None, tags=None):
     from src.cfr.keys import make_info_set_key as mk
-    return mk(street, position, preflop_bucket, strength, pattern, spr)
+    return mk(street, position, preflop_bucket, strength, pattern, spr, key_format=key_format, tags=tags)
 
 
 def spr_bucket(key_format, street, street_pot):

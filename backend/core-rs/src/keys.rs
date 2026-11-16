@@ -45,6 +45,7 @@ pub enum KeyFormat {
     #[default]
     V2,
     Spr5,
+    Spr5a,
 }
 
 impl KeyFormat {
@@ -52,6 +53,7 @@ impl KeyFormat {
         match s {
             "v2" => Ok(KeyFormat::V2),
             "spr5" => Ok(KeyFormat::Spr5),
+            "spr5a" => Ok(KeyFormat::Spr5a),
             _ => Err(format!("unknown key_format {s:?}")),
         }
     }
@@ -59,6 +61,7 @@ impl KeyFormat {
         match self {
             KeyFormat::V2 => "v2",
             KeyFormat::Spr5 => "spr5",
+            KeyFormat::Spr5a => "spr5a",
         }
     }
 }
@@ -71,7 +74,9 @@ const KEY_STARTING_STACK: f64 = 200.0;
 /// spr5 format, from the pot when the street began; None for v2 / preflop /
 /// river. Same float operations as Python, so the bucket is bit-identical.
 pub fn spr_bucket(fmt: KeyFormat, street: u8, street_pot: f64) -> Result<Option<u8>, String> {
-    if fmt == KeyFormat::V2 || !(street == 1 || street == 2) {
+    if fmt == KeyFormat::V2
+        || !(street == 1 || street == 2 || (fmt == KeyFormat::Spr5a && street == 3))
+    {
         return Ok(None);
     }
     if !street_pot.is_finite() || street_pot <= 0.0 {
@@ -204,4 +209,88 @@ mod tests {
         assert!(action_char(Action::parse("raise_xlarge").unwrap()).is_err());
         assert!(action_char(Action::parse("bet_custom_10").unwrap()).is_err());
     }
+}
+
+/// Last aggressive actor in a street (0 none, 1 IP, 2 OOP).
+pub fn last_aggressor(pattern: &str, street: u8) -> u8 {
+    last_aggressor_chars(pattern.bytes(), street)
+}
+
+pub fn last_aggressor_chars(pattern: impl Iterator<Item = u8>, street: u8) -> u8 {
+    let mut last = 0;
+    for (i, ch) in pattern.enumerate() {
+        if b"smlxo2a".contains(&ch) {
+            last = if (i + usize::from(street != 0)) % 2 == 0 {
+                1
+            } else {
+                2
+            };
+        }
+    }
+    last
+}
+
+/// Compact context: 1..3 flop tags; 4..12 turn tags (flop first, preflop second).
+pub fn tag_code(street: u8, pre: u8, flop: u8) -> u8 {
+    match street {
+        1 => 1 + pre,
+        2 => 4 + 3 * flop + pre,
+        _ => 0,
+    }
+}
+
+pub fn tag_text(code: u8) -> String {
+    let chars = ['n', 'i', 'o'];
+    match code {
+        1..=3 => chars[(code - 1) as usize].to_string(),
+        4..=12 => format!(
+            "{}{}",
+            chars[((code - 4) / 3) as usize],
+            chars[((code - 4) % 3) as usize]
+        ),
+        _ => String::new(),
+    }
+}
+
+/// Explicit format-aware string API. Legacy callers retain the spr-inferred API.
+pub fn make_context_key(
+    street: u8,
+    position: &str,
+    fine: usize,
+    strength: Option<i64>,
+    pattern: &str,
+    f2c: &[u8],
+    spr: Option<u8>,
+    fmt: Option<KeyFormat>,
+    tags: Option<&str>,
+) -> Result<String, String> {
+    if fmt != Some(KeyFormat::Spr5a) {
+        if tags.is_some_and(|t| !t.is_empty()) {
+            return Err("history tags require spr5a".into());
+        }
+        return make_info_set_key(street, position, fine, strength, pattern, f2c, spr);
+    }
+    let count = match street {
+        1 => 1,
+        2 => 2,
+        _ => 0,
+    };
+    let t = tags.ok_or("spr5a requires explicit history tags")?;
+    if t.len() != count || !t.bytes().all(|c| b"nio".contains(&c)) {
+        return Err("invalid spr5a history tags".into());
+    }
+    if street == 0 {
+        return make_info_set_key(street, position, fine, strength, pattern, f2c, spr);
+    }
+    let r = spr
+        .filter(|&b| b <= 4)
+        .ok_or("spr5a requires SPR bucket 0..4")?;
+    let base = make_info_set_key(street, position, fine, strength, pattern, f2c, None)?;
+    let (prefix, _) = base.rsplit_once('_').unwrap();
+    let tag = if t.is_empty() {
+        String::new()
+    } else {
+        format!("t{t}_")
+    };
+    Ok(format!("{prefix}_r{r}_{tag}{pattern}"))
 }

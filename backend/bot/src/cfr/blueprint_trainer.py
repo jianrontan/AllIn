@@ -1,3 +1,4 @@
+from .keys import history_tags
 # backend/bot/src/cfr/blueprint_trainer.py
 import os
 import random
@@ -69,7 +70,7 @@ class BlueprintTrainer:
         if menu_mode not in MENU_MODES:
             raise ValueError(f"menu_mode must be one of {MENU_MODES}, got {menu_mode!r}")
         self.game = PokerGame(**game_kwargs(menu_mode))
-        self.game_adapter = GameAdapter()
+        self.game_adapter = GameAdapter(key_format=key_format)
         self.deck = self.create_deck()
 
         # Discount exponents (Linear-CFR-style; cf. Brown & Sandholm 2019).
@@ -163,6 +164,7 @@ class BlueprintTrainer:
                                  _final_pot=state['pot'],
                                  _p0_total=p0_inv + state['c'][0])
 
+        street_patterns = ['', '', '', '']
         for _ in range(60):
             if street > 3 or g.is_terminal(history, street):
                 return term(street, st)
@@ -176,6 +178,7 @@ class BlueprintTrainer:
                 p1_inv += st['c'][1]
                 p0_stack = STARTING_STACK - p0_inv
                 p1_stack = STARTING_STACK - p1_inv
+                street_patterns[street] = pat
                 spot, street, history, pat = st['pot'], street + 1, [], ''
                 st = g.init_node_state(street, spot)
                 continue
@@ -183,7 +186,8 @@ class BlueprintTrainer:
             pf = self._p0_preflop if cp == 0 else self._p1_preflop
             strength = self._postflop_strength(cp, street, comm) if street > 0 else None
             key = make_info_set_key(street, pos, pf, strength, pat,
-                                    spr_bucket(self.key_format, street, spot))
+                                    spr_bucket(self.key_format, street, spot), key_format=self.key_format,
+                                    tags=history_tags(self.key_format, street, street_patterns))
             iset = self.info_sets.get(key)
             if iset is None:
                 probs = [1.0 / len(legal)] * len(legal)
@@ -240,7 +244,7 @@ class BlueprintTrainer:
     def cfr(self, p0_cards, p1_cards, community_cards, history,
             street, updating_player, depth=0, iteration=0, starting_pot=None,
             p0_invested=0.0, p1_invested=0.0, bet_pattern='',
-            p0_stack=None, p1_stack=None, st=None):
+            p0_stack=None, p1_stack=None, st=None, street_patterns=('', '', '', '')):
         """
         External-sampling Monte Carlo CFR+ (with Linear-CFR-style regret discounting).
 
@@ -302,7 +306,8 @@ class BlueprintTrainer:
                                 depth + 1, iteration, st['pot'],
                                 p0_invested + p0_this, p1_invested + p1_this,
                                 bet_pattern='',
-                                p0_stack=new_p0_stack, p1_stack=new_p1_stack, st=None)
+                                p0_stack=new_p0_stack, p1_stack=new_p1_stack, st=None,
+                                street_patterns=street_patterns[:street] + (bet_pattern,) + street_patterns[street+1:])
             else:
                 return _terminal_value(street)
 
@@ -313,7 +318,8 @@ class BlueprintTrainer:
                     if street > 0 else None)
         info_set_key = make_info_set_key(
             street, position, preflop_bucket, strength, bet_pattern,
-            spr_bucket(self.key_format, street, starting_pot))
+            spr_bucket(self.key_format, street, starting_pot), key_format=self.key_format,
+            tags=history_tags(self.key_format, street, street_patterns))
 
         if info_set_key not in self.info_sets:
             self.info_sets[info_set_key] = InformationSet()
@@ -367,7 +373,7 @@ class BlueprintTrainer:
                     street, updating_player,
                     depth + 1, iteration, starting_pot,
                     p0_invested, p1_invested, next_pattern,
-                    new_p0_stack, new_p1_stack, st=child_st))
+                    new_p0_stack, new_p1_stack, st=child_st, street_patterns=street_patterns))
 
             # Convert to the acting player's own perspective for regret matching.
             sign = 1.0 if current_player == 0 else -1.0
@@ -431,7 +437,7 @@ class BlueprintTrainer:
                 street, updating_player,
                 depth + 1, iteration, starting_pot,
                 p0_invested, p1_invested, next_pattern,
-                new_p0_stack, new_p1_stack, st=child_st)
+                new_p0_stack, new_p1_stack, st=child_st, street_patterns=street_patterns)
 
     def _run_iteration(self, actual_iteration):
         """One MCCFR+ iteration: deal a hand, set up the per-iteration bucket

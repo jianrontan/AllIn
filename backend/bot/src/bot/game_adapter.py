@@ -1,11 +1,13 @@
 # backend/bot/src/bot/game_adapter.py
 from ..abstractions.card_abstractions import CardAbstraction
 from ..abstractions.action_abstractions import ActionAbstraction
-from ..cfr.keys import make_info_set_key, action_char, STREET_NAMES
+from ..cfr.keys import make_info_set_key, action_char, STREET_NAMES, spr_bucket, history_tags
 
 
 class GameAdapter:
-    def __init__(self, menu_mode='control'):
+    def __init__(self, menu_mode='control', key_format='v2'):
+        spr_bucket(key_format, 0, 3.0)
+        self.key_format = key_format
         self.card_abstractions = CardAbstraction()
         # menu_mode drives the action abstraction so the PyPokerEngine path serves a
         # capped blueprint on its own menu (2.0x tier, no voluntary all-in).
@@ -29,8 +31,21 @@ class GameAdapter:
         starting_hand = self.card_abstractions.get_bucket(hole_card, None)
         current_strength = self.card_abstractions.get_bucket(
             hole_card, round_state.get('community_card'))
+        patterns = round_state.get('street_patterns')
+        if patterns is None:
+            if self.key_format == 'spr5a' and 'cfr_history' in round_state:
+                raise ValueError('spr5a synthetic states require street_patterns')
+            patterns = [self._extract_betting_pattern({**round_state, 'street': st})
+                        for st in STREET_NAMES]
+        street_pot = round_state.get('street_pot')
+        if street_pot is None:
+            actions = round_state.get('action_histories', {}).get(street_str, [])
+            street_pot = (round_state.get('pot', {}).get('main', {}).get('amount', 3)
+                          - sum(a.get('paid', 0) for a in actions))
         return make_info_set_key(
-            street, position, starting_hand, current_strength, betting_pattern)
+            street, position, starting_hand, current_strength, betting_pattern,
+            spr=spr_bucket(self.key_format, street, street_pot), key_format=self.key_format,
+            tags=history_tags(self.key_format, street, patterns))
 
     def _extract_betting_pattern(self, round_state):
         """Extract betting pattern string from round_state action histories"""

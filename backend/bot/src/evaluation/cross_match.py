@@ -19,6 +19,8 @@ only the abstraction (sizing + pattern perception) is per-player. Validated by:
 tests/run_cross_match.py (sizing-vs-native-engine, self-vs-self ~= 0, new-vs-new
 == match.py within noise, and a cross-perception unit check).
 """
+
+from ..cfr.keys import history_tags
 import os
 import random
 
@@ -142,7 +144,7 @@ class CrossBot:
         from ..cfr.keys import require_key_format
         # Each bot builds keys in its OWN blueprint's format (v3/spr5 vs v2).
         self.key_format = require_key_format(
-            strategy_source, ('v2', 'spr5'), 'cross_match') or 'v2'
+            strategy_source, ('v2', 'spr5', 'spr5a'), 'cross_match') or 'v2'
         self.src = strategy_source
         self.sizing = sizing
         self.cards = cards
@@ -205,7 +207,8 @@ class CrossBot:
         if street == 0:
             return make_info_set_key(0, pos, pre, None, pattern)
         return make_info_set_key(street, pos, pre, self.cards.get_bucket(list(hand), vis), pattern,
-                                 spr_bucket(self.key_format, street, street_pot))
+                                 spr_bucket(self.key_format, street, street_pot), key_format=self.key_format,
+                                 tags=history_tags(self.key_format, street, getattr(self, 'street_patterns', None)))
 
     def blend_dist(self, seat, hand, vis, street, base, brackets, street_pot):
         """Pseudo-harmonic blend of the blueprint response across the two
@@ -264,6 +267,8 @@ class CrossMatch:
         folded = None
         events = [] if record is not None else None
 
+        for player in players.values():
+            player.street_patterns = ['', '', '', '']
         street = 0
         while street <= 3:
             vis = [] if street == 0 else board[:2 + street]
@@ -361,6 +366,8 @@ class CrossMatch:
                     need.discard(actor)
                 actor = other
 
+            for seat, player in players.items():
+                player.street_patterns[street] = pattern[seat]
             if folded is not None:
                 break
             if min(stack) <= 0:

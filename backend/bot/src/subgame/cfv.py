@@ -74,6 +74,8 @@ def turn_leaf_value_exact(board4, pot, stacks, hero_seat, hero_range, villain_ra
     over river runouts. Hands that block no runout see all 46 rivers; the mean is over
     the runouts where the hand exists (uniform chance, card removal handled by the
     per-river 5-card basis dropping blocked hands)."""
+    from ..cfr.keys import require_key_format
+    require_key_format(db, ('v2', 'spr5'), 'legacy turn-leaf projection')
     board_set = set(board4)
     acc = defaultdict(float)
     cnt = defaultdict(int)
@@ -125,6 +127,8 @@ def turn_leaf_br_value(board4, pot, stacks, br_seat, fixed_range,
     RiverCFR._br_value lets `br_seat` best-respond against it. Returns {br_hand: value}
     (MEASURE units, vs `fixed_range`), runout-averaged. `fixed_range` is the opponent's
     range entering the leaf (the reach the BR is computed against)."""
+    from ..cfr.keys import require_key_format
+    require_key_format(db, ('v2', 'spr5'), 'legacy turn-leaf projection')
     board_set = set(board4)
     acc = defaultdict(float)
     cnt = defaultdict(int)
@@ -217,6 +221,8 @@ def turn_leaf_matrix(board4, pot, stacks, hero_seat, db, evaluator, cards,
 
     Returns (M, buckets, bidx, tb): M is [B, B]; buckets the sorted turn-bucket ids;
     bidx {bucket: row/col index}; tb {turn_hand: turn_bucket}."""
+    from ..cfr.keys import require_key_format
+    require_key_format(db, ('v2', 'spr5'), 'legacy turn-leaf projection')
     tb = partition if partition is not None else {
         h: turn_bucket(h, board4, cards) for h in turn_hands(board4)}
     buckets = sorted(set(tb.values()))
@@ -295,6 +301,8 @@ def turn_leaf_matrix_both(board4, pot, stacks, db, evaluator, cards,
     cost (one `_eval` per bucket, not two). Standard subgame-solver practice.
 
     Returns (M0, M1, buckets, bidx, tb)."""
+    from ..cfr.keys import require_key_format
+    require_key_format(db, ('v2', 'spr5'), 'legacy turn-leaf projection')
     tb = partition if partition is not None else {
         h: turn_bucket(h, board4, cards) for h in turn_hands(board4)}
     buckets = sorted(set(tb.values()))
@@ -377,6 +385,8 @@ def turn_leaf_matrix_multivalued(board4, pot, stacks, db, evaluator, cards,
     for them, not mirrored), so CFR+'s root zero-sum/exploitability no longer hits ~0 --
     fine for an OFFLINE EV gate (we read realized play, not the convergence gap).
     Drop-in for turn_leaf_matrix_both: returns (M0, M1, buckets, bidx, tb)."""
+    from ..cfr.keys import require_key_format
+    require_key_format(db, ('v2', 'spr5'), 'legacy turn-leaf projection')
     tb = partition if partition is not None else {
         h: turn_bucket(h, board4, cards) for h in turn_hands(board4)}
     buckets = sorted(set(tb.values()))

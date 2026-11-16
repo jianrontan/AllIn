@@ -30,7 +30,7 @@ BotRange unchanged. Slow (~1 solve per river bot decision) -> an offline job.
 """
 from .lbr import (LBREvaluator, BotRange, SB, BB, MAX_AGGR_PER_STREET, _FULL_DECK)
 from ..cfr.poker_game import STARTING_STACK
-from ..cfr.keys import make_info_set_key
+from ..cfr.keys import make_info_set_key, spr_bucket, history_tags
 from ..cfr import translation
 from ..game.range_tracker import RangeTracker
 
@@ -91,7 +91,9 @@ class SolverLBREvaluator(LBREvaluator):
         pos = self._pos(bot_seat)
         key = make_info_set_key(
             3, pos, self.cards.get_bucket(list(bot_hand), None),
-            self.cards.get_bucket(list(bot_hand), vis), pattern)
+            self.cards.get_bucket(list(bot_hand), vis), pattern,
+            spr=spr_bucket(self.key_format, 3, river_entry_pot),
+            key_format=self.key_format, tags='' if self.key_format == 'spr5a' else None)
         entry_stack = STARTING_STACK - invested[bot_seat] + committed[bot_seat]  # river-entry behind
         ps = {
             'street': 'river', 'community': vis, 'hole_cards': list(bot_hand),
@@ -119,6 +121,7 @@ class SolverLBREvaluator(LBREvaluator):
         return char, add, True, _grid_action_for_char(char, to_call)
 
     def play_hand(self, lbr_seat, lbr_hand, bot_hand, board):
+        self.street_patterns = ['', '', '', '']
         bot_seat = 1 - lbr_seat
         invested = [SB, BB]
         stack = [STARTING_STACK - SB, STARTING_STACK - BB]
@@ -177,7 +180,9 @@ class SolverLBREvaluator(LBREvaluator):
                         glegal = _grid_legal(to_call, can_aggr)
                         if snapped in glegal:
                             opp_belief.observe(self.restricted_probs, snapped, street,
-                                               self._pos(lbr_seat), pattern, glegal, vis)
+                                               self._pos(lbr_seat), pattern, glegal, vis,
+                                     spr=self._spr(street, invested, committed), key_format=self.key_format,
+                                     tags=history_tags(self.key_format, street, getattr(self, 'street_patterns', None)))
                 elif street < 3:
                     char, add, aggr = self._bot_act(
                         bot_seat, bot_hand, vis, street, invested, stack, committed,
@@ -187,7 +192,9 @@ class SolverLBREvaluator(LBREvaluator):
                     glegal = _grid_legal(to_call, can_aggr)
                     if snapped in glegal:
                         hero.observe(self.restricted_probs, snapped, street,
-                                     self._pos(bot_seat), pattern, glegal, vis)
+                                     self._pos(bot_seat), pattern, glegal, vis,
+                                     spr=self._spr(street, invested, committed), key_format=self.key_format,
+                                     tags=history_tags(self.key_format, street, getattr(self, 'street_patterns', None)))
                 else:
                     # RIVER: the bot plays the solver.
                     self.diag['bot_river_decision'] += 1
@@ -199,7 +206,9 @@ class SolverLBREvaluator(LBREvaluator):
                     glegal = _grid_legal(to_call, can_aggr)
                     if snapped in glegal:
                         botrange.observe(self.restricted_probs, snapped, street,
-                                         self._pos(bot_seat), pattern, glegal, vis)
+                                         self._pos(bot_seat), pattern, glegal, vis,
+                                     spr=self._spr(street, invested, committed), key_format=self.key_format,
+                                     tags=history_tags(self.key_format, street, getattr(self, 'street_patterns', None)))
 
                 if char == 'f':
                     folded = actor
@@ -209,6 +218,7 @@ class SolverLBREvaluator(LBREvaluator):
                 committed[actor] += add
                 stack[actor] -= add
                 pattern += char
+                self.street_patterns[street] = pattern
                 if street == 3:                                # record the river path
                     if char == 'k':
                         river_specs.append('check')

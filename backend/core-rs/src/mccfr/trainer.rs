@@ -10,8 +10,9 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use super::rng::Uniform;
-use super::table::{InfoSet, MAX_ACTIONS, Pattern, action_id, floor0, id_action, pack_key};
+use super::pruning::{PruneConfig, PruneState, PruneStats, PruneTable};
+use super::rng::{Uniform, Xoshiro};
+use super::table::{InfoSet, MAX_ACTIONS, Pattern, action_id, floor0, id_action, pack_key_context};
 use crate::engine::{self, Action, Engine, NodeState, STARTING_STACK};
 
 /// Card abstraction the trainer reads (the bucketing component, or fixture
@@ -104,6 +105,11 @@ pub struct Trainer {
     /// and copy an entry into `table` on first touch).
     base: Option<std::sync::Arc<Table>>,
     max_depth_warned: bool,
+    pub pruning: Option<PruneConfig>,
+    pub prune_table: PruneTable,
+    pub prune_base: Option<std::sync::Arc<PruneTable>>,
+    pub prune_stats: PruneStats,
+    prune_rng: Xoshiro,
 }
 
 /// Arguments that change per recursion step.
@@ -119,6 +125,8 @@ struct Node {
     street_pot: f64,
     /// Index in the history buffer where this street's actions start.
     h0: usize,
+    aggressors: [u8; 2],
+    own_reach: f64,
 }
 
 impl Trainer {
@@ -137,6 +145,11 @@ impl Trainer {
             ev_count: 0,
             base: None,
             max_depth_warned: false,
+            pruning: None,
+            prune_table: PruneTable::default(),
+            prune_base: None,
+            prune_stats: PruneStats::default(),
+            prune_rng: Xoshiro::new(0),
         })
     }
 
@@ -162,6 +175,15 @@ impl Trainer {
         })
     }
 
+    fn prune_entry(&mut self, key: u64) -> &mut PruneState {
+        let base = &self.prune_base;
+        self.prune_table.entry(key).or_insert_with(|| {
+            base.as_ref()
+                .and_then(|b| b.get(&key).copied())
+                .unwrap_or_default()
+        })
+    }
+
     /// One MCCFR+ iteration for `deal` = [p0 hole x2, p1 hole x2, board x5].
     /// Returns the sampled root utility (P0 perspective).
     pub fn run_iteration<A: Abstraction + ?Sized, R: Uniform>(
@@ -171,6 +193,14 @@ impl Trainer {
         abs: &A,
         rng: &mut R,
     ) -> Result<f64, String> {
+        if self.pruning.is_some() {
+            let seed = deal
+                .iter()
+                .fold(iteration as u64 ^ 0xCAFE_5371_D9B2_8403, |s, &c| {
+                    s.rotate_left(7) ^ c as u64
+                });
+            self.prune_rng = Xoshiro::new(seed);
+        }
         let hole = [[deal[0], deal[1]], [deal[2], deal[3]]];
         let fine = [abs.preflop_fine(hole[0]), abs.preflop_fine(hole[1])];
         let mut hand = Hand {
@@ -193,6 +223,8 @@ impl Trainer {
             st: self.engine.init_node_state(0, 3.0),
             street_pot: 3.0,
             h0: 0,
+            aggressors: [0; 2],
+            own_reach: 1.0,
         };
         let util = self.cfr(&mut hand, &mut hist, root, updating, iteration, rng)?;
         self.ev_sum += util;
@@ -252,6 +284,11 @@ impl Trainer {
         if legal_buf.is_empty() {
             if n.street < 3 {
                 let p_inv = [n.p_inv[0] + n.st.c[0], n.p_inv[1] + n.st.c[1]];
+                let mut aggressors = n.aggressors;
+                if n.street < 2 {
+                    aggressors[n.street as usize] =
+                        crate::keys::last_aggressor_chars(n.pattern.chars(), n.street);
+                }
                 let next = Node {
                     street: n.street + 1,
                     depth: n.depth + 1,
@@ -261,6 +298,8 @@ impl Trainer {
                     st: self.engine.init_node_state(n.street + 1, n.st.pot),
                     street_pot: n.st.pot,
                     h0: hist.len(),
+                    aggressors,
+                    own_reach: n.own_reach,
                 };
                 return self.cfr(hand, hist, next, upd, iteration, rng);
             }
@@ -281,7 +320,12 @@ impl Trainer {
             (hand.coarse[seat], hand.strength(seat, n.street)?)
         };
         let spr = crate::keys::spr_bucket(self.key_format, n.street, n.street_pot)?;
-        let key = pack_key(n.street, cp, bucket, strength, n.pattern, spr)?;
+        let tags = if self.key_format == crate::keys::KeyFormat::Spr5a {
+            crate::keys::tag_code(n.street, n.aggressors[0], n.aggressors[1])
+        } else {
+            0
+        };
+        let key = pack_key_context(n.street, cp, bucket, strength, n.pattern, spr, tags)?;
         self.dirty.insert(key);
 
         let mut strat = [0.0f64; MAX_ACTIONS];
@@ -308,6 +352,7 @@ impl Trainer {
             if !discount {
                 self.dirty_regret.insert(key);
             }
+            let mut prune_decay = 1.0;
             {
                 let is = self.entry(key);
                 // Python computes the strategy BEFORE the discount (scaling then
@@ -320,13 +365,56 @@ impl Trainer {
                     if t > 1 {
                         let decay = ((t - 1) as f64 / t as f64).powf(sched.alpha);
                         is.regrets.scale(decay);
+                        prune_decay = decay;
+                    }
+                }
+            }
+            let mut skip = [false; MAX_ACTIONS];
+            let mut dormant_flags = [false; MAX_ACTIONS];
+            if let Some(config) = self.pruning {
+                let coin = self.prune_rng.uniform()? < config.probability;
+                let state = self.prune_entry(key);
+                state.shadow.scale(prune_decay);
+                state.visits *= prune_decay;
+                state.pot = state.pot.max(n.st.pot);
+                let positive =
+                    strat[..na].iter().any(|&p| p > 0.0) && strat[..na].iter().any(|&p| p == 0.0);
+                for i in 0..na {
+                    let a = id_action(legal[i]);
+                    let showdown_call = a == Action::Call
+                        && self.engine.action_cost(a, n.street, &n.st, cp, stack_cp)?
+                            >= stack_cp - 1e-9;
+                    dormant_flags[i] = n.street != 3
+                        && a != Action::Fold
+                        && !showdown_call
+                        && positive
+                        && strat[i] == 0.0
+                        && self.prune_table[&key].eligible(legal[i], n.st.pot, config);
+                    skip[i] = coin && dormant_flags[i];
+                }
+                // Telemetry only (decisions above are recomputed every visit): mark
+                // newly dormant actions here; a bit is cleared, and counted as a
+                // re-activation, only by `refresh_dormant` once the action's regret
+                // turns positive (node end single-threaded, the merge in parallel).
+                let state = self.prune_table.get_mut(&key).unwrap();
+                for i in 0..na {
+                    let bit = 1u16 << legal[i];
+                    if dormant_flags[i] && state.dormant & bit == 0 {
+                        state.dormant |= bit;
+                        self.prune_stats.dormant += 1;
                     }
                 }
             }
             let mut vals = [0.0f64; MAX_ACTIONS];
             for i in 0..na {
+                if skip[i] {
+                    self.prune_stats.skipped += 1;
+                    continue;
+                }
+                self.prune_stats.explored += 1;
                 let a = id_action(legal[i]);
-                let c = child(self, a)?;
+                let mut c = child(self, a)?;
+                c.own_reach *= strat[i];
                 hist.push(a);
                 let v = self.cfr(hand, hist, c, upd, iteration, rng);
                 hist.pop();
@@ -341,9 +429,33 @@ impl Trainer {
             }
             let is = self.table.get_mut(&key).expect("info set present");
             for i in 0..na {
+                if skip[i] {
+                    continue;
+                }
                 let regret = own[i] - node_value;
                 let prior = is.regrets.get(legal[i]).unwrap_or(0.0);
                 is.regrets.set(legal[i], floor0(prior + regret))?;
+                if n.street > 0 {
+                    self.prune_stats.update_mass += regret.abs();
+                    if n.own_reach < 1e-3 {
+                        self.prune_stats.low_reach_mass += regret.abs();
+                    }
+                }
+                if self.pruning.is_some() {
+                    let state = self.prune_table.get_mut(&key).unwrap();
+                    state
+                        .shadow
+                        .set(legal[i], state.shadow.get(legal[i]).unwrap_or(0.0) + regret)?;
+                }
+            }
+            if let Some(config) = self.pruning {
+                let state = self.prune_table.get_mut(&key).unwrap();
+                state.visits += 1.0;
+                if discount {
+                    state.floor(config)?;
+                    self.prune_stats.reactivated +=
+                        state.refresh_dormant(&self.table[&key].regrets, config) as u64;
+                }
             }
             Ok(sign * node_value)
         } else {
@@ -416,6 +528,9 @@ impl Trainer {
             ("ev_sum", py_repr(self.ev_sum)),
             ("ev_count", self.ev_count.to_string()),
         ];
+        if let Some(config) = self.pruning {
+            meta.push(("pruning", config.json().to_string()));
+        }
         if self.key_format != crate::keys::KeyFormat::V2 {
             // Absent = v2, so v2 blueprints stay byte-identical to Python's.
             meta.push(("key_format", format!("\"{}\"", self.key_format.name())));
@@ -430,7 +545,16 @@ impl Trainer {
         iteration: i64,
     ) -> Result<usize, String> {
         let meta = self.checkpoint_meta(iteration);
-        let n = db.save_checkpoint(&self.table, self.dirty.iter(), &meta)?;
+        let n = db.save_checkpoint_with_pruning(
+            &self.table,
+            self.dirty.iter(),
+            &meta,
+            if self.pruning.is_some() {
+                Some(&self.prune_table)
+            } else {
+                None
+            },
+        )?;
         self.dirty.clear();
         Ok(n)
     }
@@ -489,7 +613,31 @@ impl Trainer {
                 }
             }
         }
+        if self.pruning.is_some()
+            && db.metadata("serving_snapshot")? == Some(serde_json::Value::Bool(true))
+        {
+            return Err(
+                "serving snapshot has no pruning state; resume the training checkpoint".into(),
+            );
+        }
+        let stored_pruning = db.metadata("pruning")?;
+        if stored_pruning != self.pruning.map(|c| c.json()) {
+            return Err("Resume pruning mismatch (parameters or enabled state)".into());
+        }
+        self.prune_table = if self.pruning.is_some() {
+            db.load_pruning()?
+        } else {
+            PruneTable::default()
+        };
         self.table = db.load_all()?;
+        if self.pruning.is_some()
+            && self
+                .table
+                .iter()
+                .any(|(k, v)| v.visit_count > 0 && !self.prune_table.contains_key(k))
+        {
+            return Err("checkpoint is missing pruning state for a visited key".into());
+        }
         self.dirty.clear();
         self.ev_sum = db
             .metadata("ev_sum")?

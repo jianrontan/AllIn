@@ -132,10 +132,12 @@ python tests/run_evaluation.py --db analysis/blueprints/blueprint_20260518_16090
 ### Branch rust-core (Rust core + v3 blueprint work; not on main yet)
 Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN.md`,
 `docs/V3_BLUEPRINT_PLAN.md` — read the relevant one first.
-- **Status (2026-11-15):** V3.0–V3.6 done; V3.7–V3.9 built with their gates deferred to
+- **Status (2026-11-16):** V3.0–V3.6 done; V3.7–V3.9 built with their gates deferred to
   V3.14; V3.10 done: the base arm is **C at 300M** and the opponent models are re-fit on its
   keys; V3.11 done: the pooled jam read (`ALLIN_JAM_READ`). Remaining v3 scope, in
-  `V3_BLUEPRINT_PLAN.md` "Steps": V3.12 negative-regret pruning arm, V3.13 DBR blueprint, V3.14 final pick; then Phase 7
+  `V3_BLUEPRINT_PLAN.md` "Next steps": V3.16 `spr5a` history keys and V3.12 Rust pruning
+  code implemented (2026-11-16); calibration and C-long/D/E training/evaluation pending,
+  then V3.13 DBR blueprint and V3.14 final pick; then Phase 7
   deploy (separate sign-off).
 - **Environment:** a uv `.venv` (Python 3.12) at the worktree root; run Python as
   `../../.venv/bin/python` from `backend/bot/`. Rust is Homebrew rustup (keg-only):
@@ -162,6 +164,11 @@ Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN
   exactly fold/call/allin there. Still v2-only and failing closed: the PyPokerEngine `Player`
   and the Hand Explorer (`/api/strategy/from-hand` returns 501; Phase 7). `scripts/measure_serving_memory.py` reports
   a blueprint's serving RSS.
+- **V3.16 / V3.12:** `--key-format spr5a` carries the previous aggressors on flop/turn
+  and SPR on river. New postflop key calls require explicit `key_format` and `tags`.
+  Rust `--prune` enables shadow-score pruning (default OFF; thresholds uncalibrated).
+  Resume from the training DB: served snapshots omit `pruning_state`. See the new
+  implementation section in `docs/V3_BLUEPRINT_PLAN.md` before starting calibration.
 - **Opponent models on v3 keys (V3.10):** `fit_opponent_models.py --db <blueprint>` fits on
   that blueprint's key format, card abstraction and cap jam (a preflop 5-bet into a 4-bet is
   `a`), and stamps every model file (`opponent_model.blueprint_model_stamp`). `HumanModel`

@@ -32,6 +32,8 @@ control variates and a learned value function would tighten it further; this
 already removes the dominant card luck.) Consumes the trajectories recorded by
 match.HeadToHeadMatch(..., record=[...]).
 """
+
+from ..cfr.keys import history_tags
 from itertools import combinations
 
 import numpy as np
@@ -134,7 +136,10 @@ class AIVATEstimator:
         elif rec.get('events'):
             brange = BotRange(hand_a, self.cards)   # B's hands exclude A's cards
             street_pot = None                       # pot at the street's start (spr5 keys)
+            patterns = ['', '', '', '']
             for ev in rec['events']:
+                if ev['type'] == 'action':
+                    patterns[ev['street']] = ev['pattern'] + ev.get('char', '')
                 if ev['type'] == 'street_start':
                     st = ev['street']
                     street_pot = ev['pot']
@@ -151,7 +156,9 @@ class AIVATEstimator:
                     action = ev['legal'][ev['choice']]
                     brange.observe(self.lbr.restricted_probs, action, ev['street'],
                                    pos_b, ev['pattern'], ev['legal'], ev['vis'],
-                                   spr=spr_bucket(self.lbr.key_format, ev['street'], street_pot))
+                                   spr=spr_bucket(self.lbr.key_format, ev['street'], street_pot),
+                                   key_format=self.lbr.key_format,
+                                   tags=history_tags(self.lbr.key_format, ev['street'], patterns))
 
         c1 = self._preflop_eq(hand_a)
 

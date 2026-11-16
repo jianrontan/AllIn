@@ -38,10 +38,29 @@ pub(crate) struct PyTrainer {
 #[pymethods]
 impl PyTrainer {
     #[new]
-    #[pyo3(signature = (menu_mode="control", alpha=1.5, gamma=1.0, key_format="v2"))]
-    fn new(menu_mode: &str, alpha: f64, gamma: f64, key_format: &str) -> PyResult<Self> {
+    #[pyo3(signature = (menu_mode="control", alpha=1.5, gamma=1.0, key_format="v2", prune=false, prune_c=0.01, prune_min_visits=100.0, prune_probability=0.95))]
+    fn new(
+        menu_mode: &str,
+        alpha: f64,
+        gamma: f64,
+        key_format: &str,
+        prune: bool,
+        prune_c: f64,
+        prune_min_visits: f64,
+        prune_probability: f64,
+    ) -> PyResult<Self> {
         let mut inner = Trainer::new(menu_mode, sched(alpha, gamma)?).map_err(err)?;
         inner.key_format = crate::keys::KeyFormat::parse(key_format).map_err(err)?;
+        if prune {
+            inner.pruning = Some(
+                crate::mccfr::pruning::PruneConfig::new(
+                    prune_c,
+                    prune_min_visits,
+                    prune_probability,
+                )
+                .map_err(err)?,
+            );
+        }
         Ok(PyTrainer { inner, abs: None })
     }
 
@@ -68,6 +87,41 @@ impl PyTrainer {
     #[getter]
     fn menu_mode(&self) -> String {
         self.inner.menu_mode.clone()
+    }
+
+    /// Bounded diagnostic sample, read after a training chunk (not in the hot loop).
+    fn pruning_report<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let d = PyDict::new(py);
+        let active: u64 = self
+            .inner
+            .prune_table
+            .values()
+            .map(|s| s.dormant.count_ones() as u64)
+            .sum();
+        d.set_item("active_dormant_pairs", active)?;
+        d.set_item("dormant_events", self.inner.prune_stats.dormant)?;
+        d.set_item("reactivation_events", self.inner.prune_stats.reactivated)?;
+        let mut examples = Vec::new();
+        for (k, s) in &self.inner.prune_table {
+            for a in 0..16 {
+                if s.dormant & (1 << a) != 0 {
+                    examples.push((
+                        key_string(*k),
+                        id_action(a).name(),
+                        s.shadow.get(a).unwrap_or(0.0),
+                        s.visits,
+                    ));
+                    if examples.len() == 8 {
+                        break;
+                    }
+                }
+            }
+            if examples.len() == 8 {
+                break;
+            }
+        }
+        d.set_item("sample", examples)?;
+        Ok(d)
     }
 
     /// Replay iterations `start..start+N` from fixture deals and an injected
@@ -159,6 +213,9 @@ impl PyTrainer {
             ("training_mode", format!("\"{mode}\"")),
             ("menu_mode", format!("\"{}\"", self.inner.menu_mode)),
         ];
+        if let Some(config) = self.inner.pruning {
+            meta.push(("pruning", config.json().to_string()));
+        }
         if self.inner.key_format != crate::keys::KeyFormat::V2 {
             meta.push((
                 "key_format",
@@ -351,6 +408,12 @@ impl PyTrainer {
                         d.set_item("ev_sum", s.ev_sum)?;
                         d.set_item("ev_count", s.ev_count)?;
                         d.set_item("info_sets", t.table.len())?;
+                        d.set_item("prune_skipped", t.prune_stats.skipped)?;
+                        d.set_item("prune_explored", t.prune_stats.explored)?;
+                        d.set_item("prune_dormant", t.prune_stats.dormant)?;
+                        d.set_item("prune_reactivated", t.prune_stats.reactivated)?;
+                        d.set_item("postflop_update_mass", t.prune_stats.update_mass)?;
+                        d.set_item("low_own_reach_update_mass", t.prune_stats.low_reach_mass)?;
                         // Lifetime totals (the trainer itself is borrowed
                         // while training, so the callback can't read it).
                         d.set_item("total_ev_sum", t.ev_sum)?;
@@ -412,6 +475,15 @@ impl PyTrainer {
         d.set_item("ev_sum", stats.ev_sum)?;
         d.set_item("ev_count", stats.ev_count)?;
         d.set_item("interrupted", interrupted)?;
+        d.set_item("prune_skipped", self.inner.prune_stats.skipped)?;
+        d.set_item("prune_explored", self.inner.prune_stats.explored)?;
+        d.set_item("prune_dormant", self.inner.prune_stats.dormant)?;
+        d.set_item("prune_reactivated", self.inner.prune_stats.reactivated)?;
+        d.set_item("postflop_update_mass", self.inner.prune_stats.update_mass)?;
+        d.set_item(
+            "low_own_reach_update_mass",
+            self.inner.prune_stats.low_reach_mass,
+        )?;
         Ok(d)
     }
 

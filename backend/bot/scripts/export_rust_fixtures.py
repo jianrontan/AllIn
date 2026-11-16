@@ -43,7 +43,7 @@ from src.evaluation.showdown_kernel import (  # noqa: E402
 COMPONENTS = ('eval_rank7', 'buckets', 'keys', 'engine',
               'river_showdown', 'river_tree', 'river_cfr', 'river_gadget',
               'mccfr', 'mccfr_merge', 'keys_spr', 'mccfr_spr', 'engine_pj', 'mccfr_pj',
-              'buckets_v3')
+              'buckets_v3', 'mccfr_spr5a')
 DEFAULT_OUT = os.path.normpath(os.path.join(BOT, '..', 'core-rs', 'fixtures'))
 
 
@@ -564,6 +564,11 @@ def export_mccfr_pj(out, rng, quick):
 # ----------------------------------------------------------------------------
 # keys_spr -- spr_bucket + spr5 key strings (Phase 6)
 # ----------------------------------------------------------------------------
+def export_mccfr_spr5a(out, rng, quick):
+    return {'capped_pj_spr5a_g1': _mccfr_run(out, rng, 'capped_pj', 1.0,
+                                           60 if quick else 600, key_format='spr5a')}
+
+
 def export_keys_spr(out, rng, quick):
     from src.cfr.keys import make_info_set_key, spr_bucket, SPR_EDGES
     from src.abstractions.card_abstractions import NUM_PREFLOP_BUCKETS
@@ -579,7 +584,7 @@ def export_keys_spr(out, rng, quick):
     cases = []
     n_edge = 3 * len(SPR_EDGES)
     for i, pot in enumerate(pots):
-        for kf in ('v2', 'spr5'):
+        for kf in ('v2', 'spr5', 'spr5a'):
             # Edge pots are pinned to flop/turn so they are actually bucketed.
             street = (1 + i % 2) if i < n_edge else int(rng.integers(0, 4))
             b = spr_bucket(kf, street, pot)
@@ -587,10 +592,12 @@ def export_keys_spr(out, rng, quick):
             fine = f"pf_{int(rng.integers(0, NUM_PREFLOP_BUCKETS))}"
             strength = None if street == 0 else int(rng.integers(0, 30))
             pat = ''.join(rng.choice(list('kcfsmlxo2a')) for _ in range(int(rng.integers(0, 6))))
-            cases.append({'key_format': kf, 'street': street, 'street_pot': pot, 'spr': b,
+            tags = (''.join(rng.choice(list('nio')) for _ in range({1: 1, 2: 2}.get(street, 0)))
+                    if kf == 'spr5a' else None)
+            cases.append({'key_format': kf, 'tags': tags, 'street': street, 'street_pot': pot, 'spr': b,
                           'position': pos, 'preflop_bucket': fine, 'strength': strength,
                           'pattern': pat,
-                          'key': make_info_set_key(street, pos, fine, strength, pat, b)})
+                          'key': make_info_set_key(street, pos, fine, strength, pat, b, key_format=kf, tags=tags)})
     _write_json(os.path.join(out, 'keys_spr.json'), {'cases': cases})
     return {'cases': len(cases)}
 

@@ -87,6 +87,8 @@ class TurnSubgameSolver(RiverSubgameSolver):
     def __init__(self, blueprint_db, *, n_buckets=48, leaf_rivers=6,
                  turn_max_iters=300, max_spr_turn=None, turn_time_budget=None,
                  multivalued_leaf=False, **kw):
+        from ..cfr.keys import require_key_format
+        require_key_format(blueprint_db, ('v2',), 'TurnSubgameSolver')
         super().__init__(blueprint_db, **kw)
         self.n_buckets = int(n_buckets)
         # Phase 5b #2 experiment: Modicum multi-valued leaf (opponent picks worst-of-4

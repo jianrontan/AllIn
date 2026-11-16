@@ -78,6 +78,11 @@ def _snapshot(db_path, total):
         dst = sqlite3.connect(tmp)
         try:
             src.backup(dst)
+            dst.execute("DROP TABLE IF EXISTS pruning_state")
+            dst.execute("INSERT OR REPLACE INTO training_metadata VALUES (?, ?)",
+                        ("serving_snapshot", "true"))
+            dst.commit()
+            dst.execute("VACUUM")
         finally:
             dst.close()
         os.replace(tmp, dest)
@@ -160,6 +165,10 @@ def main():
                     help='1 = single-thread (per-iteration discount); >1 = parallel')
     ap.add_argument('--merge-every', type=int, default=2000, help='parallel: iterations per worker per round')
     ap.add_argument('--checkpoint-every', type=int, default=1_000_000)
+    ap.add_argument('--prune', action='store_true', help='experimental zero-probability shadow-score pruning')
+    ap.add_argument('--prune-c', type=float, default=0.01, help='uncalibrated shadow threshold / (visits * pot)')
+    ap.add_argument('--prune-min-visits', type=float, default=100.0)
+    ap.add_argument('--prune-probability', type=float, default=0.95)
     ap.add_argument('--snapshot-every', type=int, default=0,
                     help='also copy the blueprint to <run>_snaps/snap_<iter>.db each time the total '
                          'crosses a multiple of this (0 = off); keep it a multiple of --checkpoint-every')
@@ -167,7 +176,7 @@ def main():
     ap.add_argument('--alpha', type=float, default=1.5)
     ap.add_argument('--gamma', type=float, default=1.0)
     ap.add_argument('--menu-mode', choices=['control', 'capped', 'capped_no2', 'capped_pj'], default='capped')
-    ap.add_argument('--key-format', choices=['v2', 'spr5'], default='v2',
+    ap.add_argument('--key-format', choices=['v2', 'spr5', 'spr5a'], default='v2',
                     help="info-set key format: v2 (served) or spr5 (Phase 6 SPR buckets on flop/turn)")
     ap.add_argument('--river-cache-boards', type=int, default=None,
                     help='canonical river-board cache cap (default: the crate default)')
@@ -189,7 +198,9 @@ def main():
     verified = verify_tables(args.abstractions_dir)
     print(f"Abstraction {abs_meta.get('abstraction', 'root (v2)')} "
           f"id {abs_meta['abstraction_id'][:12]}... (tables verified: {', '.join(verified) or 'none'})")
-    trainer = allin_core.Trainer(args.menu_mode, args.alpha, args.gamma, key_format=args.key_format)
+    trainer = allin_core.Trainer(args.menu_mode, args.alpha, args.gamma, key_format=args.key_format, prune=args.prune,
+                                 prune_c=args.prune_c, prune_min_visits=args.prune_min_visits,
+                                 prune_probability=args.prune_probability)
     # Load the abstraction FIRST, so a bad tables dir fails before any DB exists.
     print(f"Loading abstraction from {args.abstractions_dir} ...", flush=True)
     t_load = time.time()
@@ -223,6 +234,8 @@ def main():
         tag = '' if args.menu_mode == 'control' else f"_{args.menu_mode.replace('_', '')}"
         if args.key_format != 'v2':
             tag += f"_{args.key_format}"
+        if args.prune:
+            tag += '_prune'
         if 'abstraction' in abs_meta:
             tag += f"_{abs_meta['abstraction']}"
         # Timestamp + random suffix: two runs started in the same second must
@@ -269,6 +282,12 @@ def main():
             print(f"  iter {it:>12,}/{total_target:,} | {rate:>8,.0f} it/s | info sets {d['info_sets']:>9,} | "
                   f"EV(cum{',lagged' if mode == 'parallel' else ''}) {ev:+.5f} | "
                   f"elapsed {_fmt(now - t0)} | ETA {_fmt(eta)}", flush=True)
+            if 'postflop_update_mass' in d:
+                mass = d['postflop_update_mass']
+                low = d['low_own_reach_update_mass'] / mass if mass else 0.0
+                print(f"    prune skipped/explored {d['prune_skipped']:,}/{d['prune_explored']:,}; "
+                      f"dormant/reactivated {d['prune_dormant']:,}/{d['prune_reactivated']:,}; "
+                      f"postflop update mass at own reach <1e-3: {low:.3%}", flush=True)
         except Exception:                             # noqa: BLE001
             # A display failure (closed pipe / terminal) must not abort training:
             # an exception escaping the callback ends train() without a checkpoint.
@@ -286,6 +305,8 @@ def main():
         print(f"Checkpoint: {n:,} info sets written ({trainer.num_info_sets:,} total) "
               f"at iteration {start + done:,}")
         print(_shape_line(trainer), flush=True)
+        if args.prune:
+            print(f"  Pruning: {trainer.pruning_report()}", flush=True)
         total = start + done
         if args.snapshot_every and total // args.snapshot_every > (total - s['iterations']) // args.snapshot_every:
             try:

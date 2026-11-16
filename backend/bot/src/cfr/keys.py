@@ -20,13 +20,14 @@ _BOARD_COUNT_TO_STREET = {n: i for i, n in enumerate(BOARD_COUNT)}
 
 # --- Key formats -----------------------------------------------------------------
 # 'v2'  : the served v2 format (no SPR on the key).
+# 'spr5a': prior-street aggressors on flop/turn; SPR on every postflop street.
 # 'spr5': v2 + a stack-to-pot bucket on FLOP and TURN keys (Phase 6, see
 #         docs/PHASE6_ABSTRACTION_PLAN.md). The bucket is the SPR at the START of
 #         the street, aligned to preflop pot types: >40 limped, 12-40 single-raised,
 #         5-12 3-bet, 2-5 4-bet, <2 jam zone. Preflop and river keys are unchanged.
 # A blueprint DB stamps its format in training_metadata['key_format'] (absent =
 # 'v2'); every reader must build keys in the format of the blueprint it opened.
-KEY_FORMATS = ('v2', 'spr5')
+KEY_FORMATS = ('v2', 'spr5', 'spr5a')
 SPR_EDGES = (2.0, 5.0, 12.0, 40.0)        # bucket b = number of edges <= SPR
 SPR_STREETS = (1, 2)                       # flop, turn
 _KEY_STARTING_STACK = 200                  # == poker_game.STARTING_STACK (test-guarded)
@@ -58,19 +59,17 @@ def require_key_format(blueprint_db, supported, who):
 
 def spr_bucket(key_format, street, street_pot):
     """The SPR bucket (0..4, 0 = jam zone) an info-set key carries, or None when the
-    format/street has none (v2, preflop, river).
+    format/street has none (v2, preflop, or legacy river).
 
     `street_pot` is the pot (chips) when the street BEGAN. Both players start every
     hand with the same stack and a street only closes once contributions match, so
     at a street start both have invested pot/2 and the effective stack is
     STARTING_STACK - pot/2: the SPR is a pure function of the street-start pot,
     and therefore of the public betting history."""
-    if key_format == 'v2' or street not in SPR_STREETS:
-        if key_format not in KEY_FORMATS:
-            raise ValueError(f"unknown key_format {key_format!r}")
+    if key_format not in KEY_FORMATS:
+        raise ValueError(f'unknown key_format {key_format!r}')
+    if key_format == 'v2' or street not in ((1, 2, 3) if key_format == 'spr5a' else SPR_STREETS):
         return None
-    if key_format != 'spr5':
-        raise ValueError(f"unknown key_format {key_format!r}")
     if not (street_pot > 0) or street_pot == float('inf'):
         raise ValueError(f"street_pot must be finite and > 0, got {street_pot!r}")
     spr = (_KEY_STARTING_STACK - street_pot / 2.0) / street_pot
@@ -151,7 +150,7 @@ def action_char(action):
 
 
 def make_info_set_key(street, position, preflop_bucket, postflop_strength, bet_pattern,
-                      spr=None):
+                      spr=None, *, key_format=None, tags=None):
     """
     Build the canonical info-set key.
 
@@ -164,13 +163,24 @@ def make_info_set_key(street, position, preflop_bucket, postflop_strength, bet_p
     postflop_strength : the acting player's postflop strength bucket for this
                         street (ignored preflop, may be None)
     bet_pattern       : current-street betting pattern (e.g. 'm', 'km')
-    spr               : SPR bucket from spr_bucket() (spr5 format, flop/turn), or
-                        None for a v2 key. Passing one on preflop/river is an error.
+    spr               : street-start SPR bucket (spr5 flop/turn, spr5a all postflop).
+    key_format, tags  : explicit spr5a format and completed-street context; missing
+                        tags raise instead of silently building a legacy-shaped key.
 
     Preflop : {fine_bucket}_{position}_{bet_pattern}
     Postflop: {coarse_class}_{postflop_strength}_{position}_{street}_{bet_pattern}
     spr5    : {coarse_class}_{postflop_strength}_{position}_{street}_r{spr}_{bet_pattern}
     """
+    if key_format is not None and key_format not in KEY_FORMATS:
+        raise ValueError(f"unknown key_format {key_format!r}")
+    if key_format == 'spr5a':
+        count = {0: 0, 1: 1, 2: 2, 3: 0}[street]
+        if tags is None or len(tags) != count or any(t not in 'nio' for t in tags):
+            raise ValueError(f"spr5a street {street} requires {count} history tags")
+        if street > 0 and spr is None:
+            raise ValueError("spr5a postflop keys require SPR")
+    elif tags:
+        raise ValueError("history tags require key_format='spr5a'")
     if street == 0:
         if spr is not None:
             raise ValueError("preflop keys carry no SPR bucket")
@@ -179,9 +189,52 @@ def make_info_set_key(street, position, preflop_bucket, postflop_strength, bet_p
     if spr is None:
         return (f"{coarse}_{postflop_strength}_{position}_"
                 f"{STREET_NAMES[street]}_{bet_pattern}")
-    if street not in SPR_STREETS:
+    if street not in ((1, 2, 3) if key_format == 'spr5a' else SPR_STREETS):
         raise ValueError(f"street {street} keys carry no SPR bucket")
     if type(spr) is not int or not 0 <= spr <= len(SPR_EDGES):
         raise ValueError(f"SPR bucket must be an int in 0..{len(SPR_EDGES)}, got {spr!r}")
     return (f"{coarse}_{postflop_strength}_{position}_"
-            f"{STREET_NAMES[street]}_r{spr}_{bet_pattern}")
+            f"{STREET_NAMES[street]}_r{spr}_"
+            f"{'t' + tags + '_' if tags else ''}{bet_pattern}")
+
+
+def last_aggressor(pattern, street):
+    """Last aggressive actor as n/i/o. Blinds do not count; IP acts first preflop."""
+    out = 'n'
+    for i, ch in enumerate(pattern):
+        if ch in 'smlxo2a':
+            out = 'i' if (i + (street != 0)) % 2 == 0 else 'o'
+    return out
+
+
+def history_tags(key_format, street, patterns):
+    """Street-constant spr5a context; patterns are indexed by completed street."""
+    if key_format != 'spr5a':
+        return None
+    if street in (1, 2) and (patterns is None or len(patterns) < street):
+        raise ValueError('spr5a requires the completed street patterns')
+    if street == 1:
+        return last_aggressor(patterns[0], 0)
+    if street == 2:
+        return last_aggressor(patterns[1], 1) + last_aggressor(patterns[0], 0)
+    return ''
+
+
+def logged_patterns(action_log):
+    """Rebuild street patterns, preserving actor parity for off-grid legacy log entries."""
+    patterns = ['', '', '', '']
+    for event in action_log:
+        st = event.get('street')
+        if st in STREET_NAMES:
+            st = STREET_NAMES.index(st)
+        if type(st) is not int or not 0 <= st <= 3:
+            continue
+        action = event.get('action') or ''
+        try:
+            ch = action_char(action)
+        except ValueError:
+            # Legacy off-grid logs lack a grid char; aggression still has a known actor.
+            ch = 's' if 'custom' in action else 'k'
+        # Logs include both actors, in order. Validate parity via the engine elsewhere.
+        patterns[st] += ch
+    return patterns

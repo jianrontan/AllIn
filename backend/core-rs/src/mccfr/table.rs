@@ -274,21 +274,25 @@ impl Pattern {
     }
 
     pub fn text(self) -> String {
+        self.chars().map(|c| c as char).collect()
+    }
+
+    pub fn chars(self) -> impl Iterator<Item = u8> {
         (0..self.len)
-            .map(|i| PATTERN_CHARS[(((self.code >> (4 * i as u64)) & 0xF) - 1) as usize] as char)
-            .collect()
+            .map(move |i| PATTERN_CHARS[(((self.code >> (4 * i as u64)) & 0xF) - 1) as usize])
     }
 }
 
 const PAT_BITS: u64 = 40;
-const STR_BITS: u64 = 10;
+const STR_BITS: u64 = 6;
 const BKT_BITS: u64 = 8;
-/// Bits 61..63: SPR bucket + 1 (0 = no SPR token, i.e. a v2 key).
+/// Bits 57..59: SPR bucket + 1; 60..63: history context (0 = legacy).
 const SPR_SHIFT: u64 = PAT_BITS + STR_BITS + BKT_BITS + 1 + 2;
+const TAG_SHIFT: u64 = SPR_SHIFT + 3;
 
 /// Pack a key. `bucket` is the FINE preflop id preflop and the COARSE class
 /// postflop (exactly what the key string prints); `strength` is ignored preflop.
-/// `spr` is the spr5 SPR bucket (flop/turn only), None for a v2 key.
+/// `spr` is the street-start SPR bucket (including river for spr5a).
 #[inline]
 pub fn pack_key(
     street: u8,
@@ -298,14 +302,29 @@ pub fn pack_key(
     pat: Pattern,
     spr: Option<u8>,
 ) -> Result<u64, String> {
+    pack_key_context(street, seat, bucket, strength, pat, spr, 0)
+}
+
+pub fn pack_key_context(
+    street: u8,
+    seat: u8,
+    bucket: u8,
+    strength: u16,
+    pat: Pattern,
+    spr: Option<u8>,
+    tags: u8,
+) -> Result<u64, String> {
+    if tags > 12
+        || (tags > 0 && (spr.is_none() || !(street == 1 && tags <= 3 || street == 2 && tags >= 4)))
+    {
+        return Err("invalid history tags".into());
+    }
     if street > 3 || seat > 1 {
         return Err("bad street/seat".into());
     }
     let spr_bits = match spr {
         None => 0u64,
-        Some(b)
-            if (street == 1 || street == 2) && (b as usize) < crate::keys::SPR_EDGES.len() + 1 =>
-        {
+        Some(b) if (1..=3).contains(&street) && (b as usize) < crate::keys::SPR_EDGES.len() + 1 => {
             b as u64 + 1
         }
         Some(b) => return Err(format!("SPR bucket {b} invalid on street {street}")),
@@ -321,7 +340,8 @@ pub fn pack_key(
         | ((bucket as u64) << (PAT_BITS + STR_BITS))
         | ((seat as u64) << (PAT_BITS + STR_BITS + BKT_BITS))
         | ((street as u64) << (PAT_BITS + STR_BITS + BKT_BITS + 1))
-        | (spr_bits << SPR_SHIFT))
+        | (spr_bits << SPR_SHIFT)
+        | ((tags as u64) << TAG_SHIFT))
 }
 
 pub struct KeyParts {
@@ -331,6 +351,7 @@ pub struct KeyParts {
     pub strength: u16,
     pub pattern: Pattern,
     pub spr: Option<u8>,
+    pub tags: u8,
 }
 
 pub fn unpack_key(k: u64) -> KeyParts {
@@ -345,7 +366,8 @@ pub fn unpack_key(k: u64) -> KeyParts {
         bucket: (k >> (PAT_BITS + STR_BITS)) as u8,
         strength: ((k >> PAT_BITS) & ((1 << STR_BITS) - 1)) as u16,
         pattern: Pattern { code, len },
-        spr: match k >> SPR_SHIFT {
+        tags: (k >> TAG_SHIFT) as u8,
+        spr: match (k >> SPR_SHIFT) & 7 {
             0 => None,
             v => Some(v as u8 - 1),
         },
@@ -364,8 +386,13 @@ pub fn key_string(k: u64) -> String {
             Some(b) => format!("r{b}_"),
             None => String::new(),
         };
+        let t = if p.tags == 0 {
+            String::new()
+        } else {
+            format!("t{}_", crate::keys::tag_text(p.tags))
+        };
         format!(
-            "pf_{}_{}_{pos}_{}_{r}{pat}",
+            "pf_{}_{}_{pos}_{}_{r}{t}{pat}",
             p.bucket, p.strength, STREET_NAMES[p.street as usize]
         )
     }
@@ -389,7 +416,7 @@ pub fn parse_key(s: &str) -> Result<u64, String> {
             }
             pack_key(0, seat(pos)?, b as u8, 0, Pattern::parse(pat)?, None)
         }
-        ["pf", b, st, pos, street, rest @ ..] if rest.len() == 1 || rest.len() == 2 => {
+        ["pf", b, st, pos, street, rest @ ..] if (1..=3).contains(&rest.len()) => {
             let b = num(b)?;
             let street = STREET_NAMES
                 .iter()
@@ -401,7 +428,7 @@ pub fn parse_key(s: &str) -> Result<u64, String> {
             }
             let (spr, pat) = match rest {
                 [pat] => (None, *pat),
-                [r, pat] => {
+                [r, pat] | [r, _, pat] => {
                     let v = r
                         .strip_prefix('r')
                         .filter(|d| d.len() == 1)
@@ -411,13 +438,22 @@ pub fn parse_key(s: &str) -> Result<u64, String> {
                 }
                 _ => return Err(bad()),
             };
-            pack_key(
+            let tags = if rest.len() == 3 {
+                let t = rest[1].strip_prefix('t').ok_or_else(bad)?;
+                (1..=12)
+                    .find(|&c| crate::keys::tag_text(c) == t)
+                    .ok_or_else(bad)?
+            } else {
+                0
+            };
+            pack_key_context(
                 street,
                 seat(pos)?,
                 b as u8,
                 num(st)?,
                 Pattern::parse(pat)?,
                 spr,
+                tags,
             )
             .map_err(|_| bad())
         }
@@ -441,6 +477,9 @@ mod tests {
             "pf_9_5_ip_turn_r3_m",
             "pf_0_0_oop_flop_r0_",
             "pf_4_12_ip_flop_r4_kss",
+            "pf_4_12_ip_flop_r4_ti_kss",
+            "pf_4_12_ip_turn_r4_ton_kss",
+            "pf_4_12_ip_river_r4_kss",
         ] {
             let k = parse_key(s).unwrap();
             assert_eq!(key_string(k), s);
@@ -453,7 +492,6 @@ mod tests {
             "pf_1_2_ip_preflop_",
             "pf_1_ip_q",
             "pf_1_2_ip_flop_kkkkkkkkkkk",
-            "pf_1_2_ip_river_r1_k",
             "pf_1_2_ip_flop_r5_k",
             "pf_1_2_ip_flop_rx_k",
             "pf_1_2_ip_flop_r01_k",
@@ -482,5 +520,46 @@ mod tests {
         for id in 0..16u8 {
             assert_eq!(action_id(id_action(id)).unwrap(), id);
         }
+    }
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+    #[test]
+    fn history_context_uses_disjoint_bits_and_roundtrips() {
+        let mut seen = std::collections::HashSet::new();
+        for street in 1..=3 {
+            let tags: Vec<u8> = match street {
+                1 => (1..=3).collect(),
+                2 => (4..=12).collect(),
+                _ => vec![0],
+            };
+            for seat in 0..=1 {
+                for bucket in [0, 9] {
+                    for strength in [0, 29, 63] {
+                        for spr in 0..=4 {
+                            for &tag in &tags {
+                                let k = pack_key_context(
+                                    street,
+                                    seat,
+                                    bucket,
+                                    strength,
+                                    Pattern::parse("kcfsmlxo2a").unwrap(),
+                                    Some(spr),
+                                    tag,
+                                )
+                                .unwrap();
+                                assert!(seen.insert(k));
+                                assert_eq!(parse_key(&key_string(k)).unwrap(), k);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(pack_key_context(1, 0, 0, 64, Pattern::default(), Some(0), 1).is_err());
+        assert!(pack_key_context(2, 0, 0, 0, Pattern::default(), Some(0), 1).is_err());
+        assert!(pack_key_context(1, 0, 0, 0, Pattern::default(), None, 1).is_err());
     }
 }

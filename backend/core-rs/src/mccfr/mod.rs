@@ -9,3 +9,5 @@ pub mod table;
 pub mod trainer;
 
 pub use trainer::{Abstraction, Schedule, Table, Trainer};
+
+pub mod pruning;

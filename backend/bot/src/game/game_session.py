@@ -16,6 +16,8 @@ Design notes
 * Cards are stored in engine format (SuitRank); conversion to display format
   happens only in public_view().
 """
+
+from ..cfr.keys import history_tags, logged_patterns
 import copy
 import json
 import os
@@ -144,6 +146,8 @@ class GameSession:
         # not once per request (a session is rebuilt from JSON on every request).
         spr_bucket(key_format, 0, 3.0)               # validates the format name
         self.key_format = key_format
+        if 'street_patterns' not in self.data:
+            self.data['street_patterns'] = logged_patterns(self.data.get('action_log', []))
         self.cards = shared_card_abstraction(abstraction_dir)
         self.evaluator = HandEvaluator()
         # Opponent model for the hand-level range tracker (Phase 3). A callback
@@ -222,6 +226,7 @@ class GameSession:
         d['p1_stack'] = float(STARTING_STACK - 2)
         d['status'] = 'in_hand'
         d['action_log'] = []
+        d['street_patterns'] = ['', '', '', '']
         d['bot_debug'] = []          # per-hand bot decision trace (debug overlay)
         d['result'] = None
         d['revealed_board'] = 0
@@ -386,6 +391,10 @@ class GameSession:
         if 'allin' not in actions and self._cap_jam_is_raise():
             actions = actions + ['allin']            # the human may always jam here
         return actions
+
+    def _tags(self):
+        return history_tags(self.key_format, min(self.data['street'], 3),
+                            self.data['street_patterns'])
 
     def _spr(self):
         """The SPR bucket this street's keys carry (spr5 flop/turn), else None. The
@@ -574,7 +583,8 @@ class GameSession:
                          if translated and all(c is not None for c, _ in translated) else None)
             tracker.observe(self.strategy_fn, snapped_action, street, self._opp_position(),
                             d['bet_pattern'], obs_legal, board, blend=obs_blend,
-                            spr=self._spr())
+                            spr=self._spr(), key_format=self.key_format,
+                            tags=self._tags())
             new_opp_range = tracker.to_dict()
         if (player != d['human_seat'] and self.hero_strategy_fn is not None
                 and d.get('bot_range') is not None):
@@ -602,7 +612,8 @@ class GameSession:
                     def hero_model(key, legal):
                         return original_model.translated(key, legal, pending['weights'])
                 bt.observe(hero_model, snapped_action, street, self._bot_position(),
-                           d['bet_pattern'], obs_legal, board, spr=self._spr())
+                           d['bet_pattern'], obs_legal, board, spr=self._spr(), key_format=self.key_format,
+                           tags=self._tags())
             new_bot_range = bt.to_dict()
 
         # From here on every mutation is on session.data and is infallible
@@ -613,6 +624,7 @@ class GameSession:
         if action == 'fold':
             d['folder_seat'] = player
         d['bet_pattern'] += char
+        d['street_patterns'][min(d['street'], 3)] = d['bet_pattern']
         if player == 0:
             d['p0_stack'] -= cost
         else:
@@ -624,7 +636,8 @@ class GameSession:
         d['action_log'].append({
             'player': player,
             'street': _STREET_NAMES[min(d['street'], 3)],
-            'action': snapped_action if (custom or cap_jam) else action,
+            'action': (snapped_action if snapped_action not in ('check', 'call', 'fold')
+                       else action) if (custom or cap_jam) else action,
             'chips': round(cost, 2),
         })
 
@@ -777,7 +790,8 @@ class GameSession:
         board = d['community'][:_BOARD_COUNT[street]]
         strength = self.cards.get_bucket(cards, board)
         return make_info_set_key(street, position, starting, strength, pattern,
-                                 spr=self._spr())
+                                 spr=self._spr(), key_format=self.key_format,
+                                 tags=self._tags())
 
     def bot_public_state(self):
         """State handed to BotStrategy.decide() for the player to act.
@@ -806,6 +820,8 @@ class GameSession:
             # The SPR bucket of this street's keys (spr5 flop/turn; None otherwise), so a
             # strategy that builds its own keys (the exploit tilt) matches info_set_key.
             'spr': self._spr(),
+            'key_format': self.key_format,
+            'tags': self._tags(),
             # The street-start pot and the hand's preflop actions (history resets each
             # street): the context the V3.11 jam read looks up (SPR bucket, pot type).
             'street_pot': d['starting_pot'],
