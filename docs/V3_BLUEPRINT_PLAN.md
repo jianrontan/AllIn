@@ -1,4 +1,4 @@
-# v3 blueprint — plan and progress log (V3.0–V3.6, V3.10, V3.11 and V3.15 done, base arm C300; V3.7–V3.9 built, gates deferred; next: V3.16 history keys + V3.12 pruning (arms C-long, D, E), then V3.13 DBR, V3.14; see "Next steps")
+# v3 blueprint — plan and progress log (V3.0–V3.6, V3.10, V3.11 and V3.15 done, base arm C300; V3.7–V3.9 built, gates deferred; next: train arm D (V3.16 history keys), then control C-long when there is time; V3.12 pruning built but not trained; then V3.13 DBR, V3.14; see "Next steps")
 
 Branch `rust-core`. Written 2026-11-09 after the BUG-027 investigation.
 Follows [PHASE6_ABSTRACTION_PLAN.md](PHASE6_ABSTRACTION_PLAN.md) (SPR buckets built,
@@ -594,12 +594,19 @@ Each arm changes one thing against another arm, so any difference in play can be
 attributed to that change, and a change that hurts can be dropped without losing the
 others.
 
+**Decided 2026-11-17 (after the step-3 calibration):** train **D first**, then
+**C-long when there is time**; **E is dropped**. The user did not want ~36 h of
+laptop training mostly for experiments. Pruning measured only 7–15% faster and carries
+a slow-comeback risk for actions it skips, so a whole 14 h arm is not worth it. The
+pruning code stays in the trainer, off by default, for a future run that needs the
+speed.
+
 | Arm | What | Compared with | Answers |
 |---|---|---|---|
-| **C-long** | C300 resumed (same config, same keys) to D's iteration count | — (the control) | Is D's gain just more training? C was still improving at 300M (vs v2 +233 → +381 from 150M to 300M), so C-long is also a ship candidate. |
-| **D** | C + the V3.16 keys, trained from scratch | C-long at matching snapshots | Do the new keys help? |
-| **E** | D + pruning, same seed and schedule | D at equal wall time (primary) and equal iterations (no worse) | Does pruning help? |
-| **DBR** | forks of the D/E winner, one per P_max | that winner, on held-out players | Does baking in the population model help? |
+| **D** (first) | C + the V3.16 keys, trained from scratch | C300 first (interim), then C-long at matching snapshots | Do the new keys help? |
+| **C-long** (later, when there is time) | C300 resumed (same config, same keys) to D's iteration count | — (the control) | Is D's gain just more training? C was still improving at 300M (vs v2 +233 → +381 from 150M to 300M), so C-long is also a ship candidate. |
+| ~~E~~ (dropped 2026-11-17) | D + pruning | D at equal wall time | Does pruning help? Not trained: see the decision above. |
+| **DBR** | forks of the base winner (D, or C300/C-long if D loses), one per P_max | that winner, on held-out players | Does baking in the population model help? |
 
 ### Order
 
@@ -608,28 +615,33 @@ others.
 | 1 | V3.16 code: key format `spr5a`, Python + Rust + parity | light |
 | 2 | V3.12 code: pruning in the Rust trainer, off by default, bit-identical when off | light |
 | 3 | Short `spr5a` runs: measure it/s on the bigger table; calibrate the prune threshold; read the pruning telemetry — **done 2026-11-17** (c=0.01, n_min=100; ~30k it/s) | ~1 h, plugged in |
-| 4 | Train C-long, D, E to the budget from step 3 (~1.6B iterations at the measured speed: C-long ~7.7 h from 300M, D ~15 h, E ~13–14 h; see "Step 3 — calibration results"), with the recipes below. Resumable: run whenever the laptop is idle | heavy, idle laptop |
-| 5 | Evaluate (see "Evaluation for these arms"): screen, pick, confirm | heavy, a few hours per comparison |
-| 6 | Refit and restamp the opponent models and the jam read on `spr5a` (needed before any exploit-on evaluation of D/E) | light |
+| 4a | Train **D** to ~1.6B iterations (~15 h at the measured ~30k it/s; see "Step 3 — calibration results"), recipe below. Resumable: run whenever the laptop is idle. Optional early look: at a mid snapshot (e.g. 800M, ~7–8 h in) screen D against C300; if D is clearly behind, stop and rethink before spending the rest | heavy, idle laptop |
+| 4b | Later, when there is time: train **C-long** from 300M to D's final iteration count (~7.7 h at ~47k it/s) | heavy, idle laptop |
+| 5 | Evaluate (see "Evaluation for these arms"): first D vs C300 (interim; confounded by D's extra iterations), then D vs C-long once 4b exists; screen, pick, confirm | heavy, a few hours per comparison |
+| 6 | Refit and restamp the opponent models and the jam read on `spr5a` (needed before any exploit-on evaluation of D) | light |
 | 7 | V3.13 code (two tables, fork mode), then DBR forks per P_max | code days; each fork a few hours |
-| 8 | V3.14: final pick among C300 / C-long / D / E / DBR, hardening, then Phase 7 (separate sign-off) | — |
+| 8 | V3.14: final pick among C300 / C-long / D / DBR, hardening, then Phase 7 (separate sign-off) | — |
 
-Disk: snapshots every 100M at ~430 MB each are ~7 GB per arm (E's prune scores are
-stripped from served snapshots); 732 GB were free on 2026-11-16.
+Disk: snapshots every 100M at ~430 MB each are ~7 GB for D (C-long's are ~130 MB
+each); 731 GB were free on 2026-11-17.
 
-**Run recipes (step 4).** All three arms use C's settings so that only the named change
+**Run recipes (step 4).** Both arms use C's settings so that only the named change
 differs: `--workers 12 --merge-every 2000 --alpha 1.5 --gamma 1.0 --menu-mode capped_pj
 --abstraction v3 --river-cache-boards 140000 --snapshot-every 100000000 --seed 20261110`
 (V3.4's recipe; per-iteration deals come from `iteration_rng(seed, iteration)`, so arms
 with the same seed see the same deal at the same iteration, and pruning's coin uses its
 own RNG).
-- **C-long:** copy C's training DB (`blueprint_par_cappedpj_spr5_v3_rs_20261110_013712_8d0598.db`,
+- **D (4a, first):** a new run, `--key-format spr5a`, `--iterations 1600000000
+  --checkpoint-every 10000000` (as C300's run, so D's snapshots land on the same
+  iteration counts as C300's and C-long's; the trainer's partial-round warning is
+  expected, as it was for C), no `--prune`. To pause, stop it with Ctrl-C (it checkpoints first) and later rerun the same
+  command with `--resume <its training DB name>` and the remaining iterations.
+- **C-long (4b, later):** copy C's training DB (`blueprint_par_cappedpj_spr5_v3_rs_20261110_013712_8d0598.db`,
   not a snapshot) and `--resume` the copy with `--key-format spr5` up to D's iteration
   count, so C300 itself stays untouched.
-- **D:** a new run, `--key-format spr5a`, to the step-3 budget.
-- **E:** D's exact command plus `--prune --prune-c <c> --prune-min-visits <n_min>
-  --prune-probability 0.95`, with c and n_min from step 3 (the CLI defaults 0.01 / 100
-  are uncalibrated). Resume an E run from its training DB, never a served snapshot.
+- **E (dropped):** would have been D's command plus `--prune --prune-c 0.01
+  --prune-min-visits 100 --prune-probability 0.95` (step 3's pick); kept here only in
+  case pruning is revived.
 - Stopping and resuming any arm with the same command (plus `--resume`) continues the
   same deal stream. It is not guaranteed bit-identical to an uninterrupted run (merge
   rounds can fall on different iterations after a resume), which does not matter for the
@@ -822,14 +834,14 @@ Four sequential 24M-iteration runs on the laptop (AC power), each with the step-
   from paths where the traverser's own reach is below 1e-3. c=0.01 cuts that to 60%. The
   rest is low-frequency mixed actions, which pruning cannot touch (expected; see "Why"
   above).
-- **Selected E configuration:** `--prune-c 0.01 --prune-min-visits 100
-  --prune-probability 0.95`. n_min was not varied, and a c below 0.01 was not tried. This
+- **Selected E configuration (E later dropped, see "The arms"):** `--prune-c 0.01
+  --prune-min-visits 100 --prune-probability 0.95`. n_min was not varied, and a c below 0.01 was not tried. This
   is a speed calibration only; E's quality gates still decide.
 - **Budget at measured speed:** 1.6B iterations → D ≈ 15 h, E ≈ 13–14 h (less if
   the skip share keeps growing), C-long (spr5, 444k keys, ~47k it/s) ≈ 7.7 h from 300M.
   That is ~36 h of idle laptop in total, resumable. Both aggressor tags stay in;
   the initiative-token fallback is not needed at 15 h per arm.
-- **Possible speed-up before E (optional):** keep each key's prune state inside its
+- **Possible speed-up if pruning is revived (not needed now E is dropped):** keep each key's prune state inside its
   info-set node instead of a second `FxHashMap`. That removes a hash lookup per traverser
   node and should recover most of the overhead seen at c=0.2. It matters because E is
   judged against D at equal wall time.
@@ -876,8 +888,8 @@ Four sequential 24M-iteration runs on the laptop (AC power), each with the step-
 - **Snapshot choice without selection bias:** picking the best of ~16 snapshots on the
   same data inflates the result by ~2 SE. Screen snapshots on one seed set at modest
   size, pick, then confirm the pick on fresh seeds at full size, and report only the
-  confirmation. Pre-register each arm's primary comparison (D vs C-long at matching
-  iterations; E vs D at equal wall time).
+  confirmation. Pre-register each arm's primary comparison (interim: D vs C300; then D vs
+  C-long at matching iterations).
 - **Probes that actually test the new keys:** the strategy-shape probe checks preflop only
   (`strategy_shape.py`); add postflop checks on tagged keys (the preflop aggressor c-bets
   more than the caller, sane lead frequency, no tagged turn key collapses to never-fold)
@@ -914,10 +926,10 @@ Four sequential 24M-iteration runs on the laptop (AC power), each with the step-
 | V3.9 | F / F_EXTENDED implemented; local structure/parity/safety checks pass; sustained solver-on H2H and latency gates pending | days, after V3.7 | p95 ≤ 5 s on Rust; H2H with the solver on ≥ menu A (\|t\| < 2 or better) |
 | V3.10 | ✅ 2026-11-15 (see "V3.10 — done"): base arm **C at 300M**. **Pick the base arm** (A or C, from V3.5b's results and V3.6's memory numbers; V3.10–V3.13 build on it), then re-fit the opponent models on its v3 keys, stamped with `abstraction_id` (moved here from Phase 7: V3.11 and V3.13 need it) | ~1 day | the model guard compares abstraction ids; exploit no longer self-disables on the v3 blueprint |
 | V3.11 | ✅ 2026-11-15 (see "V3.11 — done"): humans jam wider than assumed, so the read mostly calls more. Both gates pass after the review fixes (gate 1 +7.6 / +6.1 chips/spot; gate 2 +33.3 ± 4.8 mbb/hand). Pooled facing-jam population read + logged-spot evaluator (targets BUG-027) | days | logged-spot EV(call) − EV(fold) improves over the current guard; no regression vs the human model |
-| V3.12 | Pruning arm **E** (Rust trainer), design revised after review 2026-11-16 (see "Next steps"): prune only zero-probability actions with a per-key shadow-score test; trained on V3.16's keys | days + one training run | strategy-shape probe (+ postflop checks); BUG-027 replay; it/s; H2H vs D at equal wall time, no worse at equal iterations; LBR no worse |
-| V3.13 | Data-biased-response (DBR) blueprint against the population model: a second (opponent) table, forked from the D/E winner with fresh averages, models refit on its keys, P_max swept, held out by player/time (see "Next steps") | 1–2 weeks, after V3.16 and V3.12 | held-out human-model gain vs the cost (paired LBR + H2H vs the base), live layers on and off |
+| V3.12 | ~~Pruning arm **E**~~ (code built and calibrated; arm dropped 2026-11-17, pruning stays off by default) (Rust trainer), design revised after review 2026-11-16 (see "Next steps"): prune only zero-probability actions with a per-key shadow-score test; trained on V3.16's keys | days + one training run | strategy-shape probe (+ postflop checks); BUG-027 replay; it/s; H2H vs D at equal wall time, no worse at equal iterations; LBR no worse |
+| V3.13 | Data-biased-response (DBR) blueprint against the population model: a second (opponent) table, forked from the base winner (D, or C300/C-long if D loses) with fresh averages, models refit on its keys, P_max swept, held out by player/time (see "Next steps") | 1–2 weeks, after V3.16 and V3.12 | held-out human-model gain vs the cost (paired LBR + H2H vs the base), live layers on and off |
 | V3.16 | History tags in the keys (`spr5a`): flop + preflop's last aggressor; turn + the flop's and preflop's; river + SPR. Python + Rust + parity; arm **D** from scratch and control **C-long** (C300 resumed), both to ~1.6B (see "Next steps") | days + two training runs | D vs C-long at matching snapshots, screened then confirmed on fresh seeds; human model and LBR within pre-set margins |
-| V3.14 | Final pick among C300 / C-long / D / E / DBR blueprints; hardening, including deferred V3.7 latency and V3.8 statistical validation (below) | — | the gates, re-run on the final candidates |
+| V3.14 | Final pick among C300 / C-long / D / DBR blueprints; hardening, including deferred V3.7 latency and V3.8 statistical validation (below) | — | the gates, re-run on the final candidates |
 | V3.15 | ✅ measured 2026-11-16, corrected after review: today's keys mis-state equity by more than 5 points for 12/9% of flop, 42/33% of turn and 76/72% of river hand mass; the chosen tags cut the turn to 13/17% and SPR cuts the river to 58/47% (→ V3.16) | minutes to measure | — |
 
 The V3.6 serving work covered (all done; see "V3.6 — done" below):
