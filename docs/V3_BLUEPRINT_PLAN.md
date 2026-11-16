@@ -1,4 +1,4 @@
-# v3 blueprint — plan and progress log (V3.0–V3.6, V3.10, V3.11 and V3.15 done, base arm C300; V3.7–V3.9 built, gates deferred; next: V3.16 aggressor keys + V3.12 pruning, then V3.13, V3.14; see "Next steps")
+# v3 blueprint — plan and progress log (V3.0–V3.6, V3.10, V3.11 and V3.15 done, base arm C300; V3.7–V3.9 built, gates deferred; next: V3.16 history keys + V3.12 pruning (arms C-long, D, E), then V3.13 DBR, V3.14; see "Next steps")
 
 Branch `rust-core`. Written 2026-11-09 after the BUG-027 investigation.
 Follows [PHASE6_ABSTRACTION_PLAN.md](PHASE6_ABSTRACTION_PLAN.md) (SPR buckets built,
@@ -580,95 +580,205 @@ measures resolve, at the price of a worse BR lower bound. A at 300M is the fallb
 if the BR gap or the extra assets weigh more. Snapshot: 300M in either arm (the best
 play measured; BR is not used to pick it).
 
-## Next steps (decided 2026-11-16)
+## Next steps (decided 2026-11-16, revised after a three-agent review)
 
-The user chose all three training changes: aggressor tags in the keys (V3.16, from
-V3.15's measurement), pruning (V3.12, shadow-score design) and a population-biased
-blueprint (V3.13). They are built and trained in this order, each judged against the
-arm before it, so every change is scored on its own.
+The user chose three training changes: history tags in the keys (V3.16, from V3.15),
+pruning (V3.12) and a population-biased blueprint (V3.13). A three-agent review the same
+day found blockers in the first draft (a pruning rule that biased training, no room in
+the Rust packed key, a silent opponent-model mis-parse, a DBR design that reused the
+bot's own table) and an under-sized training budget; this section is the revised plan.
 
-**Order:**
+### The arms, and why there are several
 
-| # | Step | Machine cost | Depends on |
+Each arm changes one thing against another arm, so any difference in play can be
+attributed to that change, and a change that hurts can be dropped without losing the
+others.
+
+| Arm | What | Compared with | Answers |
 |---|---|---|---|
-| 1 | V3.16 code: `spr5a` key format, Python and Rust, parity | light (tests only) | — |
-| 2 | V3.12 code: shadow prune score in the Rust trainer | light (tests, a short calibration run) | — |
-| 3 | Train **D** = C + `spr5a` and **E** = D + pruning, same seed and schedule, snapshots every 50M | heavy: ~6 h per arm to ~1B, plugged in, overnight; the two can run one after the other | 1, 2 |
-| 4 | Evaluate D vs C300 and E vs D; pick the base for V3.13 | heavy: H2H/LBR, a few hours | 3 |
-| 5 | Refit the opponent models and the jam read on the new keys (V3.10 machinery) | light | 4 |
-| 6 | V3.13: DBR arms warm-started from the base, swept over P_max | heavy: a few hours per P_max | 4, 5 |
-| 7 | V3.14: final pick and hardening, then Phase 7 (separate sign-off) | — | 6 |
+| **C-long** | C300 resumed (same config, same keys) to D's iteration count | — (the control) | Is D's gain just more training? C was still improving at 300M (vs v2 +233 → +381 from 150M to 300M), so C-long is also a ship candidate. |
+| **D** | C + the V3.16 keys, trained from scratch | C-long at matching snapshots | Do the new keys help? |
+| **E** | D + pruning, same seed and schedule | D at equal wall time (primary) and equal iterations (no worse) | Does pruning help? |
+| **DBR** | forks of the D/E winner, one per P_max | that winner, on held-out players | Does baking in the population model help? |
 
-### V3.16 — aggressor tags in the keys (`spr5a`)
+### Order
 
-- **What:** flop keys also carry preflop's last aggressor (none/ip/oop); turn keys carry
-  the flop's and preflop's. Preflop and river keys are unchanged (the river is solved
-  live from the tracker's full history). SPR buckets stay as in spr5.
-- **Why these two tags, and only these (V3.15, 48 boards):**
-  - Turn hand mass off by more than 5 equity points: 28/24% today → 9.5/11.6% with both
-    tags.
-  - Adding the size of the previous street's last bet gets 6.8/7.1%, and a finer SPR
-    split with both tags gets 6.3/8.0%. Each costs about twice the turn keys again, for
-    a few points.
-  - Counting the flop's raises or adding pot type adds little.
-  - On the flop, today's error is already small (6.5/5.4%); one tag takes it to 2.2/2.3%.
-- **Size:** street-start key groups grow ×1.8 on the flop and ×6.6 on the turn. That is
-  an estimated ~1.5M info sets vs C300's 444k (≈3.4×), and a ~450 MB DB vs 130 MB (a
-  Phase 7 image and memory item).
-- **Code:**
-  - a new key format `spr5a` next to `v2`/`spr5` in `cfr/keys.py` (`make_info_set_key`
-    takes the tags; the format is stamped in the DB like spr5);
-  - threaded wherever spr5 is: `GameSession`/`game_adapter`, the range tracker's
-    `_action_matrix`, `tilt.py`, `replay.py`, BR/LBR/match/h2h walkers, the opponent
-    model fit;
-  - Rust: `keys.rs`, `pack_key` and the trainer's node state;
-  - Python == Rust parity fixtures for `spr5a`; v2 and spr5 byte-identical.
-- **Training (arm D):** C's config with `spr5a`. More keys need more iterations: run to
-  ~1B (C300 trained at ~47k it/s, so ~6 h), snapshots every 50M, and pick the snapshot
-  by play, not BR, as in V3.5.
-- **Gates:** strategy-shape probe clean; H2H vs C300 ahead (AIVAT, |t| > 2), including
-  at matched training time; H2H vs the human model no worse; LBR no worse; V3.15's
-  measure re-run on D.
+| # | Step | Machine cost |
+|---|---|---|
+| 1 | V3.16 code: key format `spr5a`, Python + Rust + parity | light |
+| 2 | V3.12 code: pruning in the Rust trainer, off by default, bit-identical when off | light |
+| 3 | Short `spr5a` runs: measure it/s on the bigger table; calibrate the prune threshold; read the pruning telemetry | ~1 h, plugged in |
+| 4 | Train C-long, D, E to the budget from step 3 (~1.6B iterations at today's speed: C-long ~7.5 h from 300M, D and E ~9.5 h each). Resumable: run whenever the laptop is idle | heavy, idle laptop |
+| 5 | Evaluate (see "Evaluation for these arms"): screen, pick, confirm | heavy, a few hours per comparison |
+| 6 | Refit and restamp the opponent models and the jam read on `spr5a` (needed before any exploit-on evaluation of D/E) | light |
+| 7 | V3.13 code (two tables, fork mode), then DBR forks per P_max | code days; each fork a few hours |
+| 8 | V3.14: final pick among C300 / C-long / D / E / DBR, hardening, then Phase 7 (separate sign-off) | — |
 
-### V3.12 — pruning with a shadow score (design chosen 2026-11-16)
+Disk: snapshots every 100M at ~430 MB each are ~7 GB per arm (E's prune scores are
+stripped from served snapshots); check free space before step 4.
 
-- **Why:** with merged keys, training explores hopeless lines (J9o 4-betting) and lets
-  them update shared downstream keys at full weight. Pruning mostly stops exploring
-  them, so downstream keys learn from the hands that really reach them (the
-  BUG-023/027 class). In Pluribus it also roughly halved training time, which matters
-  more now that keys grow ~3.4×.
-- **Design:** CFR+ stays exactly as it is for regrets and the average strategy. Each
-  action gets a second, unfloored score that accumulates the same regret increments,
-  discounted like the regrets, floored only at a large negative bound.
-  - On 95% of iterations after a warm-up (the first ~10%), the traverser skips actions
-    whose score is below −threshold.
-  - Never on the river, and never for an action that ends the hand (fold, a call that
-    closes the betting), as in Pluribus.
-  - Opponent nodes are never pruned, and a pruned action's regret and strategy entries
-    are left untouched.
-  - With pruning off, training is bit-identical to today (a test).
-- **Parallel merge:** workers send score increments, the master sums them with no floor
-  (the regret path, floored per worker, is unchanged, so the Fix #2 regression cannot
-  recur). Checkpoint and resume carry the scores; the resume guard refuses a
-  pruning/no-pruning mismatch.
-- **Threshold:** calibrated from the score distribution in a short run (scores are in
-  chips × visits), so that only actions that have been far worse for a long time are
-  pruned. Memory is about +30% in the training table.
-- **Training (arm E):** D's config plus pruning, same seed and schedule.
-- **Gates:** strategy-shape probe clean (no never-fold collapse); BUG-027 replay; it/s
-  vs D; H2H vs D and vs the human model ≥ D at the same iteration count.
+### V3.16 — history tags in the keys (`spr5a`)
 
-### V3.13 — population-biased (DBR) blueprint
+- **Keys:**
+  - flop: + preflop's last aggressor (none/ip/oop);
+  - turn: + the flop's and preflop's last aggressors (9 values);
+  - river: + the SPR bucket (river keys have none today), no tag;
+  - preflop: unchanged.
+  The initiative token on the turn is the fallback if step 3's it/s makes the 5.4× turn
+  split impractical (it halves the turn split for ~85% of the gain; V3.15).
+- **Why not river tags:** V3.15. SPR alone fits the turn's budget; any river tag would set
+  the run length (8.9–22×) for a street the live solver re-solves with full history.
+  Revisit after D is measured.
+- **Size:** effective splits 1.75 (flop), 5.4 (turn), 3.5 (river) → ~1.45M info sets
+  (flop ~340k, turn ~890k, river ~200k, preflop 30k), ~3.3× C300; the DB ~430 MB vs
+  130 MB.
+- **Training budget:** the largest split sets it: 5.4 × 300M ≈ 1.6B iterations to give
+  turn keys C300's coverage. 47k it/s was measured on a 444k-key table; measure on
+  `spr5a` before quoting hours.
+- **Key string:** tags sit before the pattern, `{c}_{s}_{pos}_{street}_r{n}_t{tags}_{pattern}`
+  (e.g. `pf_3_12_oop_turn_r2_tio_km`, tags as n/i/o per street). Off-grid translation
+  (`key[:-1]+c`: `bot_strategy.py`, `lbr.py`, `game_session.py`) and the tilt's
+  `rsplit('_', 1)` keep working because the pattern stays last.
+- **"Last aggressor"** is defined once, on pattern characters (`smlxo2a`; blinds are not
+  aggression; limped/checked = none), and shared by Python and Rust (Rust already has the
+  pattern in `Node.pattern`). An `allin` is only offered when it costs more than a call
+  and stacks are equal, so there is no call-for-less all-in. The tags are constant within
+  a street, like SPR: compute one street-context value at street start and pass it
+  wherever `spr` goes today.
+- **Python:**
+  - `make_info_set_key(..., key_format=, tags=)` raises when an `spr5a` key is built
+    without tags (today the format is inferred from `spr is None`, so a caller that forgot
+    the tags would silently build spr5-shaped keys, miss every lookup and play the
+    passive fallback);
+  - `GameSession` keeps each street's pattern (`d['history']` resets per street), with a
+    `from_dict` default rebuilt from `action_log` for in-flight sessions; fix the
+    `action_log` fallback that can log fold/check for a custom bet, and make `replay.py`
+    count aggression the same way (it drops unmapped actions but counts `custom`);
+  - every consumer: `GameSession`/`game_adapter`, `public_state['spr']` (read by
+    `tilt.py`), the range tracker's `_action_matrix`, `tilt.py`, `replay.py`, AIVAT
+    (`aivat.py`), the BR walker and its key cache (cache key must include the tags),
+    `lbr.py`, `match.py` (`act`), `cross_match.py` (`key_for`), `h2h_eval.py`,
+    `bug027_replay.py`, `export_rust_fixtures.py`, `train_rust.py` (choices),
+    `measure_street_history.py`, the Python trainer recursion; the hard-coded
+    `('v2', 'spr5')` gates in `lbr.py`, `match.py`, `cross_match.py`, `best_response.py`;
+    the generic gates (`bot_strategy.py`, `strategy_api.py`, `config.py`); the dead turn
+    projection gets a `require_key_format` guard.
+- **Opponent model:** `_levels` (`opponent_model.py`) strips only the 2-character `rN`
+  token and would read a tag as the betting pattern, silently (the exploit read, live
+  last-N and DBR's target would all be wrong). Parse the pattern as the last token, with a
+  test per key format; consider a facing+tags rung between `+facing` and the full key;
+  re-tune alpha (turn full keys split 5.4× on ~17.5k human decisions).
+- **Jam read:** restamp (its stamp includes `key_format`); its context keeps
+  `spr_bucket('spr5')`.
+- **Rust:** the packed u64 key is full (pattern 40 + strength 10 + bucket 8 + seat 1 +
+  street 2 + SPR 3 bits). Cut the strength field to 6 bits (largest K is 30) and use the
+  freed bits for the tags and river SPR; packed keys are never persisted (`db.rs` stores
+  the key string), so the layout can change. Update `parse_key`, `unpack_key`/
+  `key_string`, `KeyFormat::parse`. Parity fixtures for `spr5a` including a limped
+  check-down, a checked-through flop, the cap jam and (Python only) uncapped live
+  re-raises; v2 and spr5 string parity unchanged.
 
-- After V3.16/V3.12, on the chosen base (D or E). The opponent models are refit on its
-  keys first (step 5).
-- At the human seat's nodes, the opponent plays the population model with probability
-  P_conf(n) = P_max·n/(s+n) and its own CFR strategy otherwise (Johanson & Bowling
-  2009). Warm-started from the base snapshot instead of trained from zero.
-- Sweep P_max (e.g. 0.25 / 0.5 / 0.75). Players are split into fit and held-out sets
-  before fitting, so the gain is measured out of sample.
-- **Gates:** the held-out human-model gain must beat the cost (LBR and H2H vs the base).
-  The live layers (river solve, tilt, jam read) stay on top of whichever blueprint wins.
+### V3.12 — pruning (design revised after review)
+
+- **Why:** with merged keys, training explores hopeless lines and lets them update shared
+  downstream keys at full weight. Pruning mostly stops exploring lines that have been
+  hopeless for a long time. Pluribus credits it with roughly halving training time,
+  which matters with ~3.3× the keys. Honest expectation: the main gain is probably speed.
+  A low-frequency mixed action (J9o 4-betting 2% of the time) still has positive regret,
+  so it is never pruned and still updates downstream keys at full weight; the tags help
+  that case more.
+- **Rule:** at a traverser node, action a is skipped only if all hold:
+  1. its CFR+ regret is 0 (current probability 0) and the node's positive-regret sum is
+     > 0, so skipping it is exactly CFR+ for the node value and every sibling (flooring
+     would have discarded its increment anyway);
+  2. its shadow score S(a), divided by the key's discounted raw-visit count N, is below
+     −c × pot at that node, with N ≥ n_min (per-key warm-up instead of a global one);
+  3. at least one action is still explored;
+  4. a coin from a separate RNG stream lands on "prune" (95%), so pruning off stays
+     bit-identical and D and E see the same deals.
+  Never on the river, never fold, never a call that goes straight to showdown (an all-in
+  call). Calls that close a non-final street can be pruned (flatting 3-bets and 4-bets
+  with trash is a main route into pooled downstream keys).
+- **Shadow score:** the same increments and the same discount as the regrets (applied to
+  pruned actions too, so R ≥ S holds), floored just below the prune threshold (as
+  Pluribus: −310M against −300M) so recovery time is bounded. Opponent nodes are never
+  pruned.
+- **Parallel and resume:** workers keep base S plus raw increments; the master applies
+  the decay and floor once per round in the same `merged()` path (the floored regret path
+  is unchanged, so the reverted "Fix #2" failure cannot recur). The discount clock ticks
+  once per merge round, hence the per-key N above. Checkpoint/resume carry S and N; the
+  resume guard refuses a pruning mismatch; the prune parameters are stamped in
+  `training_metadata`; S and N are stripped from served snapshots.
+- **Tests:** pruning off is bit-identical to today; the Python twin and parity cover
+  pruning off only.
+- **Calibration and telemetry (step 3, on `spr5a`):** choose c and n_min from short runs;
+  log dormant (key, action) pairs and re-activations (zero re-activations is an alarm);
+  carry the traverser's own reach in `Node` and report the share of postflop regret-update
+  mass from paths with own reach below 1e-3, pruning off vs on (the direct test of the
+  motivation).
+- **Gates:** strategy-shape probe (with the postflop checks below); BUG-027 replay; it/s
+  vs D; H2H vs D at equal wall time (primary) and no worse at equal iterations; LBR no
+  worse.
+
+### V3.13 — population-biased (DBR) blueprint (design revised after review)
+
+- **Two tables.** `pack_key` holds the seat but no role, and one table serves both seats,
+  so "the opponent's own CFR strategy" would be the bot's served strategy. Add a role bit
+  (bot / restricted opponent): four traversal combinations (bot as SB or BB × who
+  traverses). At an opponent visit the action probabilities are
+  P_conf·model + (1 − P_conf)·free; regret matching updates only the free part; the
+  mixture's value passes up the tree; only the bot table's average strategy is served.
+  About 2× training memory.
+- **The model inside training:** P_conf = P_max·n/(s + n) with n = human decisions at the
+  full key; drop the blueprint rung from the model so P_conf alone shrinks toward the free
+  strategy (otherwise thin keys double-shrink toward the frozen base); a key with no model
+  mass gets P_conf = 0, never the uniform fallback; the model's prior is the frozen base,
+  never the table being trained; precompute the model per packed key and backoff level in
+  Rust.
+- **Fork, not resume:** at the fork zero the strategy sums and `strategy_visit_count` and
+  reset the regret clocks, or a few hours of DBR barely moves a ~1.6B-iteration average;
+  an explicit fork mode (the resume guard checks the clock) with the fork stamped in the
+  DB.
+- **Held-out evaluation:** leave-one-player-out or a time split (15 players); rebuild the
+  population model, jam read and tilt from the fit set only; the held-out evaluation model
+  uses the frozen base as its prior for every arm, never the DBR blueprint.
+- **Cost:** paired LBR plus H2H against the base, not the repo's BR (board-clairvoyant,
+  not valid exploitability). Evaluate with the live layers (tilt, exploit, river solve)
+  both on and off, since the tilt assumes a GTO-ish base and may exploit twice. The safe
+  gadget's "no worse than the blueprint" weakens to "no worse than DBR": anchor it to the
+  base blueprint, or re-validate.
+- **Sweep:** P_max 0.25 / 0.5 / 0.75, each fork a few hours (set from step 3's it/s).
+
+### Evaluation for these arms
+
+- **Power:** paired AIVAT H2H has SE ≈ ±30 mbb/hand at 240k hands, so |t| > 2 only
+  detects gains of ~60+. For 80% power, n ≈ 240k·(84/δ)²: ~680k hands for δ = 50, ~1.9M
+  for δ = 30. LBR (paired ±200 at 10k hands) needs ~30k paired hands for a 200 margin.
+- **Margins, set before running:** every "no worse" gate states its non-inferiority
+  margin and sample size up front.
+- **Snapshot choice without selection bias:** picking the best of ~16 snapshots on the
+  same data inflates the result by ~2 SE. Screen snapshots on one seed set at modest
+  size, pick, then confirm the pick on fresh seeds at full size, and report only the
+  confirmation. Pre-register each arm's primary comparison (D vs C-long at matching
+  iterations; E vs D at equal wall time).
+- **Probes that actually test the new keys:** the strategy-shape probe checks preflop only
+  (`strategy_shape.py`); add postflop checks on tagged keys (the preflop aggressor c-bets
+  more than the caller, sane lead frequency, no tagged turn key collapses to never-fold)
+  and a visit-tail check (`probe_rare_line_convergence.py`). The human-model opponent in
+  `h2h_eval.py` keys on v2 and remembers nothing from earlier streets, so H2H against it
+  barely rewards line-awareness; add a served-stack test (`GameSession` + the river
+  solver) and an API smoke in the V3.6 style that checks every live bot key on D is
+  trained.
+
+### Added to Phase 7
+
+- The image and release asset grow ~300 MB; re-run `measure_serving_memory.py` plus a
+  latency smoke on the bigger DB (cold SQLite reads on 0.25 vCPU).
+- `/api/abstractions` and `KeyExplorer.jsx` already mis-parse spr5 keys (they read
+  `r3_km` as the pattern); fix them for the tags too. The Hand Explorer returns 501 for
+  non-v2 blueprints; building tags would need the full betting line as input.
+- The CI refit (`refit-opponent-models.yml`) still fits v2 and needs `--db`; CI does not
+  run `core-rs` parity.
 
 ## Steps
 
@@ -687,11 +797,11 @@ arm before it, so every change is scored on its own.
 | V3.9 | F / F_EXTENDED implemented; local structure/parity/safety checks pass; sustained solver-on H2H and latency gates pending | days, after V3.7 | p95 ≤ 5 s on Rust; H2H with the solver on ≥ menu A (\|t\| < 2 or better) |
 | V3.10 | ✅ 2026-11-15 (see "V3.10 — done"): base arm **C at 300M**. **Pick the base arm** (A or C, from V3.5b's results and V3.6's memory numbers; V3.10–V3.13 build on it), then re-fit the opponent models on its v3 keys, stamped with `abstraction_id` (moved here from Phase 7: V3.11 and V3.13 need it) | ~1 day | the model guard compares abstraction ids; exploit no longer self-disables on the v3 blueprint |
 | V3.11 | ✅ 2026-11-15 (see "V3.11 — done"): humans jam wider than assumed, so the read mostly calls more. Both gates pass after the review fixes (gate 1 +7.6 / +6.1 chips/spot; gate 2 +33.3 ± 4.8 mbb/hand). Pooled facing-jam population read + logged-spot evaluator (targets BUG-027) | days | logged-spot EV(call) − EV(fold) improves over the current guard; no regression vs the human model |
-| V3.12 | Pruning arm **E** (Rust trainer), shadow-score design chosen 2026-11-16 (see "Next steps"), trained on V3.16's config | days + ~6 h training | strategy-shape probe clean; BUG-027 replay; it/s; H2H vs D and vs the human model ≥ D |
-| V3.13 | Offline data-biased-response (DBR) blueprint against the population model, warm-started from the D/E pick, models refit on its keys | 1–2 weeks, after V3.16 and V3.12 | BR cost vs a held-out human-model gain, swept over P_max |
-| V3.16 | Aggressor tags in the keys (`spr5a`: flop + preflop's last aggressor, turn + the flop's and preflop's), Python + Rust + parity; arm **D** = C + `spr5a` to ~1B (see "Next steps") | days + ~6 h training | strategy-shape probe; H2H vs C300 (AIVAT, \|t\| > 2); human model and LBR no worse |
-| V3.14 | Final pick among C300 / D / E / DBR blueprints; hardening, including deferred V3.7 latency and V3.8 statistical validation (below) | — | the gates, re-run on the final candidates |
-| V3.15 | ✅ measured 2026-11-16: flop fine, turn not (a quarter of turn-start hand mass is off by more than 5 equity points); carrying the flop's and preflop's last aggressors cuts it to ~10%; bet size and finer SPR add little for ~2× the keys (→ V3.16). Measure what forgetting earlier streets costs (see "V3.15 — street history"); if it is large, a history-token arm joins V3.14's pick (or v4) | minutes to measure; an arm is a retrain | range divergence across the histories that share a key |
+| V3.12 | Pruning arm **E** (Rust trainer), design revised after review 2026-11-16 (see "Next steps"): prune only zero-probability actions with a per-key shadow-score test; trained on V3.16's keys | days + one training run | strategy-shape probe (+ postflop checks); BUG-027 replay; it/s; H2H vs D at equal wall time, no worse at equal iterations; LBR no worse |
+| V3.13 | Data-biased-response (DBR) blueprint against the population model: a second (opponent) table, forked from the D/E winner with fresh averages, models refit on its keys, P_max swept, held out by player/time (see "Next steps") | 1–2 weeks, after V3.16 and V3.12 | held-out human-model gain vs the cost (paired LBR + H2H vs the base), live layers on and off |
+| V3.16 | History tags in the keys (`spr5a`): flop + preflop's last aggressor; turn + the flop's and preflop's; river + SPR. Python + Rust + parity; arm **D** from scratch and control **C-long** (C300 resumed), both to ~1.6B (see "Next steps") | days + two training runs | D vs C-long at matching snapshots, screened then confirmed on fresh seeds; human model and LBR within pre-set margins |
+| V3.14 | Final pick among C300 / C-long / D / E / DBR blueprints; hardening, including deferred V3.7 latency and V3.8 statistical validation (below) | — | the gates, re-run on the final candidates |
+| V3.15 | ✅ measured 2026-11-16, corrected after review: today's keys mis-state equity by more than 5 points for 12/9% of flop, 42/33% of turn and 76/72% of river hand mass; the chosen tags cut the turn to 13/17% and SPR cuts the river to 58/47% (→ V3.16) | minutes to measure | — |
 
 The V3.6 serving work covered (all done; see "V3.6 — done" below):
 - spr5 keys, threaded through `GameSession`, the range tracker's `_action_matrix`,
@@ -735,63 +845,90 @@ Libratus and Pluribus, as published, keep the full betting history and abstract 
   street's last aggressor, ~6× postflop keys) as a training arm judged like A and C;
   full action history is a v4 question.
 
-**Measured 2026-11-16 (C300, 48 boards, `scripts/measure_street_history.py`):**
+**Measured 2026-11-16, corrected after review (C300, 48 boards per street,
+`scripts/measure_street_history.py`):**
 
 The script walks C300's public betting tree on each board, carrying both players'
-per-hand reach under the blueprint. At the first decision of the flop and the turn it
-groups the earlier-street lines that share a key. For the player deciding at the key, it
-then compares each hand's equity against the line's real opponent range with its equity
-against the range the key pools for that hand's bucket. Each line's weight in that pool
-is its joint reach, which is what training sees. Turn equities are exact over the river;
-flop equities use 40 sampled runouts. 0.18% of line mass is pruned.
+per-hand reach under the blueprint. At the first decision of the flop, turn and river it
+groups the earlier-street lines that a candidate key would merge. Training updates a key
+from every line that reaches it, weighted by the opponent's reach only (the traverser
+explores all its own actions; `trainer.rs` `cfr()`). So the opponent range a merged key
+is trained against is the sum of the opponent's reach over its lines. For each hand of
+the player deciding and each line, the error is the gap between the hand's equity against
+the line's real opponent range and against that pooled range, weighted by how often the
+hand really stands there (joint reach). Turn and river equities are exact; flop equities
+use 40 sampled runouts. Pruned line mass: 0.18% (flop/turn), 1.1% (river).
 
-| Street start | Key | Keys/board | Mean equity error (ip / oop) | Hand mass off by > 5 points |
-|---|---|---|---|---|
-| flop | street only (reference) | 1 | 4.45 / 2.36 | 34.8 / 12.2% |
-| flop | **today: street + SPR** | 5 | 1.54 / 1.38 | 6.5 / 5.4% |
-| flop | + pot type | 9 | 1.24 / 1.23 | 4.5 / 4.1% |
-| flop | + previous street's last aggressor | 9 | 1.02 / 1.06 | 2.2 / 2.3% |
-| flop | + both | 17 | 0.89 / 0.90 | 1.5 / 1.4% |
-| turn | street only (reference) | 1 | 7.10 / 5.63 | 55.4 / 40.5% |
-| turn | **today: street + SPR** | 5 | 3.98 / 3.51 | 28.2 / 23.9% |
-| turn | + pot type | 12 | 3.55 / 3.23 | 23.9 / 21.6% |
-| turn | + previous street's last aggressor | 13 | 2.60 / 2.58 | 15.6 / 15.7% |
-| turn | + both | 27 | 2.19 / 2.35 | 12.3 / 13.9% |
-| turn | + flop's and preflop's last aggressors | 33 | 1.87 / 2.05 | 9.5 / 11.6% |
-| turn | + flop's last aggressor and its number of aggressions | 27 | 2.35 / 2.30 | 13.6 / 13.5% |
-| turn | + all four (pot type, both aggressors, flop aggressions) | 117 | 1.47 / 1.65 | 6.5 / 8.4% |
-| turn | + both aggressors + the flop's last bet size class | 67 | 1.54 / 1.57 | 6.8 / 7.1% |
-| turn | finer SPR (11 edges) instead of spr5, no history | 11 | 3.16 / 3.07 | 20.5 / 20.1% |
-| turn | finer SPR + both aggressors | 77 | 1.40 / 1.56 | 6.3 / 8.0% |
-| flop | + preflop's last aggressor + its size class (the open size) | 25 | 0.26 / 0.39 | 0.7 / 1.3% |
-| flop | finer SPR + preflop's last aggressor | 21 | 0.70 / 0.79 | 0.4 / 0.9% |
+The first version of these tables (committed earlier the same day) pooled lines by joint
+reach and grouped hands by fine preflop bucket. A review found both wrong; the corrected
+numbers are higher (turn today 28/24% → 42/33%) and the conclusions sharper.
 
-(On the flop, "preflop's last aggressor" is the previous street's, and preflop's
-aggression count is the pot type, so those rows repeat the flop rows above.)
+"Effective split" is how many ways a key's training visits really spread (exp of the
+entropy of the visit mass over the new sub-keys, averaged by visit mass), relative to
+today's keys. A street that splits k ways needs about k× the iterations for its keys to
+keep C300's coverage: C300's keys have similar coverage on every postflop street (median
+~1,700–2,200 of 12,600 merge rounds), so the largest split sets the run length.
 
-- **The flop is fine.** SPR already carries most of the preflop line: 1.5 points mean
-  error, about 6% of hand mass off by more than 5.
-- **The turn is not.** A quarter of the turn-start hand mass has its equity mis-stated by
-  more than 5 points, because a check-raised flop and a bet-called flop share turn keys.
-- **Two aggressor tags beat one on the turn:** carrying both the flop's and preflop's
-  last aggressor on turn keys cuts the >5-point share to 9.5/11.6% (33 groups vs 13).
-  Counting the flop's aggressions adds little over who made the last one.
-- **Most of the fix is one 3-value token:** who made the previous street's last
-  aggression (none/ip/oop). It cuts the turn's >5-point share from 28/24% to 16/16% for
-  ~2.6× the street-start key groups. Pot type adds little on top (12–14%) and doubles
-  the keys again.
+Share of hand mass whose equity is off by more than 5 points (ip / oop):
+
+| Street | Key | Off by > 5 points | Effective split |
+|---|---|---|---|
+| flop | street only (reference) | 52.4 / 17.1% | — |
+| flop | **today: + SPR** | 11.5 / 8.6% | 1 |
+| flop | + preflop's last aggressor | 2.4 / 2.6% | 1.75 |
+| flop | finer SPR (11 edges), no tag | 3.9 / 7.3% | — |
+| flop | random split, 3 ways (baseline) | 2.4 / 4.8% | 2.6 |
+| turn | street only (reference) | 70.8 / 68.8% | — |
+| turn | **today: + SPR** | 41.9 / 32.6% | 1 |
+| turn | + flop's last aggressor | 22.1 / 21.9% | 2.4 |
+| turn | + initiative (see below) | 16.5 / 20.0% | 2.6 |
+| turn | + flop's and preflop's last aggressors | 13.0 / 16.7% | 5.4 |
+| turn | + both aggressors + the flop's last bet size | 10.2 / 12.4% | 11.9 |
+| turn | finer SPR, no tag | 30.6 / 28.7% | — |
+| turn | finer SPR + both aggressors | 8.6 / 11.9% | — |
+| turn | random split, 9 ways (baseline) | 28.3 / 25.4% | 8.3 |
+| turn | random split, 27 ways (baseline) | 21.6 / 19.3% | 21.5 |
+| river | **today: street only (river keys carry no SPR)** | 76.0 / 71.5% | 1 |
+| river | + SPR | 57.9 / 46.5% | 3.5 |
+| river | + SPR + turn's last aggressor | 48.0 / 39.8% | 8.9 |
+| river | + SPR + initiative | 45.3 / 39.6% | 10.6 |
+| river | + SPR + turn's and flop's last aggressors | 33.2 / 29.8% | 22.2 |
+| river | + SPR + turn's, flop's and preflop's | 24.3 / 23.8% | — |
+| river | + SPR, then a random 9-way split (baseline) | 55.4 / 45.0% | — |
+
+The **initiative** token is 5-valued: who made the last bet or raise of the most recent
+street that had one (ip/oop), and whether that street was the previous one or the
+previous street checked through; "none" if nobody has bet since the blinds. It merges
+lines that the two-aggressor tag keeps apart, e.g. "OOP raised preflop, IP bet the flop"
+and "IP raised preflop, IP bet the flop" are both "IP bet last street".
+
+- **Real structure, not just more keys:** at matching size the tags beat a random split
+  by a wide margin on the turn (13/17% at a 5.4× split vs 28/25% at 8.3×) and the river.
+  On the flop a random split does about as well as the tag, which only says the flop
+  error is small either way.
+- **Flop:** one tag (preflop's last aggressor) takes 11.5/8.6% to 2.4/2.6% for a 1.75×
+  split.
+- **Turn:** the biggest blueprint-served error. Both aggressors: 42/33% → 13/17% for 5.4×;
+  initiative gets ~85% of that gain for 2.6×; bet size on top costs another 2.2× for 3
+  points.
+- **River:** the worst error, but the live bot re-solves the river with the full history.
+  The blueprint's river still matters in three ways: the solver's answer is used only if
+  it beats the blueprint's river action by an EV margin
+  (`river_subgame_solver.py` `ev_gate`), the safe gadget anchors on the blueprint's river
+  values, and during training the turn (served straight from the blueprint) learns its
+  continuation values from the blueprint's river. SPR alone (76/72% → 58/47%) fits inside
+  the turn's 5.4× budget; any river tag sets the whole run's length (8.9–22×) for a street
+  the solver already handles, so river tags are deferred.
 - **Caveats:**
-  - Equity error is not EV loss: the key's strategy is a compromise, and this measures
-    how far apart the merged situations are, not what the compromise costs.
-  - Ranges are the blueprint's own self-play lines, not human lines.
-  - Measured at street starts only; within a street the key keeps the street's betting.
-  - The river is not measured. The live bot solves the river from the range tracker,
-    which keeps full history.
-- **Next (a retrain, not started):** an arm `spr5+aggr` adds the previous-street
-  aggressor to flop and turn keys. That is at most 3× the postflop info sets (C300:
-  414k → ≤1.2M), so it probably needs more than 300M iterations. Judge it like A vs C:
-  strategy-shape probe, H2H vs C300 and vs the human model, LBR. It is a key-format
-  change, so it joins V3.14's final pick or moves to v4.
+  - Equity error is not EV: polarised and condensed ranges with equal equity play
+    differently, and the key's strategy is a compromise, not a wrong guess.
+  - Lines are weighted by the blueprint's own self-play. Humans visit low-reach lines
+    more, where a merged key's pool (dominated by common lines) is most wrong, so the gain
+    for the human seat is probably understated.
+  - Measured at street starts only.
+  - Re-running this on a tagged blueprint is circular (the tags split exactly these
+    groups), so it is not a gate for V3.16.
+- **Decision (2026-11-16):** see V3.16 in "Next steps".
 
 ### V3.11 — done 2026-11-15
 
@@ -1337,7 +1474,7 @@ scripts were not kept).
 **V3.13 — safe exploitative (DBR) blueprint.**
 - At the human seat's nodes the opponent plays the fitted population model with
   probability P_conf(n) and its own CFR strategy otherwise (data-biased response,
-  Johanson & Bowling 2009); ~1 h of Rust training per P_max.
+  Johanson & Bowling 2009). Superseded by the revised design in "Next steps" (a second table, a fork per P_max of a few hours).
 - Targets pre-river exploitation, which is only the bounded tilt today.
 - Measure BR (the cost) against a held-out human-model match (the gain), sweeping
   P_max. Evaluating against the same model is in-sample, so hold out players or time.

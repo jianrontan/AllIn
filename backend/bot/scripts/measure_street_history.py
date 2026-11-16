@@ -1,44 +1,53 @@
 #!/usr/bin/env python
-"""V3.15: how different are the ranges that one postflop key averages over?
+"""V3.15: how much does a postflop key lose by forgetting the earlier streets?
 
-Postflop keys carry only the current street's betting (plus, for spr5, the street-start
-SPR bucket), so every earlier-street line that reaches the same street with the same SPR
-bucket shares a key. This walks the blueprint's public betting tree on sampled boards,
-carrying each player's per-hand reach, and at the first decision of each recorded street
-stores both players' ranges and the line's probability. Then, per board and per grouping
-of those street-start nodes, it reports the reach-weighted total-variation distance
-between each line's range and the group's pooled range (the range the shared key is
-trained against), per player:
+Postflop keys carry only the current street's betting, plus (spr5) the street-start SPR
+bucket on the flop and turn; river keys carry no SPR. So every earlier-street line that
+reaches a street with the same SPR bucket shares a key. This walks the blueprint's public
+betting tree on sampled boards, carrying each player's per-hand reach, and at the first
+decision of each recorded street stores both players' reach vectors.
 
-  street         one key per street (no SPR, no history): the upper reference
-  street+spr     what the served keys distinguish today
-  street+spr+pot   + preflop pot type (srp/3bp/4bp)
-  street+spr+aggr  + who made the previous street's last aggression (none/ip/oop)
-  street+spr+tok   + both: the proposed history token
-  street+spr+aggr+pre  previous street's last aggressor + preflop's (turn keys: both)
-  street+spr+aggr+n    previous street's last aggressor + how many aggressions it had
-  street+spr+all   all four
-  street+spr+aggr+pre+size  + the size class of the previous street's last aggression
-  street+sprfine   a finer SPR split (SPR_FINE_EDGES) instead of spr5, no history
-  street+sprfine+aggr+pre   the finer SPR split + both aggressors
-  full history   0 by definition
+The number reported is the key's equity error. Training (external-sampling MCCFR) updates
+a key's regrets from every line that reaches it, weighted by the OPPONENT's reach only:
+the traverser explores all its own actions, so its own reach never enters
+(core-rs/src/mccfr/trainer.rs, cfr()). The opponent range a merged key is trained
+against is therefore the sum of the opponent's reach over the merged lines, the same for
+every hand of the deciding player. For each hand h of the player deciding and each line
+l, the error is |equity(h vs the line's real opponent range) - equity(h vs that pooled
+range)|, averaged with weight = how often h really stands at l (joint reach). Reported:
+the mean error and the share of that mass off by more than 5 equity points, per player.
 
-Two numbers per grouping: TV over hands (descriptive), and the decision-relevant one, the
-key's equity error: for the player deciding at the key, each hand's equity against the
-line's real opponent range minus its equity against the opponent range the key pools for
-that hand's bucket (reach-weighted over the merged lines, which is what training sees),
-averaged over hands and lines by joint reach, plus the share of that mass off by more
-than 5 points. Turn equities are exact over the river; flop equities use sampled
-runouts. Both are exact on the walked tree otherwise; lines below
-`--min-reach` (line probability) are pruned and the pruned mass is reported.
+Groupings of the recorded lines (what the key would distinguish):
 
-    python scripts/measure_street_history.py --db <blueprint.db> --boards 24 --workers 6
+  street only      no SPR, no history (the lower reference)
+  spr              the spr5 street-start bucket (today's flop/turn keys; NEW on the river)
+  spr+prev         + the previous street's last aggressor (none/ip/oop)
+  spr+init         + "initiative": the last aggressor of the most recent street that had
+                   any aggression, and whether that street was the previous one or the
+                   previous street checked through (5 values)
+  spr+prev+prev2   + the last aggressors of the previous two streets (turn: flop and
+                   preflop; river: turn and flop)
+  spr+prev+prev2+prev3   river only: turn, flop and preflop aggressors
+  spr+prev+prev2+size    + the size class of the previous street's last aggression
+  sprfine          a finer SPR split (SPR_FINE_EDGES) instead of spr5, no history
+  sprfine+prev+prev2     the finer split + two aggressor tags
+  spr+randK        each SPR group's lines split at random (a hash of the line) into K
+                   parts: the "more keys" baseline a real tag has to beat
+
+Turn and river equities are exact over the remaining cards; flop equities use sampled
+runouts. Lines below `--min-reach` are pruned and the pruned mass is reported. When the
+recorded streets include later ones, the hands that collide with later board cards are
+dropped from the earlier streets too (a small bias, the same for every grouping).
+
+    python scripts/measure_street_history.py --db <blueprint.db> --boards 48 --workers 8
+    python scripts/measure_street_history.py --db <blueprint.db> --streets 3 --boards 32
 """
 import argparse
 import json
 import random
 import sys
 import time
+import zlib
 from collections import defaultdict
 from multiprocessing import Pool
 from pathlib import Path
@@ -47,18 +56,14 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.cfr.keys import action_char, spr_bucket  # noqa: E402
+from src.cfr.keys import SPR_EDGES, action_char, spr_bucket  # noqa: E402
 from src.cfr.poker_game import STARTING_STACK  # noqa: E402
 from src.evaluation.best_response import BestResponseEvaluator  # noqa: E402
 from src.evaluation.showdown_kernel import build_board_arrays  # noqa: E402
-from src.exploitation.jam_read import pot_type  # noqa: E402
 from src.abstractions.postflop_features import rank7  # noqa: E402
 from src.game.range_tracker import _FULL_DECK  # noqa: E402
 from src.storage.blueprint_db import BlueprintDB  # noqa: E402
 
-GROUPINGS = ('street', 'street+spr', 'street+spr+pot', 'street+spr+aggr', 'street+spr+tok',
-             'street+spr+aggr+pre', 'street+spr+aggr+n', 'street+spr+all',
-             'street+spr+aggr+pre+size', 'street+sprfine', 'street+sprfine+aggr+pre')
 # A finer SPR split than the served spr5 edges (2, 5, 12, 40), for comparison.
 SPR_FINE_EDGES = (1.0, 1.5, 2.0, 3.0, 5.0, 7.0, 9.0, 12.0, 18.0, 25.0, 40.0)
 _POS = {0: 'ip', 1: 'oop'}
@@ -66,6 +71,14 @@ _POS = {0: 'ip', 1: 'oop'}
 
 def _aggressive(a):
     return a == 'allin' or a.startswith(('bet_', 'raise_'))
+
+
+def last_aggressor(game, street, history):
+    """'ip' / 'oop' for whoever made the street's last aggression, else 'none'."""
+    for i in range(len(history) - 1, -1, -1):
+        if _aggressive(history[i]):
+            return _POS[game._acting_player(i, street)]
+    return 'none'
 
 
 def last_size(history):
@@ -77,17 +90,52 @@ def last_size(history):
     return 'none'
 
 
+def spr_of(street_pot):
+    return (STARTING_STACK - street_pot / 2.0) / street_pot
+
+
+def spr5(street_pot):
+    """The spr5 bucket, computed on any street (the served keys use it on flop/turn)."""
+    return sum(1 for e in SPR_EDGES if spr_of(street_pot) >= e)
+
+
 def spr_fine(street_pot):
-    spr = (STARTING_STACK - street_pot / 2.0) / street_pot
-    return sum(1 for e in SPR_FINE_EDGES if spr >= e)
+    return sum(1 for e in SPR_FINE_EDGES if spr_of(street_pot) >= e)
 
 
-def last_aggressor(game, street, history):
-    """'ip' / 'oop' for whoever made the street's last aggression, else 'none'."""
-    for i in range(len(history) - 1, -1, -1):
-        if _aggressive(history[i]):
-            return _POS[game._acting_player(i, street)]
-    return 'none'
+def tags(game, prior):
+    """The candidate key additions for a street start, from the earlier streets'
+    histories `prior` = ((street, history), ...) oldest first."""
+    aggr = [last_aggressor(game, s, list(h)) for s, h in prior]     # oldest first
+    back = aggr[::-1]                                                # previous street first
+    init = 'none'
+    for i, a in enumerate(back):
+        if a != 'none':
+            init = (a, 'prev' if i == 0 else 'older')
+            break
+    return {'prev': back[0], 'prev2': back[1] if len(back) > 1 else '-',
+            'prev3': back[2] if len(back) > 2 else '-', 'init': init,
+            'size': last_size(prior[-1][1])}
+
+
+def _rand(line, k):
+    return zlib.crc32(line.encode()) % k
+
+
+GROUPINGS = {
+    'street only': lambda t: (),
+    'spr': lambda t: (t['spr'],),
+    'spr+prev': lambda t: (t['spr'], t['prev']),
+    'spr+init': lambda t: (t['spr'], t['init']),
+    'spr+prev+prev2': lambda t: (t['spr'], t['prev'], t['prev2']),
+    'spr+prev+prev2+prev3': lambda t: (t['spr'], t['prev'], t['prev2'], t['prev3']),
+    'spr+prev+prev2+size': lambda t: (t['spr'], t['prev'], t['prev2'], t['size']),
+    'sprfine': lambda t: (t['sprfine'],),
+    'sprfine+prev+prev2': lambda t: (t['sprfine'], t['prev'], t['prev2']),
+    'spr+rand3': lambda t: (t['spr'], _rand(t['line'], 3)),
+    'spr+rand9': lambda t: (t['spr'], _rand(t['line'], 9)),
+    'spr+rand27': lambda t: (t['spr'], _rand(t['line'], 27)),
+}
 
 
 class Walker:
@@ -105,7 +153,7 @@ class Walker:
         H = ba['H']
         game, ev = self.game, self.ev
         key_cache = {}
-        nodes = []          # (street, spr, token, line, w, r0, r1)
+        nodes = []          # (street, tag dict, r0, r1)
         pruned = [0.0]
 
         def probs_matrix(street, pattern, legal, pos, spr):
@@ -145,19 +193,15 @@ class Walker:
                      STARTING_STACK - n1, '', r0, r1,
                      prior + ((street, tuple(history)),), depth + 1)
                 return
-            spr = spr_bucket(self.kf, street, starting_pot)
             if not history and street in self.record_streets:
-                pre = prior[0][1]
-                prev_street, prev_hist = prior[-1]
-                tok = (pot_type(list(pre)), last_aggressor(game, prev_street, list(prev_hist)),
-                       last_aggressor(game, 0, list(pre)),
-                       min(3, sum(1 for x in prev_hist if _aggressive(x))),
-                       last_size(prev_hist), spr_fine(starting_pot))
-                line = '/'.join(''.join(action_char(a) for a in h) for _, h in prior)
-                w = float(r0.mean() * r1.mean())
-                nodes.append((street, spr, tok, line, w, r0.copy(), r1.copy()))
+                t = tags(game, prior)
+                t['spr'] = spr5(starting_pot)
+                t['sprfine'] = spr_fine(starting_pot)
+                t['line'] = '/'.join(''.join(action_char(a) for a in h) for _, h in prior)
+                nodes.append((street, t, r0.copy(), r1.copy()))
                 if street >= self.max_street:
                     return
+            spr = spr_bucket(self.kf, street, starting_pot)
             probs = probs_matrix(street, pattern, tuple(legal), _POS[cp], spr)
             for ai, a in enumerate(legal):
                 n0 = r0 * probs[:, ai] if cp == 0 else r0
@@ -176,21 +220,20 @@ class Walker:
         return ba, nodes, pruned[0]
 
 
-def tv(p, q):
-    return 0.5 * float(np.abs(p - q).sum())
-
-
 def equity_matrices(ba, board, street, n_runouts, seed):
     """W[h, o] = P(h beats o) + half the ties over the street's remaining runouts, pooled
     over (pair, runout) like jam_read._bin_equities; C[h, o] = 1 if h and o share no card
-    (and some runout is compatible). Turn: every river (exact); flop: seeded runouts."""
+    (and some runout is compatible). River: showdown; turn: every river; flop: seeded
+    runouts."""
     hands, H = ba['hands'], ba['H']
     known = list(board[:2 + street])
     c1, c2 = ba['c1'], ba['c2']
     dead = set(board)          # the walked board; hands colliding with it are not in ba
     undealt = [c for c in _FULL_DECK if c not in dead]
     need = 5 - len(known)
-    if need == 1:
+    if need == 0:
+        runouts = [()]
+    elif need == 1:
         runouts = [(c,) for c in undealt]
     else:
         rng = random.Random(seed)
@@ -211,71 +254,34 @@ def equity_matrices(ba, board, street, n_runouts, seed):
     return W, compat.astype(float)
 
 
-def _key_labels(ba, street):
-    lab = np.empty(ba['H'], dtype=np.int64)
-    for gi, (mask, _) in enumerate(ba['groups'][street]):
-        lab[mask] = gi
-    return lab
-
-
-def _group_key(n, g):
-    """n = (street, spr, tok, line, ...); tok = (pot type, previous street's last
-    aggressor, preflop's last aggressor, aggressions on the previous street capped at 3,
-    size class of the previous street's last aggression, finer SPR bucket)."""
-    t = n[2]
-    return {'street': (n[0],), 'street+spr': (n[0], n[1]),
-            'street+spr+pot': (n[0], n[1], t[0]), 'street+spr+aggr': (n[0], n[1], t[1]),
-            'street+spr+tok': (n[0], n[1], t[0], t[1]),
-            'street+spr+aggr+pre': (n[0], n[1], t[1], t[2]),
-            'street+spr+aggr+n': (n[0], n[1], t[1], t[3]),
-            'street+spr+all': (n[0], n[1]) + tuple(t[:4]),
-            'street+spr+aggr+pre+size': (n[0], n[1], t[1], t[2], t[4]),
-            'street+sprfine': (n[0], t[5]),
-            'street+sprfine+aggr+pre': (n[0], t[5], t[1], t[2])}[g]
-
-
 def summarize_board(ba, nodes, board, n_runouts, seed, big=0.05):
-    """Per street and grouping, reach-weighted sums (divide by the street's total):
-    tv[pos]   line weight x TV(line range of `pos`, the group's pooled range)
-    deq[pos]  for the player at `pos` deciding at the key: hand reach x |equity vs the
-              line's opponent range - equity vs the opponent range the key pools for
-              that hand's own bucket|  (the key's equity error from forgetting the line)
-    big[pos]  the same weight on |delta equity| > `big`"""
+    """Per street and grouping, sums over (line, hand) of joint reach x |equity error|
+    (deq), of joint reach on errors > `big` (big), and of joint reach (hw), per player
+    deciding at the key; plus the number of groups."""
     out = {}
     for street in sorted({n[0] for n in nodes}):
         sn = [n for n in nodes if n[0] == street]
         W, C = equity_matrices(ba, board, street, n_runouts, seed)
-        lab = _key_labels(ba, street)
-        nb = int(lab.max()) + 1
-        res = {'w': sum(n[4] for n in sn), 'lines': len(sn)}
-        for g in GROUPINGS:
+        res = {'lines': len(sn), 'w': sum(float(n[2].mean() * n[3].mean()) for n in sn)}
+        for g, fn in GROUPINGS.items():
             groups = defaultdict(list)
             for n in sn:
-                groups[_group_key(n, g)].append(n)
-            acc = {k: {'ip': 0.0, 'oop': 0.0} for k in ('tv', 'deq', 'big', 'hw')}
+                groups[fn(n[1])].append(n)
+            acc = {k: {'ip': 0.0, 'oop': 0.0} for k in ('deq', 'big', 'hw')}
             for members in groups.values():
-                lw = np.array([m[4] for m in members])
-                if lw.sum() <= 0:
-                    continue
-                for pos, j, jo in (('ip', 5, 6), ('oop', 6, 5)):
-                    R = np.stack([m[j] for m in members])          # this player's reach
-                    P = R / R.sum(1, keepdims=True)
-                    pooled = (lw[:, None] * P).sum(0) / lw.sum()
-                    acc['tv'][pos] += float(sum(w * tv(p, pooled) for w, p in zip(lw, P)))
-                    # pos deciding: its hands' reach x the opponent's line range
-                    Ro = np.stack([m[jo] for m in members])
+                for pos, j, jo in (('ip', 2, 3), ('oop', 3, 2)):
+                    R = np.stack([m[j] for m in members])           # deciding player's reach
+                    Ro = np.stack([m[jo] for m in members])         # opponent's reach
                     mo = Ro.mean(1)
-                    Po = Ro / Ro.sum(1, keepdims=True)
-                    E_line = (Po @ W.T) / np.maximum(Po @ C.T, 1e-12)   # [L, H]
-                    hw = R * mo[:, None]                                 # [L, H] joint reach
-                    Bw = np.zeros((nb, len(members)))
-                    np.add.at(Bw, lab, hw.T)                             # [B, L]
-                    pooled_b = (Bw @ Po) / np.maximum(Bw.sum(1, keepdims=True), 1e-300)
-                    PB = pooled_b[lab]                                    # [H, H]
-                    E_pool = (W * PB).sum(1) / np.maximum((C * PB).sum(1), 1e-12)
+                    if mo.sum() <= 0:
+                        continue
+                    Po = Ro / np.maximum(Ro.sum(1, keepdims=True), 1e-300)
+                    num, den = Po @ W.T, Po @ C.T
+                    E_line = num / np.maximum(den, 1e-12)            # [L, H]
+                    pooled = Ro.sum(0)                               # training's pool
+                    E_pool = (W @ pooled) / np.maximum(C @ pooled, 1e-12)
                     d = np.abs(E_line - E_pool[None, :])
-                    ok = (Po @ C.T) > 1e-12
-                    hw = np.where(ok, hw, 0.0)
+                    hw = np.where(den > 1e-12, R * mo[:, None], 0.0)  # joint reach
                     acc['deq'][pos] += float((hw * d).sum()) / ba['H']
                     acc['big'][pos] += float((hw * (d > big)).sum()) / ba['H']
                     acc['hw'][pos] += float(hw.sum()) / ba['H']
@@ -285,8 +291,6 @@ def summarize_board(ba, nodes, board, n_runouts, seed, big=0.05):
 
 
 _W = None
-
-
 _RUNOUTS = 40
 
 
@@ -311,7 +315,7 @@ def main():
     ap.add_argument('--streets', default='1,2', help='street starts to record (1=flop, 2=turn, 3=river)')
     ap.add_argument('--min-reach', type=float, default=1e-6)
     ap.add_argument('--flop-runouts', type=int, default=40,
-                    help='sampled turn+river runouts for flop equities (turn is exact)')
+                    help='sampled turn+river runouts for flop equities (turn/river are exact)')
     ap.add_argument('--workers', type=int, default=1)
     ap.add_argument('--json', help='write per-board results here')
     a = ap.parse_args()
@@ -320,7 +324,8 @@ def main():
     rng = random.Random(a.seed)
     boards = [rng.sample(_FULL_DECK, ncards) for _ in range(a.boards)]
     if a.workers > 1:
-        with Pool(a.workers, initializer=_init, initargs=(a.db, streets, a.min_reach, a.flop_runouts)) as p:
+        with Pool(a.workers, initializer=_init,
+                  initargs=(a.db, streets, a.min_reach, a.flop_runouts)) as p:
             results = p.map(_one, boards)
     else:
         _init(a.db, streets, a.min_reach, a.flop_runouts)
@@ -331,19 +336,18 @@ def main():
     names = {1: 'flop', 2: 'turn', 3: 'river'}
     for st in streets:
         rows = [r['streets'][st] for r in results if st in r['streets']]
-        W = sum(r['w'] for r in rows)
         print(f'\n{names[st]} start: {np.mean([r["lines"] for r in rows]):.0f} lines/board '
-              f'(reach {W / len(rows):.3f} of hands reach it)')
-        print(f'  {"grouping":<25} {"keys":>5}  {"TV range ip/oop":>15}  '
-              f'{"|d equity| ip/oop":>17}  {">5pp ip/oop":>13}')
+              f'(reach {np.mean([r["w"] for r in rows]):.3f})')
+        print(f'  {"grouping":<22} {"groups":>6}  {"|d equity| ip/oop":>17}  {">5pp ip/oop":>13}')
         for g in GROUPINGS:
+            if (st < 3 and g.endswith('prev3')) or (st == 1 and 'prev2' in g):
+                continue        # identical to a shorter row on this street
             k = np.mean([r[g]['groups'] for r in rows])
-            tvs = [sum(r[g]['tv'][p] for r in rows) / W for p in ('ip', 'oop')]
             hw = [sum(r[g]['hw'][p] for r in rows) for p in ('ip', 'oop')]
             dq = [sum(r[g]['deq'][p] for r in rows) / h for p, h in zip(('ip', 'oop'), hw)]
             bg = [sum(r[g]['big'][p] for r in rows) / h for p, h in zip(('ip', 'oop'), hw)]
-            print(f'  {g:<25} {k:5.1f}  {tvs[0]:6.3f} / {tvs[1]:.3f}  '
-                  f'{100 * dq[0]:6.2f} / {100 * dq[1]:.2f}pp  {100 * bg[0]:5.1f} / {100 * bg[1]:.1f}%')
+            print(f'  {g:<22} {k:6.1f}  {100 * dq[0]:6.2f} / {100 * dq[1]:.2f}pp  '
+                  f'{100 * bg[0]:5.1f} / {100 * bg[1]:.1f}%')
     if a.json:
         with open(a.json, 'w') as f:
             json.dump(results, f, indent=1, default=str)
