@@ -18,6 +18,9 @@ trained against), per player:
   street+spr+aggr+pre  previous street's last aggressor + preflop's (turn keys: both)
   street+spr+aggr+n    previous street's last aggressor + how many aggressions it had
   street+spr+all   all four
+  street+spr+aggr+pre+size  + the size class of the previous street's last aggression
+  street+sprfine   a finer SPR split (SPR_FINE_EDGES) instead of spr5, no history
+  street+sprfine+aggr+pre   the finer SPR split + both aggressors
   full history   0 by definition
 
 Two numbers per grouping: TV over hands (descriptive), and the decision-relevant one, the
@@ -54,12 +57,29 @@ from src.game.range_tracker import _FULL_DECK  # noqa: E402
 from src.storage.blueprint_db import BlueprintDB  # noqa: E402
 
 GROUPINGS = ('street', 'street+spr', 'street+spr+pot', 'street+spr+aggr', 'street+spr+tok',
-             'street+spr+aggr+pre', 'street+spr+aggr+n', 'street+spr+all')
+             'street+spr+aggr+pre', 'street+spr+aggr+n', 'street+spr+all',
+             'street+spr+aggr+pre+size', 'street+sprfine', 'street+sprfine+aggr+pre')
+# A finer SPR split than the served spr5 edges (2, 5, 12, 40), for comparison.
+SPR_FINE_EDGES = (1.0, 1.5, 2.0, 3.0, 5.0, 7.0, 9.0, 12.0, 18.0, 25.0, 40.0)
 _POS = {0: 'ip', 1: 'oop'}
 
 
 def _aggressive(a):
     return a == 'allin' or a.startswith(('bet_', 'raise_'))
+
+
+def last_size(history):
+    """Size class of the street's last aggression: none / s / m / big (l, x, o, 2) / a."""
+    for a in reversed(list(history)):
+        if _aggressive(a):
+            c = action_char(a)
+            return c if c in ('s', 'm', 'a') else 'big'
+    return 'none'
+
+
+def spr_fine(street_pot):
+    spr = (STARTING_STACK - street_pot / 2.0) / street_pot
+    return sum(1 for e in SPR_FINE_EDGES if spr >= e)
 
 
 def last_aggressor(game, street, history):
@@ -131,7 +151,8 @@ class Walker:
                 prev_street, prev_hist = prior[-1]
                 tok = (pot_type(list(pre)), last_aggressor(game, prev_street, list(prev_hist)),
                        last_aggressor(game, 0, list(pre)),
-                       min(3, sum(1 for x in prev_hist if _aggressive(x))))
+                       min(3, sum(1 for x in prev_hist if _aggressive(x))),
+                       last_size(prev_hist), spr_fine(starting_pot))
                 line = '/'.join(''.join(action_char(a) for a in h) for _, h in prior)
                 w = float(r0.mean() * r1.mean())
                 nodes.append((street, spr, tok, line, w, r0.copy(), r1.copy()))
@@ -199,14 +220,18 @@ def _key_labels(ba, street):
 
 def _group_key(n, g):
     """n = (street, spr, tok, line, ...); tok = (pot type, previous street's last
-    aggressor, preflop's last aggressor, aggressions on the previous street capped at 3)."""
+    aggressor, preflop's last aggressor, aggressions on the previous street capped at 3,
+    size class of the previous street's last aggression, finer SPR bucket)."""
     t = n[2]
     return {'street': (n[0],), 'street+spr': (n[0], n[1]),
             'street+spr+pot': (n[0], n[1], t[0]), 'street+spr+aggr': (n[0], n[1], t[1]),
             'street+spr+tok': (n[0], n[1], t[0], t[1]),
             'street+spr+aggr+pre': (n[0], n[1], t[1], t[2]),
             'street+spr+aggr+n': (n[0], n[1], t[1], t[3]),
-            'street+spr+all': (n[0], n[1]) + tuple(t)}[g]
+            'street+spr+all': (n[0], n[1]) + tuple(t[:4]),
+            'street+spr+aggr+pre+size': (n[0], n[1], t[1], t[2], t[4]),
+            'street+sprfine': (n[0], t[5]),
+            'street+sprfine+aggr+pre': (n[0], t[5], t[1], t[2])}[g]
 
 
 def summarize_board(ba, nodes, board, n_runouts, seed, big=0.05):
@@ -309,7 +334,7 @@ def main():
         W = sum(r['w'] for r in rows)
         print(f'\n{names[st]} start: {np.mean([r["lines"] for r in rows]):.0f} lines/board '
               f'(reach {W / len(rows):.3f} of hands reach it)')
-        print(f'  {"grouping":<19} {"keys":>5}  {"TV range ip/oop":>15}  '
+        print(f'  {"grouping":<25} {"keys":>5}  {"TV range ip/oop":>15}  '
               f'{"|d equity| ip/oop":>17}  {">5pp ip/oop":>13}')
         for g in GROUPINGS:
             k = np.mean([r[g]['groups'] for r in rows])
@@ -317,7 +342,7 @@ def main():
             hw = [sum(r[g]['hw'][p] for r in rows) for p in ('ip', 'oop')]
             dq = [sum(r[g]['deq'][p] for r in rows) / h for p, h in zip(('ip', 'oop'), hw)]
             bg = [sum(r[g]['big'][p] for r in rows) / h for p, h in zip(('ip', 'oop'), hw)]
-            print(f'  {g:<19} {k:5.1f}  {tvs[0]:6.3f} / {tvs[1]:.3f}  '
+            print(f'  {g:<25} {k:5.1f}  {tvs[0]:6.3f} / {tvs[1]:.3f}  '
                   f'{100 * dq[0]:6.2f} / {100 * dq[1]:.2f}pp  {100 * bg[0]:5.1f} / {100 * bg[1]:.1f}%')
     if a.json:
         with open(a.json, 'w') as f:
