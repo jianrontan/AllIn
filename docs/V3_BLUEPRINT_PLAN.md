@@ -666,11 +666,20 @@ flop equities use 40 sampled runouts. 0.18% of line mass is pruned.
 | turn | + pot type | 12 | 3.55 / 3.23 | 23.9 / 21.6% |
 | turn | + previous street's last aggressor | 13 | 2.60 / 2.58 | 15.6 / 15.7% |
 | turn | + both | 27 | 2.19 / 2.35 | 12.3 / 13.9% |
+| turn | + flop's and preflop's last aggressors | 33 | 1.87 / 2.05 | 9.5 / 11.6% |
+| turn | + flop's last aggressor and its number of aggressions | 27 | 2.35 / 2.30 | 13.6 / 13.5% |
+| turn | + all four (pot type, both aggressors, flop aggressions) | 117 | 1.47 / 1.65 | 6.5 / 8.4% |
+
+(On the flop, "preflop's last aggressor" is the previous street's, and preflop's
+aggression count is the pot type, so those rows repeat the flop rows above.)
 
 - **The flop is fine.** SPR already carries most of the preflop line: 1.5 points mean
   error, about 6% of hand mass off by more than 5.
 - **The turn is not.** A quarter of the turn-start hand mass has its equity mis-stated by
   more than 5 points, because a check-raised flop and a bet-called flop share turn keys.
+- **Two aggressor tags beat one on the turn:** carrying both the flop's and preflop's
+  last aggressor on turn keys cuts the >5-point share to 9.5/11.6% (33 groups vs 13).
+  Counting the flop's aggressions adds little over who made the last one.
 - **Most of the fix is one 3-value token:** who made the previous street's last
   aggression (none/ip/oop). It cuts the turn's >5-point share from 28/24% to 16/16% for
   ~2.6× the street-start key groups. Pot type adds little on top (12–14%) and doubles
