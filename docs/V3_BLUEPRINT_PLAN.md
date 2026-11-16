@@ -607,8 +607,8 @@ others.
 |---|---|---|
 | 1 | V3.16 code: key format `spr5a`, Python + Rust + parity | light |
 | 2 | V3.12 code: pruning in the Rust trainer, off by default, bit-identical when off | light |
-| 3 | Short `spr5a` runs: measure it/s on the bigger table; calibrate the prune threshold; read the pruning telemetry | ~1 h, plugged in |
-| 4 | Train C-long, D, E to the budget from step 3 (~1.6B iterations at today's speed: C-long ~7.5 h from 300M, D and E ~9.5 h each), with the recipes below. Resumable: run whenever the laptop is idle | heavy, idle laptop |
+| 3 | Short `spr5a` runs: measure it/s on the bigger table; calibrate the prune threshold; read the pruning telemetry — **done 2026-11-17** (c=0.01, n_min=100; ~30k it/s) | ~1 h, plugged in |
+| 4 | Train C-long, D, E to the budget from step 3 (~1.6B iterations at the measured speed: C-long ~7.7 h from 300M, D ~15 h, E ~13–14 h; see "Step 3 — calibration results"), with the recipes below. Resumable: run whenever the laptop is idle | heavy, idle laptop |
 | 5 | Evaluate (see "Evaluation for these arms"): screen, pick, confirm | heavy, a few hours per comparison |
 | 6 | Refit and restamp the opponent models and the jam read on `spr5a` (needed before any exploit-on evaluation of D/E) | light |
 | 7 | V3.13 code (two tables, fork mode), then DBR forks per P_max | code days; each fork a few hours |
@@ -791,6 +791,48 @@ C-long/D/E overnight runs or quote their speed until that calibration is measure
 The new models and jam read still need refitting/restamping before exploit-on D/E
 quality evaluation (step 6). No production deployment, base/menu switch, commit or push
 is part of this implementation.
+
+### Step 3 — calibration results (2026-11-16/17)
+
+Four sequential 24M-iteration runs on the laptop (AC power), each with the step-4 recipe
+(`spr5a`, seed 20261110, 12 workers, merge-every 2000), checkpoint every 12M. Output in
+`backend/bot/analysis/blueprints_rs/calib_20261116/` (git-ignored, 2.3 GB, deletable).
+
+| Run | Wall time | it/s (late, 20–24M) | Info sets | Skipped / explored actions | Dormant / re-activated events | Postflop update mass at own reach < 1e-3 | Shape probe |
+|---|---|---|---|---|---|---|---|
+| D-probe (no pruning) | 13m21s | ~29–30k | 1,428,474 | 0 / 7.88B | 0 / 0 | 71.1% | OK |
+| E, c=0.01, n_min=100 | 12m27s | ~33–35k | 1,423,317 | 468M / 4.16B | 63.3M / 14.4M | 59.9% | OK |
+| E, c=0.05, n_min=100 | 13m25s | ~32k | 1,424,523 | 394M / 4.85B | 69.3M / 14.8M | 62.4% | OK |
+| E, c=0.2, n_min=100 | 16m35s | ~24–25k | 1,427,152 | 216M / 6.38B | 61.9M / 15.3M | 66.9% | OK |
+
+- **Speed on the bigger table:** ~30k it/s without pruning (C300's 47k was on a 444k-key
+  table). 1.43M info sets, as predicted (~1.45M). A 3M rerun right after the batch, on
+  the warm machine, ran at ~31k, and `pmset` recorded no thermal or CPU-power limit, so
+  the runs are comparable and heat did not cause c=0.2's slowdown.
+- **Pruning overhead is real:** c=0.2 explores fewer actions than no pruning but runs
+  ~20% slower. The separate per-key prune hash table and shadow updates cost more than
+  its few skips save. Only c=0.01 skips enough to come out ahead: 7% faster over the
+  whole 24M, ~15% faster in the last stretch. Its skip share is still rising (5% of
+  actions at 3M, 13% in the last 3M interval), so the gain should grow over a long run.
+  That is still far from Pluribus's ~2×.
+- **Telemetry is healthy:** re-activations are nonzero in every run (no alarm). Dormant
+  pairs sit on clearly losing raises and calls (shadow per visit is about −1 to −30
+  chips). The shape probe passes in all four runs.
+- **The motivation, measured:** without pruning, 71% of postflop regret-update mass comes
+  from paths where the traverser's own reach is below 1e-3. c=0.01 cuts that to 60%. The
+  rest is low-frequency mixed actions, which pruning cannot touch (expected; see "Why"
+  above).
+- **Selected E configuration:** `--prune-c 0.01 --prune-min-visits 100
+  --prune-probability 0.95`. n_min was not varied, and a c below 0.01 was not tried. This
+  is a speed calibration only; E's quality gates still decide.
+- **Budget at measured speed:** 1.6B iterations → D ≈ 15 h, E ≈ 13–14 h (less if
+  the skip share keeps growing), C-long (spr5, 444k keys, ~47k it/s) ≈ 7.7 h from 300M.
+  That is ~36 h of idle laptop in total, resumable. Both aggressor tags stay in;
+  the initiative-token fallback is not needed at 15 h per arm.
+- **Possible speed-up before E (optional):** keep each key's prune state inside its
+  info-set node instead of a second `FxHashMap`. That removes a hash lookup per traverser
+  node and should recover most of the overhead seen at c=0.2. It matters because E is
+  judged against D at equal wall time.
 
 ### V3.13 — population-biased (DBR) blueprint (design revised after review)
 
