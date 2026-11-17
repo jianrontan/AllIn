@@ -647,6 +647,27 @@ own RNG).
   rounds can fall on different iterations after a resume), which does not matter for the
   comparison.
 
+**Step 4a progress.** D night 1 (2026-11-17) ran 0→800M in 7 h 36 min (~29k it/s);
+the table holds 1,448,370 info sets at 800M, and the strategy-shape probe is clean (weak
+opens fold 54%, BB folds 96% to a 5BB open). The optional 800M screen (2026-11-18, six
+seeds × 40k hands each, AIVAT; seeds 801–806):
+
+| Match | mbb/hand | Per-seed |
+|---|---|---|
+| D800 vs C300 head-to-head | **+80 ± 30** | 44, 89, 54, 77, 152, 63 |
+| D800 vs the human model | +664 ± 36 | 754, 570, 577, 712, 621, 751 |
+| C300 vs the human model (same seeds) | +733 ± 36 | 837, 705, 742, 627, 756, 731 |
+| D minus C300 vs the human model | −69 ± 51 (unpaired SE) | — |
+
+D800 beats C300 head-to-head (all six seeds positive), and its edge against the human
+model is lower by an amount that is not significant (~1.4 SE). Both readings are
+confounded by D800 having 2.7× C300's iterations, so they only say D is not clearly
+behind; the clean comparison is D vs C-long (4b). The screen passed the pre-set gate
+(stop only if D trails by more than 2 SE on either reading), and night 2 resumed D from
+800M toward 1.6B at 02:21 on 2026-11-18. Note for step 5: the human-model edge is the
+reading to watch; if D at 1.6B still trails C there, check whether the `spr5a` keys cost
+exploit-free value against human-like play before picking D.
+
 ### V3.16 — history tags in the keys (`spr5a`)
 
 - **Keys:**
