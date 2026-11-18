@@ -615,7 +615,7 @@ speed.
 | 1 | V3.16 code: key format `spr5a`, Python + Rust + parity | light |
 | 2 | V3.12 code: pruning in the Rust trainer, off by default, bit-identical when off | light |
 | 3 | Short `spr5a` runs: measure it/s on the bigger table; calibrate the prune threshold; read the pruning telemetry — **done 2026-11-17** (c=0.01, n_min=100; ~30k it/s) | ~1 h, plugged in |
-| 4a | Train **D** to ~1.6B iterations (~15 h at the measured ~30k it/s; see "Step 3 — calibration results"), recipe below. Resumable: run whenever the laptop is idle. Optional early look: at a mid snapshot (e.g. 800M, ~7–8 h in) screen D against C300; if D is clearly behind, stop and rethink before spending the rest | heavy, idle laptop |
+| 4a | **Done 2026-11-18.** Train **D** to ~1.6B iterations (~15 h at the measured ~30k it/s; see "Step 3 — calibration results"), recipe below. Resumable: run whenever the laptop is idle. Optional early look: at a mid snapshot (e.g. 800M, ~7–8 h in) screen D against C300; if D is clearly behind, stop and rethink before spending the rest | heavy, idle laptop |
 | 4b | Later, when there is time: train **C-long** from 300M to D's final iteration count (~7.7 h at ~47k it/s) | heavy, idle laptop |
 | 5 | Evaluate (see "Evaluation for these arms"): first D vs C300 (interim; confounded by D's extra iterations), then D vs C-long once 4b exists; screen, pick, confirm | heavy, a few hours per comparison |
 | 6 | Refit and restamp the opponent models and the jam read on `spr5a` (needed before any exploit-on evaluation of D) | light |
@@ -667,6 +667,22 @@ behind; the clean comparison is D vs C-long (4b). The screen passed the pre-set 
 800M toward 1.6B at 02:21 on 2026-11-18. Note for step 5: the human-model edge is the
 reading to watch; if D at 1.6B still trails C there, check whether the `spr5a` keys cost
 exploit-free value against human-like play before picking D.
+
+**Step 4a done (2026-11-18).** D reached 1.6B at 15:51 (paused once at 1.452B and
+resumed; shape probe unchanged: weak opens fold 54%, BB folds 96% to a 5BB open). The
+1.6B screen (same design, fresh seeds 1601–1606):
+
+| Match | mbb/hand | Per-seed |
+|---|---|---|
+| D1.6B vs C300 head-to-head | **+114 ± 29** | 212, 59, 83, 80, 87, 161 |
+| D1.6B vs the human model | +717 ± 35 | 676, 720, 629, 697, 802, 775 |
+| C300 vs the human model (same seeds) | +709 ± 37 | 829, 752, 566, 728, 636, 746 |
+| D minus C300 vs the human model | +7 ± 51 (unpaired SE) | — |
+
+D still wins head-to-head on every seed. Against the human model the 800M gap (−69 ± 51)
+is gone, and part of it was noise in C300's own number (+733 on the 800M seeds, +709
+here). So D is not behind on either reading. This is still the interim comparison (D has
+5.3× C300's iterations); the clean test of the `spr5a` keys is D vs C-long (4b).
 
 ### V3.16 — history tags in the keys (`spr5a`)
 
