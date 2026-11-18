@@ -684,6 +684,20 @@ is gone, and part of it was noise in C300's own number (+733 on the 800M seeds, 
 here). So D is not behind on either reading. This is still the interim comparison (D has
 5.3× C300's iterations); the clean test of the `spr5a` keys is D vs C-long (4b).
 
+**D's quick checks on its own (2026-11-18, D1.6B; C300 alongside):**
+- Rare-line convergence (snapshots 1.2B / 1.4B / 1.6B): drift on rarely visited
+  out-of-position spots fell 0.0244 → 0.0225 and on common ones 0.0152 → 0.0130; the
+  count of barely visited OOP keys (<10) fell 12,114 → 11,045 of 1.45M. Still converging
+  slowly, close to the 0.02 stop line, so more iterations would add little.
+- BUG-027 replay: the BB's flop lead-shove is much rarer under D (7.8% vs C300's 23.9%)
+  and holds more real hands, so J9hh's call against it drops from +64.8 to +13.4 chips;
+  D still calls 98.9% (against realistic human shove ranges J9hh has 20–36% equity, so
+  the call stays the jam read's job, as with C). D also folds J9s to the 4-bet more
+  (57% vs 28%).
+- Strategy shape (per bucket): OK. Preflop fold rates differ from C300's by 4 points on
+  average (preflop keys are identical; the gaps sit on marginal, mixed hands). One thing
+  to watch: weak hands that open use the 5BB size 26% of the time vs C300's 10%.
+
 ### V3.16 — history tags in the keys (`spr5a`)
 
 - **Keys:**
