@@ -616,7 +616,7 @@ speed.
 | 2 | V3.12 code: pruning in the Rust trainer, off by default, bit-identical when off | light |
 | 3 | Short `spr5a` runs: measure it/s on the bigger table; calibrate the prune threshold; read the pruning telemetry — **done 2026-11-17** (c=0.01, n_min=100; ~30k it/s) | ~1 h, plugged in |
 | 4a | **Done 2026-11-18.** Train **D** to ~1.6B iterations (~15 h at the measured ~30k it/s; see "Step 3 — calibration results"), recipe below. Resumable: run whenever the laptop is idle. Optional early look: at a mid snapshot (e.g. 800M, ~7–8 h in) screen D against C300; if D is clearly behind, stop and rethink before spending the rest | heavy, idle laptop |
-| 4b | Later, when there is time: train **C-long** from 300M to D's final iteration count (~7.7 h at ~47k it/s) | heavy, idle laptop |
+| 4b | **Done staged 2026-11-19:** C-long from 300M to 600M (1.5 h); C600 ≈ C300 (+22 ± 30), so C has levelled off and the rest of the run to 1.6B is not needed (see "Overnight checks") | heavy, idle laptop |
 | 5 | Evaluate (see "Evaluation for these arms"): first D vs C300 (interim; confounded by D's extra iterations), then D vs C-long once 4b exists; screen, pick, confirm | heavy, a few hours per comparison |
 | 6 | Refit and restamp the opponent models and the jam read on `spr5a` (needed before any exploit-on evaluation of D) | light |
 | 7 | V3.13 code (two tables, fork mode), then DBR forks per P_max | code days; each fork a few hours |
@@ -697,6 +697,35 @@ here). So D is not behind on either reading. This is still the interim compariso
 - Strategy shape (per bucket): OK. Preflop fold rates differ from C300's by 4 points on
   average (preflop keys are identical; the gaps sit on marginal, mixed hands). One thing
   to watch: weak hands that open use the 5BB size 26% of the time vs C300's 10%.
+
+**Overnight checks (2026-11-19; 6 seeds × 40k hands, AIVAT, unless noted).** Step 4b was
+run staged: a copy of C's training DB resumed 300M → 600M (1 h 31 min; shape OK, weak
+opens fold 55%), C300 itself untouched.
+
+| Match | mbb/hand | Per-seed |
+|---|---|---|
+| D1.6B vs v2 (C300's seeds 101–106) | +392 ± 31 | 425, 361, 386, 345, 434, 404 |
+| C300 vs v2 (same seeds, 2026-11-13) | +381 ± 31 | 413, 378, 390, 342, 287, 475 |
+| D1.6B vs D800 | +53 ± 29 | 120, 136, 67, 8, 45, −56 |
+| C600 vs C300 | +22 ± 30 | 7, 183, 65, −127, 34, −32 |
+| **D1.6B vs C600** | **+118 ± 29** | 175, 100, 99, 153, 134, 50 |
+
+Paired LBR (seed 777, 10k hands, the same deals as the earlier arms): D1.6B 549, C300
+598, v2 1,163; D − C300 −49 ± 245 (no difference), D − v2 −614 ± 310.
+
+- **C has nearly levelled off:** doubling it to 600M gained +22 ± 30, not significant.
+  Its smaller table converges sooner, so a C-long to 1.6B is unlikely to change the
+  picture and is not planned.
+- **D's head-to-head lead holds against the better-trained C:** +118 ± 29 vs C600 (all
+  six seeds positive), the same as +114 ± 29 vs C300. So the lead comes from the `spr5a`
+  keys, not from D's extra iterations.
+- **Against third parties D and C are level:** vs v2 +392 vs +381 (difference +11 ± 44),
+  vs the human model +717 vs +709, LBR 549 vs 598. D's edge shows up only head-to-head.
+- D still gained a little in its second half (+53 ± 29, z ≈ 1.8), in line with the
+  rare-line drift still shrinking.
+- Reading: D is the base arm for what follows (step 6 refit on `spr5a`, then V3.13 DBR
+  forks), with the caveat that its gain is head-to-head only; V3.14 should weigh that
+  against D's ~3.3× bigger table (serving memory).
 
 ### V3.16 — history tags in the keys (`spr5a`)
 
