@@ -618,7 +618,7 @@ speed.
 | 4a | **Done 2026-11-18.** Train **D** to ~1.6B iterations (~15 h at the measured ~30k it/s; see "Step 3 — calibration results"), recipe below. Resumable: run whenever the laptop is idle. Optional early look: at a mid snapshot (e.g. 800M, ~7–8 h in) screen D against C300; if D is clearly behind, stop and rethink before spending the rest | heavy, idle laptop |
 | 4b | **Done staged 2026-11-19:** C-long from 300M to 600M (1.5 h); C600 ≈ C300 (+22 ± 30), so C has levelled off and the rest of the run to 1.6B is not needed (see "Overnight checks") | heavy, idle laptop |
 | 5 | Evaluate (see "Evaluation for these arms"): first D vs C300 (interim; confounded by D's extra iterations), then D vs C-long once 4b exists; screen, pick, confirm | heavy, a few hours per comparison |
-| 6 | Refit and restamp the opponent models and the jam read on `spr5a` (needed before any exploit-on evaluation of D) | light |
+| 6 | **Done 2026-11-20:** refit and restamp the opponent models and the jam read on `spr5a`. Jam-read gates pass on D (+7.8 chips/spot; +42 ± 6 mbb/hand); the pre-river tilt shows no gain offline on D or C300 (see "Step 6") | light |
 | 7 | V3.13 code (two tables, fork mode), then DBR forks per P_max | code days; each fork a few hours |
 | 8 | V3.14: final pick among C300 / C-long / D / DBR, hardening, then Phase 7 (separate sign-off) | — |
 
@@ -726,6 +726,35 @@ Paired LBR (seed 777, 10k hands, the same deals as the earlier arms): D1.6B 549,
 - Reading: D is the base arm for what follows (step 6 refit on `spr5a`, then V3.13 DBR
   forks), with the caveat that its gain is head-to-head only; V3.14 should weigh that
   against D's ~3.3× bigger table (serving memory).
+
+**Step 6 — refit on `spr5a` (done 2026-11-20).** Outputs in
+`analysis/opponent_models/d1600/` (git-ignored), from the same `hands_export.jsonl` as
+C300's models; the fit re-derives every key under D's key format.
+
+- Fit: 15 players, 17.4k decisions; 11 have ≥ 100 hands (the rest get the population
+  model). D's population layer has 7,833 keys vs C300's 6,532 (finer keys). Jam read:
+  142 logged jams from 13 players.
+- **Gate 1 (logged human jams, leave-one-player-out): pass.** Read − served, chips per
+  spot: control +7.77 (SE 3.84; clustered by player 5.63), exploit-on +6.25 (SE 3.57).
+  C300 had +7.6 / +6.1.
+- **Gate 2 (h2h vs the human model, seeds 2001–2004, 40k hands each): pass.** D with
+  the read vs D without: +42.1 ± 5.5 mbb/hand (34.8, 74.1, 24.5, 34.9); it changed
+  1,635 of 4,339 faced-jam spots. C300's read gives +29.9 ± 4.7 on the same seeds. No
+  regression vs the human model (D +709 ± 43, C300 +786 ± 45; earlier seeds had them
+  level, see "Overnight checks").
+- **API smoke (WSGI, 20 hands, D + its models + jam read):** healthz reports exploit
+  on (15 players) and the read (142 jams); 73 bot decisions, all on trained keys
+  (exploit tilt 55, blueprint 14, river solver 4), no errors. D with C300's models is
+  refused on the stamp, and exploit and the read stay off.
+- **Offline exploit scoreboard (`measure_exploit.py`, 1,000 hands per player, seed 42;
+  pre-river tilt on vs off, both arms on the blueprint river belief):** no gain on
+  either arm. Over the 11 known players: D −70 ± 52 mbb/hand (5/11 positive), C300
+  −81 ± 58 (3/11), D − C300 +11 ± 78. The population model alone: D +39 ± 195, C300
+  −52 ± 266. The tilt changes ~8% of hands. This is an in-sample direction check, not an
+  EV oracle, and the script itself expects ~0 here, but it gives no sign that the
+  pre-river tilt helps on either blueprint; the jam read (gate 2) is where the measured
+  exploit gain is.
+- Full backend suite after the refit: 627 passed, 1 skipped (8 min 40 s).
 
 ### V3.16 — history tags in the keys (`spr5a`)
 
