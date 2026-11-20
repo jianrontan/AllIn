@@ -96,21 +96,23 @@ def main():
     args = ap.parse_args()
 
     files = [f for f in glob.glob(os.path.join(args.dir, 'model_*.json'))
-             if not f.endswith('model_population.json')]
+             if not f.endswith('model_population.json')
+             and not os.path.basename(f).startswith('model_built_')]   # built models: no counts
     players = []
     for f in files:
         with open(f, encoding='utf-8') as fh:
             m = json.load(fh)
         # total visits per ORIGINAL key
         per_key = {k: sum(c.values()) for k, c in m['counts'].items()}
-        players.append((m['handle'], m['hands'], per_key))
-    players.sort(key=lambda x: x[1], reverse=True)
+        players.append((m['hands'], per_key))
+    players.sort(key=lambda x: x[0], reverse=True)
 
     schemes = ['full', 'no-pattern', 'facing', 'no-coarse', 'strength+facing', 'strength-only']
     show = players[:4]                                     # the 4 highest-volume players
 
-    for handle, hands, per_key in show:
-        print(f"\n  {handle} ({hands} hands):")
+    # Labelled by volume rank (P1 = most hands), never by handle or id: output gets pasted.
+    for rank, (hands, per_key) in enumerate(show, 1):
+        print(f"\n  P{rank} ({hands} hands):")
         print(f"    {'scheme':<14}{'keys':>7}{'>=' + str(args.thresh):>7}"
               f"{'>=' + str(2 * args.thresh):>7}")
         for sch in schemes:
@@ -125,7 +127,7 @@ def main():
     print(f"    {'scheme':<14}{'keys':>7}{'>=' + str(args.thresh):>7}{'>=' + str(2 * args.thresh):>7}")
     for sch in schemes:
         agg = Counter()
-        for _, _, per_key in players:
+        for _, per_key in players:
             for k, n in per_key.items():
                 agg[collapse(k, sch)] += n
         d, r, rr = _cov(agg, args.thresh)

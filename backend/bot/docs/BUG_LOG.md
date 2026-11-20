@@ -28,7 +28,9 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
   pattern as the 6th key token, which on `spr5`/`spr5a` keys is the SPR token (`r2`):
   distinct situations merged even in its "full" grouping and the "facing" action was
   wrong, so v3 data looked less sparse than it is. Fixed: the pattern is the last token
-  and the SPR/history tokens are kept as context. Diagnostic only; no reported result
+  and the SPR/history tokens are kept as context. It also crashed on any dir holding
+  `model_built_*.json` (no `counts`; now skipped) and now labels players P1–P4 by
+  volume, never by handle. Diagnostic only; no reported result
   used it. The other key splitters were checked: `opponent_model._levels` already takes
   the last token, and the rest only read 4-token preflop keys, the same in every format.
 - **Lesson:** any reader of a blueprint takes `session_kwargs(db)`, never a single
