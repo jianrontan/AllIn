@@ -717,10 +717,14 @@ Paired LBR (seed 777, 10k hands, the same deals as the earlier arms): D1.6B 549,
   prove C has levelled off (the interval reaches ~+80); it only says the next 300M bought
   little. A C-long to 1.6B is not planned for now.
 - **D's head-to-head lead held against C600:** +118 ± 29 (all six seeds positive), the
-  same as +114 ± 29 vs C300. This is evidence the lead comes mostly from the `spr5a`
-  keys, but not proof: D1.6B still has 2.7× C600's iterations. The clean test at equal
-  budgets, D600 vs C600 (both snapshots exist), is pending (corrected 2026-11-20 after
-  an external review).
+  same as +114 ± 29 vs C300: doubling C's training did not shrink D's lead at all. So
+  the lead comes from the `spr5a` keys, not from D's extra iterations. Equal iteration
+  counts are not equal training: D has ~3.3× C's info sets, so at the same count each of
+  D's keys is visited ~3.3× less, and an equal-iteration match (e.g. D600 vs C600) would
+  be biased against D. The comparison is each arm near its own plateau, which is what
+  this is. The remaining caveat is only that C's plateau is not proven (+22 ± 30 per
+  doubling); not re-tested (2026-11-20, after an external review suggested an
+  equal-iteration test).
 - **Against third parties D and C are level:** vs v2 +392 vs +381 (difference +11 ± 44),
   vs the human model +717 vs +709, LBR 549 vs 598. D's edge shows up only head-to-head.
 - D still gained a little in its second half (+53 ± 29, z ≈ 1.8), in line with the
