@@ -618,7 +618,7 @@ speed.
 | 4a | **Done 2026-11-18.** Train **D** to ~1.6B iterations (~15 h at the measured ~30k it/s; see "Step 3 — calibration results"), recipe below. Resumable: run whenever the laptop is idle. Optional early look: at a mid snapshot (e.g. 800M, ~7–8 h in) screen D against C300; if D is clearly behind, stop and rethink before spending the rest | heavy, idle laptop |
 | 4b | **Done staged 2026-11-19:** C-long from 300M to 600M (1.5 h); C600 ≈ C300 (+22 ± 30), so C has levelled off and the rest of the run to 1.6B is not needed (see "Overnight checks") | heavy, idle laptop |
 | 5 | Evaluate (see "Evaluation for these arms"): first D vs C300 (interim; confounded by D's extra iterations), then D vs C-long once 4b exists; screen, pick, confirm | heavy, a few hours per comparison |
-| 6 | **Done 2026-11-20:** refit and restamp the opponent models and the jam read on `spr5a`. Jam-read gates pass on D (+7.8 chips/spot; +42 ± 6 mbb/hand); the pre-river tilt shows no gain offline on D or C300 (see "Step 6") | light |
+| 6 | **Done 2026-11-20:** refit and restamp the opponent models and the jam read on `spr5a`. Jam-read gates pass on D (+7.8 chips/spot; +42 ± 6 mbb/hand). The offline tilt scoreboard was invalid (wrong key format; fixed) and needs a rerun (see "Step 6") | light |
 | 7 | V3.13 code (two tables, fork mode), then DBR forks per P_max | code days; each fork a few hours |
 | 8 | V3.14: final pick among C300 / C-long / D / DBR, hardening, then Phase 7 (separate sign-off) | — |
 
@@ -713,12 +713,14 @@ opens fold 55%), C300 itself untouched.
 Paired LBR (seed 777, 10k hands, the same deals as the earlier arms): D1.6B 549, C300
 598, v2 1,163; D − C300 −49 ± 245 (no difference), D − v2 −614 ± 310.
 
-- **C has nearly levelled off:** doubling it to 600M gained +22 ± 30, not significant.
-  Its smaller table converges sooner, so a C-long to 1.6B is unlikely to change the
-  picture and is not planned.
-- **D's head-to-head lead holds against the better-trained C:** +118 ± 29 vs C600 (all
-  six seeds positive), the same as +114 ± 29 vs C300. So the lead comes from the `spr5a`
-  keys, not from D's extra iterations.
+- **C's gain from 300M to 600M was small:** +22 ± 30, not significant. That does not
+  prove C has levelled off (the interval reaches ~+80); it only says the next 300M bought
+  little. A C-long to 1.6B is not planned for now.
+- **D's head-to-head lead held against C600:** +118 ± 29 (all six seeds positive), the
+  same as +114 ± 29 vs C300. This is evidence the lead comes mostly from the `spr5a`
+  keys, but not proof: D1.6B still has 2.7× C600's iterations. The clean test at equal
+  budgets, D600 vs C600 (both snapshots exist), is pending (corrected 2026-11-20 after
+  an external review).
 - **Against third parties D and C are level:** vs v2 +392 vs +381 (difference +11 ± 44),
   vs the human model +717 vs +709, LBR 549 vs 598. D's edge shows up only head-to-head.
 - D still gained a little in its second half (+53 ± 29, z ≈ 1.8), in line with the
@@ -746,14 +748,15 @@ C300's models; the fit re-derives every key under D's key format.
   on (15 players) and the read (142 jams); 73 bot decisions, all on trained keys
   (exploit tilt 55, blueprint 14, river solver 4), no errors. D with C300's models is
   refused on the stamp, and exploit and the read stay off.
-- **Offline exploit scoreboard (`measure_exploit.py`, 1,000 hands per player, seed 42;
-  pre-river tilt on vs off, both arms on the blueprint river belief):** no gain on
-  either arm. Over the 11 known players: D −70 ± 52 mbb/hand (5/11 positive), C300
-  −81 ± 58 (3/11), D − C300 +11 ± 78. The population model alone: D +39 ± 195, C300
-  −52 ± 266. The tilt changes ~8% of hands. This is an in-sample direction check, not an
-  EV oracle, and the script itself expects ~0 here, but it gives no sign that the
-  pre-river tilt helps on either blueprint; the jam read (gate 2) is where the measured
-  exploit gain is.
+- **Offline exploit scoreboard (`measure_exploit.py`): the 2026-11-20 run is INVALID,
+  rerun pending.** The script built its sessions with only the menu mode, so they used
+  v2 keys and the root card abstraction on both D and C300: on D only 25% of decisions
+  (preflop) hit trained keys, vs 100% with the blueprint's own settings. Fixed
+  2026-11-20 (sessions now built with `session_kwargs(db)`, like the API and gate 1;
+  found by an external review). The invalid numbers (D −70 ± 52, C300 −81 ± 58 over
+  the 11 known players) say nothing about the tilt. Gates 1 and 2 are unaffected: gate
+  1 already used `session_kwargs`, and gate 2's jam read keys flop/turn SPR as `spr5`,
+  which `spr5a` buckets identically.
 - Full backend suite after the refit: 627 passed, 1 skipped (8 min 40 s).
 
 ### V3.16 — history tags in the keys (`spr5a`)
@@ -958,8 +961,12 @@ Four sequential 24M-iteration runs on the laptop (AC power), each with the step-
 ### V3.13 — population-biased (DBR) blueprint (design revised after review)
 
 - **Two tables.** `pack_key` holds the seat but no role, and one table serves both seats,
-  so "the opponent's own CFR strategy" would be the bot's served strategy. Add a role bit
-  (bot / restricted opponent): four traversal combinations (bot as SB or BB × who
+  so "the opponent's own CFR strategy" would be the bot's served strategy. The role
+  cannot be a key bit: the packed key already uses all 64 bits (pattern 40, strength 6,
+  bucket 8, seat 1, street 2, SPR 3, tags 4). Keep two role-indexed tables instead (two
+  maps in the trainer, each checkpointed to its own DB; only the bot table is served),
+  so keys and the served DB format stay unchanged (corrected 2026-11-20 after an
+  external review). Roles (bot / restricted opponent): four traversal combinations (bot as SB or BB × who
   traverses). At an opponent visit the action probabilities are
   P_conf·model + (1 − P_conf)·free; regret matching updates only the free part; the
   mixture's value passes up the tree; only the bot table's average strategy is served.
