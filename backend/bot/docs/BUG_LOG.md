@@ -10,6 +10,47 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-033 — The offline exploit scoreboard played v2 keys against a v3 blueprint
+
+- **Date:** 2026-11-20 · **Area:** evaluation (`scripts/measure_exploit.py`) ·
+  **Severity:** medium (an invalid result was recorded) · **Status:** fixed; rerun pending
+- **Summary:** the scoreboard built its `GameSession`s with only `menu_mode`, so every
+  session used the default key format (v2) and the root card abstraction, whatever
+  blueprint it was given.
+- **Symptom:** the step 6 run on D (`spr5a`) and C300 (`spr5`) reported "no tilt gain"
+  on both. On D, only 25% of decisions (preflop) hit trained keys; every postflop lookup
+  missed, so the bot and the simulated human both played fallbacks there.
+- **Fix:** build sessions with `**session_kwargs(db)` (menu, key format, abstraction
+  dir), as the API and `eval_facing_jams.py` already do. After the fix: 100% trained.
+- **Why missed:** the script predates v3 keys; it ran without error and its docstring
+  expects ~0, so a meaningless ~0 looked plausible. Found by an external review.
+- **Same review, same class:** `scripts/analyze_key_coverage.py` read the betting
+  pattern as the 6th key token, which on `spr5`/`spr5a` keys is the SPR token (`r2`):
+  distinct situations merged even in its "full" grouping and the "facing" action was
+  wrong, so v3 data looked less sparse than it is. Fixed: the pattern is the last token
+  and the SPR/history tokens are kept as context. Diagnostic only; no reported result
+  used it. The other key splitters were checked: `opponent_model._levels` already takes
+  the last token, and the rest only read 4-token preflop keys, the same in every format.
+- **Lesson:** any reader of a blueprint takes `session_kwargs(db)`, never a single
+  field; parse keys from both ends (pattern = last token), never by fixed position; a
+  trained-key hit rate is a cheap sanity line for any evaluation script.
+
+## BUG-032 — A raw `bet_custom_nan` action corrupted a session's stacks
+
+- **Date:** 2026-11-20 · **Area:** game core (`GameSession._validate_custom`) ·
+  **Severity:** medium (pre-existing; one session's state, via a hand-crafted request)
+  · **Status:** fixed
+- **Summary:** the API rejects a non-finite `amountBb`, but `/api/game/action` also
+  accepts a raw custom action string. `bet_custom_nan` parsed to NaN, which passes both
+  bound checks (`NaN >= hi` and `NaN < lo` are both false), was applied, and persisted a
+  NaN stack. `bet_custom_x` raised an uncaught `ValueError` (a 500).
+- **Fix:** `_validate_custom` parses the amount itself and raises `GameError` (a 400)
+  for a malformed or non-finite amount, so every caller is covered, not just the
+  `amountBb` path. Test: `test_custom_betting.py::test_malformed_custom_rejected` (fails
+  on the old code).
+- **Lesson:** validate at the layer that applies the value, not only at one entry point;
+  NaN slips past every `<`/`>=` guard. Found by an external review.
+
 ## BUG-031 — The evaluation harness measured a different game from the one the bots were trained on
 
 | | |

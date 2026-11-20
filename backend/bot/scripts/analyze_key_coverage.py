@@ -25,9 +25,13 @@ _POST_STREETS = ('flop', 'turn', 'river')
 def _parse(key):
     """Split a blueprint key into components. Returns (kind, dict)."""
     p = key.split('_')
-    if any(s in _POST_STREETS for s in p):                 # postflop: pf_C_S_pos_street_pattern
+    if any(s in _POST_STREETS for s in p):
+        # postflop: pf_C_S_pos_street[_r{spr}][_t{tags}]_pattern (cfr/keys.py). The pattern
+        # is always the LAST token; the spr5/spr5a SPR and history tokens sit between the
+        # street and it and are kept as context (part of the situation, like the street).
         return 'post', {'coarse': f"{p[0]}_{p[1]}", 'strength': p[2], 'pos': p[3],
-                        'street': p[4], 'pat': p[5] if len(p) > 5 else ''}
+                        'street': '_'.join([p[4]] + p[5:-1]),
+                        'pat': p[-1] if len(p) > 5 else ''}
     return 'pre', {'fine': f"{p[0]}_{p[1]}", 'pos': p[2],   # preflop: pf_F_pos_pattern
                    'pat': p[3] if len(p) > 3 else ''}
 

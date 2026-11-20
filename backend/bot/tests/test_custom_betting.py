@@ -158,6 +158,25 @@ def test_substack_custom_not_snapped_to_allin():
     check('money is still behind (genuinely sub-stack)', d['p0_stack'] > 0, d['p0_stack'])
 
 
+def test_malformed_custom_rejected():
+    """A raw custom action string with a NaN/inf/non-numeric amount (sent directly
+    as `action`, bypassing the API's amountBb check) must be refused with GameError
+    and leave the session untouched. Pre-fix NaN passed every bound check and was
+    applied, persisting a NaN stack; a non-number raised ValueError (a 500)."""
+    from src.game.game_session import GameError
+    for bad in ('bet_custom_nan', 'bet_custom_inf', 'bet_custom_-inf', 'bet_custom_x'):
+        sess = GameSession.new('s', 'p', strategy_fn=_strat_fn)
+        before = (list(sess.data['history']), sess.data['p0_stack'], sess.data['p1_stack'])
+        try:
+            sess.apply_action(bad)
+            raised = False
+        except GameError:
+            raised = True
+        after = (list(sess.data['history']), sess.data['p0_stack'], sess.data['p1_stack'])
+        check(f'{bad} rejected with GameError', raised)
+        check(f'{bad} leaves the session unchanged', before == after, f'{before} -> {after}')
+
+
 if __name__ == '__main__':
     test_engine_custom_chip_math()
     test_custom_bounds()
@@ -165,5 +184,6 @@ if __name__ == '__main__':
     test_session_custom_and_translation()
     test_all_in_normalisation()
     test_substack_custom_not_snapped_to_allin()
+    test_malformed_custom_rejected()
     print(f"\nResults: {_passed} passed, {_failed} failed out of {_passed + _failed}")
     sys.exit(1 if _failed else 0)

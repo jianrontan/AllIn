@@ -658,7 +658,13 @@ class GameSession:
         if bounds is None:
             raise GameError("No custom bet/raise is legal here.")
         lo, hi = bounds
-        total = _custom_total(action)
+        try:
+            total = _custom_total(action)
+        except ValueError:
+            raise GameError(f"Malformed custom action {action!r}.")
+        # NaN/inf pass every bound check below and would corrupt the stacks.
+        if not math.isfinite(total):
+            raise GameError(f"Custom amount must be finite: {action!r}.")
         is_raise = action.startswith('raise_')
         if total >= hi:                       # whole stack -> all-in
             # A full-stack shove is always a legal raise when aggression is open
