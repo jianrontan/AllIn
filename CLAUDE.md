@@ -132,13 +132,15 @@ python tests/run_evaluation.py --db analysis/blueprints/blueprint_20260518_16090
 ### Branch rust-core (Rust core + v3 blueprint work; not on main yet)
 Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN.md`,
 `docs/V3_BLUEPRINT_PLAN.md` — read the relevant one first.
-- **Status (2026-11-16):** V3.0–V3.6 done; V3.7–V3.9 built with their gates deferred to
-  V3.14; V3.10 done: the base arm is **C at 300M** and the opponent models are re-fit on its
-  keys; V3.11 done: the pooled jam read (`ALLIN_JAM_READ`). Remaining v3 scope, in
-  `V3_BLUEPRINT_PLAN.md` "Next steps": V3.16 `spr5a` history keys and V3.12 Rust pruning
-  code implemented (2026-11-16); calibration and C-long/D/E training/evaluation pending,
-  then V3.13 DBR blueprint and V3.14 final pick; then Phase 7
-  deploy (separate sign-off).
+- **Status (2026-11-21):** D1.6B is the selected base; E pruning was dropped. The
+  V3.13 two-role Rust DBR fork, anonymous fit/holdout exporter and paired checkpoint
+  driver are implemented experimentally; P_max=0 and 0.5 forks both completed 48M
+  iterations with native resume and local API checks. See `docs/V3_BLUEPRINT_PLAN.md`
+  V3.13 for results, follow-up review fixes and rare-tail coverage. Resume reads the
+  manifest under the run lock; equivalent numeric defaults remain compatible with
+  old pairs. Explicit H2H deal seeds use versioned, separate RNG domains; old
+  equal-seed smoke artifacts are retained as superseded wiring checks. Quality gates and final pick are pending;
+  the corrected tilt rerun remains deferred. Phase 7 deploy requires separate sign-off.
 - **Environment:** a uv `.venv` (Python 3.12) at the worktree root; run Python as
   `../../.venv/bin/python` from `backend/bot/`. Rust is Homebrew rustup (keg-only):
   `env PATH=/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/usr/bin:/bin cargo test --release`
@@ -166,15 +168,16 @@ Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN
   a blueprint's serving RSS.
 - **V3.16 / V3.12:** `--key-format spr5a` carries the previous aggressors on flop/turn
   and SPR on river. New postflop key calls require explicit `key_format` and `tags`.
-  Rust `--prune` enables shadow-score pruning (default OFF; thresholds uncalibrated).
-  Resume from the training DB: served snapshots omit `pruning_state`. See the new
-  implementation section in `docs/V3_BLUEPRINT_PLAN.md` before starting calibration.
+  Rust `--prune` retains shadow-score pruning code, default OFF; arm E was calibrated
+  and dropped on 2026-11-17. Pruned training resumes require their training DB because
+  served snapshots omit `pruning_state`; DBR does not combine with pruning.
 - **Opponent models on v3 keys (V3.10):** `fit_opponent_models.py --db <blueprint>` fits on
   that blueprint's key format, card abstraction and cap jam (a preflop 5-bet into a 4-bet is
   `a`), and stamps every model file (`opponent_model.blueprint_model_stamp`). `HumanModel`
   refuses a model whose stamp differs from the served blueprint's (unstamped = the legacy v2
-  setup), so exploitation self-disables on a mismatch. C300's models:
-  `analysis/opponent_models/c300/` (git-ignored).
+  setup), so exploitation self-disables on a mismatch. D1.6B models are in
+  `analysis/opponent_models/d1600/`; older C300 models remain in
+  `analysis/opponent_models/c300/` (both git-ignored).
 - **Jam read (V3.11):** `exploitation/jam_read.py` pools every logged human flop/turn jam into
   a histogram of the jammer's strength percentile (backoff: all → street → pot type → SPR).
   With `ALLIN_JAM_READ=<jam_read.json>` (`scripts/fit_jam_read.py --db`, stamped), the
@@ -183,8 +186,13 @@ Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN
   policy exactly on the logged jams (both hole cards are in the recaps); `--jam-read lopo`
   refits leaving each spot's player out.
 - **Evaluation scripts** (`backend/bot/scripts/`): `h2h_eval.py` (AIVAT head-to-head; plays an
-  untrained faced jam with prod's guard; `--db-b model` = the fitted human population model,
-  `--model-dir`; `--jam-read-a` re-scores A's faced jams with a jam read), `lbr_paired.py` (per-hand LBR for paired comparisons), `br_attr.py` (BR with
+  untrained faced jam with prod's guard; `--db-b model --model-base <frozen-D.db>`
+  binds the human-model prior across candidates and records input hashes. An explicit
+  shared `--deal-seed` makes dealt cards identical across policies; default seeds keep
+  historical behaviour. Without
+  `--model-base` it retains the legacy v2 prior. Jam-rate assumptions still need
+  validation before using this as the held-out DBR quality gate. `--model-dir` selects
+  the population counts; `--jam-read-a` re-scores A's faced jams with a jam read), `lbr_paired.py` (per-hand LBR for paired comparisons), `br_attr.py` (BR with
   per-street gain attribution), `bug027_replay.py` (the BUG-027 hand through any blueprint).
   `match.py` plays each side on its own `PokerGame` state machine, so the legal actions, stack
   clamps and chip costs are the engine's. Overnight eval runs and their results live in

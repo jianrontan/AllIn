@@ -12,14 +12,14 @@
 //! (seeded from `seed` and the iteration index), so a deal does not depend on
 //! which worker ran it.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::rng::Xoshiro;
-use super::table::{ActMap, InfoSet, Legal, floor0};
+use super::table::{floor0, ActMap, InfoSet, Legal};
 use super::trainer::{Abstraction, Table, Trainer};
 use crate::buckets::Buckets;
 
@@ -57,11 +57,32 @@ pub struct WorkerDelta {
     pub ev_count: i64,
     pub pruning: super::pruning::PruneTable,
     pub prune_stats: super::pruning::PruneStats,
+    pub opponent: Option<Box<WorkerDelta>>,
 }
 
 impl Trainer {
     fn into_delta(self) -> WorkerDelta {
+        let opponent = if self.dbr.is_some() {
+            let mut o = WorkerDelta::default();
+            for k in &self.opponent_dirty_regret {
+                o.regret.insert(*k, self.opponent_table[k].regrets);
+            }
+            for k in &self.opponent_dirty_strategy {
+                o.strategy.insert(*k, self.opponent_table[k].strategy);
+            }
+            for k in self
+                .opponent_dirty_regret
+                .iter()
+                .chain(&self.opponent_dirty_strategy)
+            {
+                o.legal.insert(*k, self.opponent_table[k].legal);
+            }
+            Some(Box::new(o))
+        } else {
+            None
+        };
         let mut d = WorkerDelta {
+            opponent,
             pruning: self.prune_table,
             prune_stats: self.prune_stats,
             ev_sum: self.ev_sum,
@@ -268,12 +289,16 @@ pub fn train_parallel<A: Abstraction + ?Sized>(
         let base = Arc::new(std::mem::take(&mut master.table));
         let prune_base = Arc::new(std::mem::take(&mut master.prune_table));
         let prune_config = master.pruning;
+        let opponent_base = Arc::new(std::mem::take(&mut master.opponent_table));
+        let dbr_config = master.dbr.clone();
         let next = AtomicU64::new(0);
         let results: Vec<Result<WorkerDelta, String>> = std::thread::scope(|s| {
             let handles: Vec<_> = (0..workers)
                 .map(|_| {
                     let base = Arc::clone(&base);
                     let prune_base = Arc::clone(&prune_base);
+                    let opponent_base = Arc::clone(&opponent_base);
+                    let dbr_config = dbr_config.clone();
                     let (next, mode) = (&next, &mode);
                     // Builder::spawn_scoped returns an error (instead of
                     // panicking) if the OS refuses a thread.
@@ -284,6 +309,8 @@ pub fn train_parallel<A: Abstraction + ?Sized>(
                             wt.key_format = key_format;
                             wt.pruning = prune_config;
                             wt.prune_base = Some(prune_base);
+                            wt.opponent_base = Some(opponent_base);
+                            wt.dbr = dbr_config;
                             loop {
                                 let k = next.fetch_add(BLOCK, Ordering::Relaxed);
                                 if k >= round_total {
@@ -316,7 +343,8 @@ pub fn train_parallel<A: Abstraction + ?Sized>(
         // rather than ever lose the blueprint).
         master.table = Arc::try_unwrap(base).unwrap_or_else(|a| (*a).clone());
         master.prune_table = Arc::try_unwrap(prune_base).unwrap_or_else(|a| (*a).clone());
-        let deltas = results.into_iter().collect::<Result<Vec<_>, String>>()?;
+        master.opponent_table = Arc::try_unwrap(opponent_base).unwrap_or_else(|a| (*a).clone());
+        let mut deltas = results.into_iter().collect::<Result<Vec<_>, String>>()?;
         let touched = merge_round(&mut master.table, &deltas, sched.alpha, sched.gamma)?;
         if let Some(config) = master.pruning {
             for &key in &touched {
@@ -356,6 +384,19 @@ pub fn train_parallel<A: Abstraction + ?Sized>(
                 master.prune_table.insert(key, state);
             }
         }
+        if master.dbr.is_some() {
+            let opponents: Vec<WorkerDelta> = deltas
+                .iter_mut()
+                .map(|w| *w.opponent.take().expect("DBR worker role"))
+                .collect();
+            let updated = merge_round(
+                &mut master.opponent_table,
+                &opponents,
+                sched.alpha,
+                sched.gamma,
+            )?;
+            master.opponent_dirty.extend(updated);
+        }
         master.dirty.extend(touched);
         for d in &deltas {
             let mut ws = d.prune_stats;
@@ -379,7 +420,7 @@ pub fn train_parallel<A: Abstraction + ?Sized>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mccfr::table::{Pattern, pack_key};
+    use crate::mccfr::table::{pack_key, Pattern};
 
     fn map(v: &[(u8, f64)]) -> ActMap {
         let mut m = ActMap::default();

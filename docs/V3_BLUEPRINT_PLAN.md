@@ -1,4 +1,4 @@
-# v3 blueprint — plan and progress log (V3.0–V3.6, V3.10, V3.11 and V3.15 done, base arm C300; V3.7–V3.9 built, gates deferred; next: train arm D (V3.16 history keys), then control C-long when there is time; V3.12 pruning built but not trained; then V3.13 DBR, V3.14; see "Next steps")
+# v3 blueprint — plan and progress log (D1.6B selected; V3.12 pruning dropped; V3.13 initial DBR implementation and 48M pilots complete; V3.14 quality gates and Phase 7 deployment pending)
 
 Branch `rust-core`. Written 2026-11-09 after the BUG-027 investigation.
 Follows [PHASE6_ABSTRACTION_PLAN.md](PHASE6_ABSTRACTION_PLAN.md) (SPR buckets built,
@@ -978,9 +978,10 @@ Four sequential 24M-iteration runs on the laptop (AC power), each with the step-
 - **The model inside training:** P_conf = P_max·n/(s + n) with n = human decisions at the
   full key; drop the blueprint rung from the model so P_conf alone shrinks toward the free
   strategy (otherwise thin keys double-shrink toward the frozen base); a key with no model
-  mass gets P_conf = 0, never the uniform fallback; the model's prior is the frozen base,
-  never the table being trained; precompute the model per packed key and backoff level in
-  Rust.
+  mass gets P_conf = 0, never the uniform fallback. The first implementation below
+  caches empirical full-key counts per packed key; hierarchical backoff is deferred
+  until its confidence semantics are specified. The frozen base supplies the held-out
+  evaluation prior, never a changing DBR table.
 - **Fork, not resume:** at the fork zero the strategy sums and `strategy_visit_count` and
   reset the regret clocks, or a few hours of DBR barely moves a ~1.6B-iteration average;
   an explicit fork mode (the resume guard checks the clock) with the fork stamped in the
@@ -994,6 +995,160 @@ Four sequential 24M-iteration runs on the laptop (AC power), each with the step-
   gadget's "no worse than the blueprint" weakens to "no worse than DBR": anchor it to the
   base blueprint, or re-validate.
 - **Sweep:** P_max 0.25 / 0.5 / 0.75, each fork a few hours (set from step 3's it/s).
+
+#### V3.13 implementation (2026-11-21; experimental, not promoted)
+
+The Rust trainer now has an explicit `fork_dbr` / `resume_dbr` path and a separate
+free-opponent table. Ordinary training stays unchanged; DBR and pruning cannot be
+combined. The four seat/updater combinations cycle deterministically. Restricted
+opponent regrets use `(1-q) * (action_value - free_policy_value)`; the mixed policy's
+value passes to the parent. Using the mixed value as the free regret baseline would
+apply the restriction twice. See the [DBR paper](https://proceedings.mlr.press/v5/johanson09a.html).
+
+The first estimator is deliberately **empirical full-key counts**, without hierarchical
+backoff or a blueprint pseudo-count. Here `n` is exactly the observed full-key decision
+count, `q = P_max*n/(s+n)`, and the free policy supplies the shrinkage. This makes the
+confidence and estimator agree; the existing serving model's hierarchy is not reused
+inside training. Unknown keys are free. Observations for actions absent from a node's
+legal menu retain their mass in the free policy rather than being reassigned to a legal
+action. A hierarchical estimator would need separately specified confidence semantics
+and another comparison before replacing this version.
+
+`backend/bot/scripts/export_dbr_counts.py` creates an anonymous, deterministic player
+holdout before training. Its cache binds to the frozen base's content hash, abstraction,
+key format, cap-jam setting, iteration, and split. The held-out counts remain separate;
+when evaluating, construct their serving model against the frozen D prior for every arm.
+Do not fit or select against the held-out set. No player identifiers are exported.
+
+`backend/bot/scripts/train_dbr.py` forks both roles from D, preserving regrets and clearing
+both average sums and both clock families. It publishes immutable paired generations
+through `latest.json` only after both databases close and hash successfully. The run
+lock covers manifest reads and all publication decisions, so a resumer cannot load
+an older pair just before another trainer publishes and exits. Resume checks hashes,
+role/generation/configuration and clocks; keep the last published pair
+and one rollback pair. A partial write never becomes the latest pair. Only `bot.db` is
+a candidate serving asset; `opponent.db` is training state. Empty average keys are
+reported, so a short fork cannot silently be called a production-ready strategy.
+
+For a local pilot, use the same seed, schedule and budget for `P_max=0` (fresh-average
+control) and `P_max=0.5`, with `s=10`. This isolates the model restriction from resetting
+the base's long-running average. The `.25/.75` sweep and held-out/live-stack/LBR quality
+gates remain pending; a functional training smoke is not evidence of poker strength.
+The macOS/Linux driver supports a timezone-aware `--stop-at`, checkpoint reserve, wall-time and RSS
+limits. A process-local hard deadline also stops native workers if orderly stopping
+stalls. These runs do not change the active blueprint or deployment.
+
+From `backend/bot/` after rebuilding `allin_core`:
+
+```bash
+../../.venv/bin/python scripts/export_dbr_counts.py --db <frozen-D-snapshot.db> \
+  --model-dir analysis/opponent_models/d1600 --out-dir <new-split-directory>
+../../.venv/bin/python scripts/train_dbr.py --base <frozen-D-snapshot.db> \
+  --cache <split-directory>/train.json --run-dir <new-run-directory> \
+  --p-max 0.5 --strength 10 --iterations 48000000 --workers 8 --merge-every 2000 \
+  --checkpoint-every 2400000 --stop-at <timezone-aware-ISO-deadline> --max-rss-gib 8
+```
+
+The existing `h2h_eval.py` now accepts `--db-b model --model-base <frozen-D.db>`
+with the same prior for every candidate. An explicit prior also selects its action
+menu; the model retains its own abstraction and history keys. Result metadata
+records the prior and population-count hashes, and discards a run if either changes.
+The legacy v2 default is preserved. The prior filename is resolved before opening,
+hashing and checking its WAL, including when supplied through a symlink. The
+exporter and trainer resolve frozen base filenames for the same reason. Use the same explicit `--deal-seed` across
+comparison arms: ordinary `--seed` historically interleaves deal and action draws,
+so different policies otherwise change later dealt hands. Explicit deal seeds use
+a separate seed domain from action sampling: equal numeric action/deal seeds must
+not initialize identical PRNG states. H2H output records `deal_rng_scheme` as
+`domain-separated-v1` (explicit deal seed) or `legacy-shared` (omitted). The optional deal stream preserves old
+trajectories when omitted; identical dealt cards alone do not supply
+a paired standard error. An eight-hand fit-set smoke checks the model wiring;
+it is not a quality measurement. The legacy aggregate jam caps still require
+validation for a held-out DBR comparison, alongside the live-layer gates above.
+
+For a continuation, pass `--resume` with the same base/cache/seed/workers/merge and
+checkpoint configuration. `--iterations` is **additional** iterations. Use a new run
+directory when changing `P_max` or any training configuration. Always resume via the
+pair manifest; an ordinary `train_rust.py --resume bot.db` is intentionally rejected.
+Explicit and omitted numeric defaults are equivalent on resume, including older
+manifests that serialized strength as integer `10` instead of float `10.0`.
+The native paired interface accepts implicit-v2 key metadata and rejects two paths
+that identify the same database before writing either role, including relative,
+symlink and hardlink aliases. Paired writes require Unix filesystem-identity support;
+the driver targets macOS/Linux. Other training and inference interfaces are unaffected.
+New paired output filenames must be ASCII and must not differ only by case; this
+avoids aliases on case-insensitive, Unicode-normalizing filesystems before a new
+file has an identity. Unicode parent directories and existing Unicode files are
+supported. The normal driver already uses distinct `bot.db` / `opponent.db` names.
+
+#### Local pilot results (2026-11-21)
+
+Both forks completed **48M additional iterations** from the frozen D1.6B snapshot,
+with fresh averages and clocks, seed 20261121, 8 workers × merge 2000, alpha 1.5,
+gamma 1, s=10, and paired checkpoints every 2.4M. P_max=0 is the fresh-average
+control; **P_max=0.5 is an experimental pilot, not a final policy choice**.
+
+| P_max | Fork iterations | Wall time including setup/checkpoints | Peak RSS | Bot keys with empty averages |
+|---|---:|---:|---:|---:|
+| 0 | 48,000,000 | 39.4 min | 3.05 GiB | 37,828 |
+| 0.5 | 48,000,000 | 40.5 min | 3.26 GiB | 36,761 |
+
+The deterministic player split uses **11 fit players / 13,511 decisions / 6,447
+full keys**, with **4 held-out players / 4,023 decisions** kept separate. Both bot
+and free-opponent tables have fresh averages for every fit key. All four tables
+pass SQLite integrity checks; both complete pairs load through native resume with
+matching configurations, role counts, generation and clocks. Both preflop probes
+report OK. These are functional checks, not evidence of better poker play.
+
+The 48M P_max=0.5 bot table also passes local API health, trained preflop lookup
+and new-game checks with spr5a session binding, using in-memory stores only. Eight
+fit-only model-opponent hands per arm checked the frozen-D prior wiring. Review
+subsequently found that the smoke recipe's equal action/deal seeds initialized
+identical random streams; those historical smoke scores are not quality evidence
+and are superseded by the corrected smoke checks recorded below. No held-out
+quality score was used to choose a policy. The rare tail
+still contains roughly 2.5–2.6% empty-average bot keys, so coverage remains a gate.
+
+Initial verification before review: **42 Rust unit tests + 59 Python/Rust parity tests + 634 backend tests
+passed**; one backend test skipped, and the deferred board-clairvoyant BR walk was
+excluded. `git diff --check` passes. The .25/.75 sweep, held-out gain/cost comparisons,
+jam-cap validation and live-layer gates remain pending. The corrected tilt rerun
+stays deferred. D remains the selected base; no DBR serving choice is made here.
+
+Historical recipes, logs and verification are local and git-ignored under
+`backend/bot/analysis/blueprints_rs/eval_runs/20261121_dbr/` (`run_all.sh`,
+`run_pilots.py`, `final_verify.py`, `report_health.py`, `verification.json`).
+The aggregate final health report is
+`backend/bot/analysis/blueprints_rs/dbr_20261121_pilot_health.json`.
+
+#### Review fixes (2026-11-21)
+
+The follow-up review identified six defects around the initial implementation:
+reading the resume manifest before locking, integer/float default mismatches in
+resume metadata, equal-seed evaluation correlation, symlinked-prior WAL checks,
+aliased native checkpoint paths, and implicit-v2 paired checkpoint metadata.
+Regression checks cover these cases. The native learning update and pilot files
+are not changed by these fixes; the 48M training runs used spr5a, distinct generated
+role paths, consistent explicit parameters and separate run directories.
+
+Configuration comparison preserves strict integer fields such as the seed while
+normalizing float-valued settings. Resume retains the stored representation when
+passing validated legacy run metadata to the native layer. Both role databases
+are explicitly closed before publication. A known-solution constrained-game
+oracle remains useful additional mathematical validation; passing plumbing tests
+does not replace the held-out poker-strength gates.
+
+After the fixes, **43 Rust unit tests + 91 Python/Rust parity tests + 640 backend
+tests pass**. One backend test is skipped; the deferred BR walk remains excluded.
+The regressions reproduce the manifest/lock handoff, both directions of default
+strength migration, current and older implicit-v2 pairs, filesystem aliases,
+equal-seed correlation and symlinked WAL mutations. SQLite connection cleanup is
+also checked, including macOS directory aliases in the native output-path tests.
+Both existing 48M pairs pass native resume with the corrected module; the local
+API and eight fit-only model-opponent hands per arm pass again. The original equal-seed smoke outputs are preserved under the local
+run's `pre_review/` directory; corrected smoke outputs explicitly record
+`deal_rng_scheme=domain-separated-v1`. Training provenance retains the original
+source hash separately from the code hash used for verification.
 
 ### Evaluation for these arms
 
@@ -1013,9 +1168,10 @@ Four sequential 24M-iteration runs on the laptop (AC power), each with the step-
 - **Probes that actually test the new keys:** the strategy-shape probe checks preflop only
   (`strategy_shape.py`); add postflop checks on tagged keys (the preflop aggressor c-bets
   more than the caller, sane lead frequency, no tagged turn key collapses to never-fold)
-  and a visit-tail check (`probe_rare_line_convergence.py`). The human-model opponent in
-  `h2h_eval.py` keys on v2 and remembers nothing from earlier streets, so H2H against it
-  barely rewards line-awareness; add a served-stack test (`GameSession` + the river
+  and a visit-tail check (`probe_rare_line_convergence.py`). The legacy default human-model
+  opponent in `h2h_eval.py` uses v2 keys; the explicit frozen-D model prior uses D's
+  abstraction and history keys. Validate that newer path before treating it as the
+  line-awareness gate; add a served-stack test (`GameSession` + the river
   solver) and an API smoke in the V3.6 style that checks every live bot key on D is
   trained.
 

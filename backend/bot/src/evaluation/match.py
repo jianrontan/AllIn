@@ -175,7 +175,7 @@ class HeadToHeadMatch:
     """
 
     def __init__(self, strat_a, strat_b, seed=None,
-                 menu_mode_a='control', menu_mode_b='control'):
+                 menu_mode_a='control', menu_mode_b='control', deal_seed=None):
         # Each side buckets with the abstraction its own blueprint was trained on
         # (one shared instance when they agree -- the tables are large).
         from ..abstractions.abstraction_set import resolve_abstraction_dir
@@ -185,7 +185,19 @@ class HeadToHeadMatch:
         cards_b = cards_a if os.path.realpath(dir_a) == os.path.realpath(dir_b) \
             else CardAbstraction(dir_b)
         self.evaluator = HandEvaluator()
-        self.rng = random.Random(seed)
+        if deal_seed is None:
+            # Preserve historical seeds and interleaved trajectories exactly.
+            self.rng = random.Random(seed)
+            self.deal_rng = self.rng
+            self.deal_rng_scheme = 'legacy-shared'
+        else:
+            # Distinct domains prevent equal input seeds from correlating cards
+            # with actions (or with a separately seeded estimator's raw stream).
+            # An omitted action seed still requests nondeterministic sampling.
+            action_seed = None if seed is None else f'allin.match.actions.v1|{seed!r}'
+            self.rng = random.Random(action_seed)
+            self.deal_rng = random.Random(f'allin.match.deals.v1|{deal_seed!r}')
+            self.deal_rng_scheme = 'domain-separated-v1'
         # Each side can be a DIFFERENT arm (e.g. capped vs control head-to-head), so
         # menu_mode is per-player. A BlueprintDB strat exposes get_metadata; default
         # to control for a fake/pre-stamp source.
@@ -280,7 +292,7 @@ class HeadToHeadMatch:
     def evaluate(self, num_hands=5000, record=None, progress_every=0):
         total = 0.0
         for i in range(num_hands):
-            c = self.rng.sample(_FULL_DECK, 9)
+            c = self.deal_rng.sample(_FULL_DECK, 9)
             r = self.play_hand(i % 2, (c[0], c[1]), (c[2], c[3]), c[4:9], record=record)
             total += r
             if progress_every and (i + 1) % progress_every == 0:

@@ -7,6 +7,7 @@ capped_pj cap jam exists only for that arm), and chips are conserved.
 Run: python -m pytest tests/test_match_engine.py -q
 """
 import os
+import random
 import sys
 
 import pytest
@@ -85,3 +86,72 @@ def test_capped_pj_player_can_cap_jam_against_capped():
                     and sum(c in 'smlx' for c in ev['pattern']) == 3:
                 seen.add(ev['seat'] == r['seat_of_A'])
     assert seen == {True}             # only A (capped_pj) is ever offered the cap jam
+
+
+@pytest.mark.parametrize('deal_seed',[771,11])
+def test_explicit_deal_seed_keeps_cards_identical_when_policies_change(deal_seed):
+    class Fold:
+        def get_average_strategy(self,key):
+            return {'fold':1.0}
+    all_actions=HeadToHeadMatch(_EveryAction(),_EveryAction(),seed=11,deal_seed=deal_seed,
+                               menu_mode_a='capped_pj',menu_mode_b='capped_pj')
+    folding=HeadToHeadMatch(Fold(),_EveryAction(),seed=11,deal_seed=deal_seed,
+                           menu_mode_a='capped_pj',menu_mode_b='capped_pj')
+    a=[];b=[]
+    all_actions.evaluate(num_hands=64,record=a)
+    folding.evaluate(num_hands=64,record=b)
+    cards=lambda rows:[(r['hand_a'],r['hand_b'],r['board']) for r in rows]
+    assert cards(a)==cards(b)
+    assert sum(len(r['events']) for r in a)!=sum(len(r['events']) for r in b)
+
+
+@pytest.fixture
+def sampling_match(monkeypatch):
+    """Exercise match RNGs without loading card tables or playing poker."""
+    from src.evaluation import match as module
+    monkeypatch.setattr(module, 'CardAbstraction', lambda directory: None)
+    monkeypatch.setattr('src.abstractions.abstraction_set.resolve_abstraction_dir',
+                        lambda *args: '.')
+    source = _EveryAction()
+    return lambda seed, deal_seed=None: HeadToHeadMatch(
+        source, source, seed=seed, deal_seed=deal_seed)
+
+
+def test_equal_seeds_do_not_correlate_first_card_and_action(sampling_match):
+    from src.evaluation.match import _FULL_DECK
+    first_half = set(_FULL_DECK[:26])
+    counts = [0, 0]
+    first_actions = [0, 0]
+    # Fixed seed ensemble makes this deterministic. Identically seeded streams
+    # produce ~82% versus ~19%, even though the policy asks for 50% in both groups.
+    for seed in range(4000):
+        match = sampling_match(seed, deal_seed=seed)
+        cards = match.deal_rng.sample(_FULL_DECK, 9)
+        group = int(cards[0] in first_half)
+        counts[group] += 1
+        first_actions[group] += match.rng.choices((True, False), weights=(.5, .5))[0]
+        assert match.deal_rng_scheme == 'domain-separated-v1'
+    assert all(abs(actions / count - .5) < .05
+               for actions, count in zip(first_actions, counts))
+
+
+def test_omitted_deal_seed_preserves_legacy_interleaving(sampling_match):
+    from src.evaluation.match import _FULL_DECK
+    match = sampling_match(911)
+    reference = random.Random(911)
+    actual = []
+    expected = []
+    for index in range(32):
+        cards = reference.sample(_FULL_DECK, 9)
+        expected.append((cards, [reference.random() for _ in range(index % 5 + 1)]))
+
+    def play_hand(seat, hand_a, hand_b, board, record=None):
+        index = len(actual)
+        draws = [match.rng.random() for _ in range(index % 5 + 1)]
+        actual.append((list(hand_a) + list(hand_b) + list(board), draws))
+        return 0.0
+
+    match.play_hand = play_hand
+    match.evaluate(num_hands=32)
+    assert actual == expected
+    assert match.deal_rng_scheme == 'legacy-shared'

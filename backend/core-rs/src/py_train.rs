@@ -28,6 +28,88 @@ fn sched(alpha: f64, gamma: f64) -> PyResult<Schedule> {
     Ok(Schedule { alpha, gamma })
 }
 
+/// Validate paired output paths before SQLite can create or modify either file.
+/// Paired DBR writes currently support Unix (the macOS/Linux training driver).
+/// Existing targets are compared by file identity, not just their spelling.
+#[cfg(unix)]
+fn validate_role_paths(bot: &str, opponent: &str) -> Result<(), String> {
+    use std::fs;
+    use std::os::unix::fs::MetadataExt;
+    use std::path::{Path, PathBuf};
+
+    fn resolve(path: &str) -> Result<(PathBuf, Option<fs::Metadata>), String> {
+        let path = Path::new(path); // Literal filename, including a leading "file:".
+        match fs::symlink_metadata(path) {
+            Ok(_) => {
+                // A dangling file symlink must not become a second name for a
+                // not-yet-created output when SQLite opens it later.
+                let resolved = fs::canonicalize(path)
+                    .map_err(|e| format!("cannot resolve DBR checkpoint target: {e}"))?;
+                let metadata = fs::metadata(&resolved).map_err(|e| e.to_string())?;
+                if !metadata.is_file() {
+                    return Err("DBR checkpoint target must be a regular file".into());
+                }
+                Ok((resolved, Some(metadata)))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let name = path
+                    .file_name()
+                    .ok_or("DBR checkpoint path needs a filename")?;
+                // New names have no filesystem identity yet. Keep their spelling
+                // unambiguous on Unicode-normalizing, case-insensitive filesystems;
+                // parent directories may still have arbitrary Unicode names.
+                if !name.as_encoded_bytes().is_ascii() {
+                    return Err("new DBR checkpoint filenames must be ASCII".into());
+                }
+                let parent = path
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or_else(|| Path::new("."));
+                let parent = fs::canonicalize(parent)
+                    .map_err(|e| format!("cannot resolve DBR checkpoint parent: {e}"))?;
+                Ok((parent.join(name), None))
+            }
+            Err(e) => Err(format!("cannot inspect DBR checkpoint target: {e}")),
+        }
+    }
+
+    let (bot, bot_metadata) = resolve(bot)?;
+    let (opponent, opponent_metadata) = resolve(opponent)?;
+    let has_new_target = bot_metadata.is_none() || opponent_metadata.is_none();
+    // Bind mounts / APFS firmlinks can alias directories even when realpath
+    // leaves different names. Compare the parent identities for new files too.
+    let same_parent = if has_new_target {
+        let b = fs::metadata(bot.parent().unwrap()).map_err(|e| e.to_string())?;
+        let o = fs::metadata(opponent.parent().unwrap()).map_err(|e| e.to_string())?;
+        b.dev() == o.dev() && b.ino() == o.ino()
+    } else {
+        false
+    };
+    let same_spelling = bot == opponent
+        || (has_new_target
+            && same_parent
+            && bot
+                .file_name()
+                .unwrap()
+                .as_encoded_bytes()
+                .eq_ignore_ascii_case(opponent.file_name().unwrap().as_encoded_bytes()));
+    let same_file = match (bot_metadata, opponent_metadata) {
+        (Some(b), Some(o)) => b.dev() == o.dev() && b.ino() == o.ino(),
+        _ => false,
+    };
+    if same_spelling || same_file {
+        return Err(
+            "DBR roles require different database files (not aliases or case-only names)".into(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn validate_role_paths(_bot: &str, _opponent: &str) -> Result<(), String> {
+    Err("paired DBR checkpoint writes currently support macOS/Linux (Unix) only".into())
+}
+
 /// `Trainer(menu_mode='control', alpha=1.5, gamma=1.0, key_format='v2')`.
 #[pyclass(name = "Trainer", module = "allin_core")]
 pub(crate) struct PyTrainer {
@@ -87,6 +169,74 @@ impl PyTrainer {
     #[getter]
     fn menu_mode(&self) -> String {
         self.inner.menu_mode.clone()
+    }
+
+    /// Explicitly fork both DBR roles, retaining base regrets but resetting averages/clocks.
+    fn fork_dbr(
+        &mut self,
+        py: Python<'_>,
+        base_path: &str,
+        cache_path: &str,
+        p_max: f64,
+        strength: f64,
+    ) -> PyResult<i64> {
+        py.detach(|| {
+            let model = Arc::new(crate::mccfr::dbr::DbrModel::load(cache_path)?);
+            let base = BlueprintDb::open_read_only(base_path)?;
+            self.inner.fork_dbr(&base, model, p_max, strength)
+        })
+        .map_err(err)
+    }
+    /// Paired writes are supported on macOS/Linux (Unix); aliases are rejected
+    /// before opening either SQLite database, including dangling file symlinks.
+    /// New filenames must be ASCII and differ beyond case; Unicode parents work.
+    fn checkpoint_dbr(
+        &mut self,
+        py: Python<'_>,
+        bot_path: &str,
+        opponent_path: &str,
+        iteration: i64,
+        generation: &str,
+        run_json: &str,
+    ) -> PyResult<(usize, usize)> {
+        let run: serde_json::Value =
+            serde_json::from_str(run_json).map_err(|e| err(e.to_string()))?;
+        py.detach(|| {
+            validate_role_paths(bot_path, opponent_path)?;
+            let mut b = BlueprintDb::open(bot_path)?;
+            let mut o = BlueprintDb::open(opponent_path)?;
+            self.inner
+                .checkpoint_dbr(&mut b, &mut o, iteration, generation, &run)
+        })
+        .map_err(err)
+    }
+    fn resume_dbr(
+        &mut self,
+        py: Python<'_>,
+        bot_path: &str,
+        opponent_path: &str,
+        cache_path: &str,
+        p_max: f64,
+        strength: f64,
+        run_json: &str,
+    ) -> PyResult<i64> {
+        let run: serde_json::Value =
+            serde_json::from_str(run_json).map_err(|e| err(e.to_string()))?;
+        py.detach(|| {
+            let model = Arc::new(crate::mccfr::dbr::DbrModel::load(cache_path)?);
+            let cfg = crate::mccfr::dbr::DbrConfig::new(model, p_max, strength)?;
+            self.inner.resume_dbr(
+                &BlueprintDb::open_read_only(bot_path)?,
+                &BlueprintDb::open_read_only(opponent_path)?,
+                cfg,
+                &run,
+            )
+        })
+        .map_err(err)
+    }
+    #[getter]
+    fn opponent_info_sets(&self) -> usize {
+        self.inner.opponent_table.len()
     }
 
     /// Bounded diagnostic sample, read after a training chunk (not in the hot loop).
@@ -408,6 +558,7 @@ impl PyTrainer {
                         d.set_item("ev_sum", s.ev_sum)?;
                         d.set_item("ev_count", s.ev_count)?;
                         d.set_item("info_sets", t.table.len())?;
+                        d.set_item("opponent_info_sets", t.opponent_table.len())?;
                         d.set_item("prune_skipped", t.prune_stats.skipped)?;
                         d.set_item("prune_explored", t.prune_stats.explored)?;
                         d.set_item("prune_dormant", t.prune_stats.dormant)?;
@@ -418,14 +569,20 @@ impl PyTrainer {
                         // while training, so the callback can't read it).
                         d.set_item("total_ev_sum", t.ev_sum)?;
                         d.set_item("total_ev_count", t.ev_count)?;
-                        cb.call1(py, (d,)).map(|_| ())
+                        let result = cb.call1(py, (d,))?;
+                        if result.bind(py).is_instance_of::<pyo3::types::PyBool>()
+                            && !result.extract::<bool>(py)?
+                        {
+                            *interrupted = true;
+                        }
+                        Ok::<_, PyErr>(())
                     })();
                     if let Err(e) = r {
                         *py_err = Some(e);
                         return false;
                     }
                 }
-                true
+                !*interrupted
             })
         };
         let stats = py

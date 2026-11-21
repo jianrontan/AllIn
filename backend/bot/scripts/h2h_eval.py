@@ -14,12 +14,13 @@ Two departures from tests/run_match.py, both to play blueprints the way prod doe
   postflop by the bucket's centroid-mean equity in the player's own abstraction
   (prod's _combo_strength). Trained nodes are untouched.
 
-* The human model (HumanModel population layer, v2 keys, root abstraction) samples
+* The human model (HumanModel population layer, frozen prior specified by
+  --model-base; legacy v2 by default) samples
   from the fitted human frequencies on the capped engine WITH a voluntary all-in, so
   humans can shove anywhere, as they can live. Where only the voluntary all-in makes
   a shove legal, the model's shove probability is capped at the rate humans actually
   shove (decisions.jsonl: preflop 0.23%, flop 1.7%, turn 1.7%, river 2.0%): the
-  population model backs off to the v2 blueprint's prior, whose 'allin' mass (learned
+  population model backs off to its frozen blueprint prior, whose 'allin' mass (learned
   at low-SPR stack clamps) sits on deep keys too and would otherwise make the model
   shove ~5x more than humans do.
 
@@ -33,8 +34,11 @@ Two departures from tests/run_match.py, both to play blueprints the way prod doe
 
 Run from backend/bot/:
     python scripts/h2h_eval.py --db-a A.db --db-b {B.db|model} --hands 40000 --seed 101 --out x.json
+    # Explicit prior for newer-key model harness checks (jam caps still need validation):
+    python scripts/h2h_eval.py --db-a A.db --db-b model --model-base frozen_D.db --model-dir fit_models --out x.json
 """
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -126,12 +130,12 @@ class GuardedPlayer(BlueprintPlayer):
 
 
 class ModelPlayer(GuardedPlayer):
-    """The fitted human population model as a player (v2 keys, root abstraction)."""
+    """Human model using its frozen prior's key format and card abstraction."""
 
-    def __init__(self, src, cards, rng, fn):
-        super().__init__(src, cards, rng, menu_mode='capped')
-        self.game = PokerGame(**{**game_kwargs('capped'), 'voluntary_allin': True})
-        self._capped = PokerGame(**game_kwargs('capped'))
+    def __init__(self, src, cards, rng, fn, menu_mode='capped'):
+        super().__init__(src, cards, rng, menu_mode=menu_mode)
+        self.game = PokerGame(**{**game_kwargs(menu_mode), 'voluntary_allin': True})
+        self._capped = PokerGame(**game_kwargs(menu_mode))
         self._fn = fn
         self._mcache = {}
         self.n_capped = 0
@@ -208,34 +212,60 @@ def score_jam_read(rec, path, db_a, hands):
             'se_mbb': float(x.std(ddof=1) / np.sqrt(len(x)))}
 
 
+def content_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as source:
+        for block in iter(lambda: source.read(1024 * 1024), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     p.add_argument('--db-a', required=True)
     p.add_argument('--db-b', required=True, help="blueprint path, or 'model'")
     p.add_argument('--model-dir', default=os.path.join(_BOT, 'analysis', 'opponent_models'),
                    help='fitted opponent models (model_population.json)')
+    p.add_argument('--model-base', default=None,
+                   help='frozen human-model blueprint prior, shared by every candidate (default: legacy v2)')
     p.add_argument('--hands', type=int, default=40000)
     p.add_argument('--seed', type=int, default=101)
+    p.add_argument('--deal-seed', type=int, default=None,
+                   help='separate deal stream; use the same value across arms for identical cards')
     p.add_argument('--out', required=True)
     p.add_argument('--jam-read-a', default=None,
                    help="a fitted jam read for --db-a: re-score A's faced flop/turn jams with it")
     args = p.parse_args()
 
-    da = BlueprintDB(args.db_a, read_only=True)
     is_model = args.db_b == 'model'
-    db = BlueprintDB(V2 if is_model else args.db_b, read_only=True)
+    if args.model_base and not is_model:
+        p.error('--model-base requires --db-b model')
+    # SQLite resolves database-file symlinks before choosing its WAL filename.
+    # Pin that physical file for the entire run and check its actual sidecar.
+    model_base = os.path.realpath(args.model_base or V2)
+    fingerprints = None
+    if is_model:
+        population_path = os.path.join(args.model_dir, 'model_population.json')
+        if not os.path.exists(population_path):
+            p.error('no model_population.json in --model-dir')
+        wal = model_base + '-wal'
+        if os.path.exists(wal) and os.path.getsize(wal):
+            p.error('--model-base must be a quiescent snapshot without a nonempty WAL')
+        fingerprints = (content_sha256(model_base), content_sha256(population_path))
+    da = BlueprintDB(args.db_a, read_only=True)
+    db = BlueprintDB(model_base if is_model else args.db_b, read_only=True)
     mm_a, mm_b = db_menu_mode(da), db_menu_mode(db)
     print(f"A {args.db_a} ({mm_a})\nB {'human population model' if is_model else args.db_b} "
           f"({mm_b})\nhands {args.hands} seed {args.seed}", flush=True)
-    m = HeadToHeadMatch(da, db, seed=args.seed, menu_mode_a=mm_a, menu_mode_b=mm_b)
+    m = HeadToHeadMatch(da, db, seed=args.seed, menu_mode_a=mm_a, menu_mode_b=mm_b,
+                        deal_seed=args.deal_seed)
     m.pa = GuardedPlayer(da, m.pa.cards, m.rng, menu_mode=mm_a)
     if is_model:
         from src.exploitation.opponent_model import HumanModel
-        if not os.path.exists(os.path.join(args.model_dir, 'model_population.json')):
-            # HumanModel would silently back off to the blueprint prior alone.
-            sys.exit(f"no model_population.json in {args.model_dir} (pass --model-dir)")
         hm = HumanModel(args.model_dir, db)
-        m.pb = ModelPlayer(db, m.pb.cards, m.rng, hm.strategy_fn_for('__population__'))
+        # Never substitute the candidate here: all arms face the same frozen prior.
+        m.pb = ModelPlayer(db, m.pb.cards, m.rng, hm.strategy_fn_for('__population__'),
+                           menu_mode=mm_b if args.model_base else 'capped')
     else:
         m.pb = GuardedPlayer(db, m.pb.cards, m.rng, menu_mode=mm_b)
     rec = []
@@ -248,12 +278,22 @@ def main():
             if e['type'] == 'action' and e['action'] == 'allin':
                 jams[e['street']] += 1
     out = dict(a=args.db_a, b=args.db_b, hands=args.hands, seed=args.seed,
+               deal_seed=args.deal_seed, deal_rng_scheme=m.deal_rng_scheme,
                aivat_mbb=res['aivat_mbb'], aivat_se=res['aivat_stderr_mbb'],
                raw_mbb=res['raw_mbb'], raw_se=res['raw_stderr_mbb'],
                var_reduction=res['var_reduction'], jams_by_street=jams,
                guard_a=[m.pa.n_guard, m.pa.n_guard_call],
                guard_b=[m.pb.n_guard, m.pb.n_guard_call],
                model_jam_capped=getattr(m.pb, 'n_capped', 0), seconds=time.time() - t0)
+    if is_model:
+        after = (content_sha256(model_base), content_sha256(population_path))
+        wal_changed = os.path.exists(wal) and os.path.getsize(wal) > 0
+        if fingerprints != after or wal_changed:
+            raise ValueError('human-model prior/counts changed during evaluation; result discarded')
+        out['population_model'] = {
+            'prior': os.path.realpath(model_base), 'prior_sha256': fingerprints[0],
+            'counts_sha256': fingerprints[1], 'stamp': hm.stamp,
+            'jam_cap_source': 'legacy aggregate HUMAN_JAM_RATE; not a held-out DBR quality gate'}
     if args.jam_read_a:
         out['jam_read_a'] = score_jam_read(rec, args.jam_read_a, da, args.hands)
     with open(args.out, 'w') as f:

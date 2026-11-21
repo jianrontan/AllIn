@@ -12,7 +12,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::pruning::{PruneConfig, PruneState, PruneStats, PruneTable};
 use super::rng::{Uniform, Xoshiro};
-use super::table::{InfoSet, MAX_ACTIONS, Pattern, action_id, floor0, id_action, pack_key_context};
+use super::table::{action_id, floor0, id_action, pack_key_context, InfoSet, Pattern, MAX_ACTIONS};
 use crate::engine::{self, Action, Engine, NodeState, STARTING_STACK};
 
 /// Card abstraction the trainer reads (the bucketing component, or fixture
@@ -110,6 +110,13 @@ pub struct Trainer {
     pub prune_base: Option<std::sync::Arc<PruneTable>>,
     pub prune_stats: PruneStats,
     prune_rng: Xoshiro,
+    pub dbr: Option<super::dbr::DbrConfig>,
+    pub bot_seat: u8,
+    pub opponent_table: Table,
+    pub opponent_base: Option<std::sync::Arc<Table>>,
+    pub opponent_dirty: FxHashSet<u64>,
+    pub opponent_dirty_regret: FxHashSet<u64>,
+    pub opponent_dirty_strategy: FxHashSet<u64>,
 }
 
 /// Arguments that change per recursion step.
@@ -150,6 +157,13 @@ impl Trainer {
             prune_base: None,
             prune_stats: PruneStats::default(),
             prune_rng: Xoshiro::new(0),
+            dbr: None,
+            bot_seat: 0,
+            opponent_table: Table::default(),
+            opponent_base: None,
+            opponent_dirty: FxHashSet::default(),
+            opponent_dirty_regret: FxHashSet::default(),
+            opponent_dirty_strategy: FxHashSet::default(),
         })
     }
 
@@ -167,8 +181,13 @@ impl Trainer {
 
     #[inline]
     fn entry(&mut self, key: u64) -> &mut InfoSet {
-        let base = &self.base;
-        self.table.entry(key).or_insert_with(|| {
+        let restricted = self.dbr.is_some() && super::table::unpack_key(key).seat != self.bot_seat;
+        let (table, base) = if restricted {
+            (&mut self.opponent_table, &self.opponent_base)
+        } else {
+            (&mut self.table, &self.base)
+        };
+        table.entry(key).or_insert_with(|| {
             base.as_ref()
                 .and_then(|b| b.get(&key).copied())
                 .unwrap_or_default()
@@ -213,6 +232,9 @@ impl Trainer {
             raw5: [UNSET; 2],
         };
         let updating = (iteration.rem_euclid(2)) as u8;
+        if self.dbr.is_some() {
+            self.bot_seat = ((iteration / 2).rem_euclid(2)) as u8;
+        }
         let mut hist: Vec<Action> = Vec::with_capacity(64);
         let root = Node {
             street: 0,
@@ -326,7 +348,12 @@ impl Trainer {
             0
         };
         let key = pack_key_context(n.street, cp, bucket, strength, n.pattern, spr, tags)?;
-        self.dirty.insert(key);
+        let restricted = self.dbr.is_some() && cp != self.bot_seat;
+        if restricted {
+            self.opponent_dirty.insert(key);
+        } else {
+            self.dirty.insert(key);
+        }
 
         let mut strat = [0.0f64; MAX_ACTIONS];
         let discount = self.discount_enabled;
@@ -350,7 +377,11 @@ impl Trainer {
 
         if cp == upd {
             if !discount {
-                self.dirty_regret.insert(key);
+                if restricted {
+                    self.opponent_dirty_regret.insert(key);
+                } else {
+                    self.dirty_regret.insert(key);
+                }
             }
             let mut prune_decay = 1.0;
             {
@@ -369,6 +400,17 @@ impl Trainer {
                     }
                 }
             }
+            let free_strat = strat;
+            let q = if restricted {
+                self.dbr.as_ref().unwrap().mixture(
+                    key,
+                    legal,
+                    &free_strat[..na],
+                    &mut strat[..na],
+                )?
+            } else {
+                0.0
+            };
             let mut skip = [false; MAX_ACTIONS];
             let mut dormant_flags = [false; MAX_ACTIONS];
             if let Some(config) = self.pruning {
@@ -427,12 +469,26 @@ impl Trainer {
                 own[i] = sign * vals[i];
                 node_value += strat[i] * own[i];
             }
-            let is = self.table.get_mut(&key).expect("info set present");
+            let free_value = if restricted {
+                (0..na).map(|i| free_strat[i] * own[i]).sum::<f64>()
+            } else {
+                node_value
+            };
+            let table = if restricted {
+                &mut self.opponent_table
+            } else {
+                &mut self.table
+            };
+            let is = table.get_mut(&key).expect("info set present");
             for i in 0..na {
                 if skip[i] {
                     continue;
                 }
-                let regret = own[i] - node_value;
+                let regret = if restricted {
+                    super::dbr::free_increment(own[i], free_value, q)
+                } else {
+                    own[i] - node_value
+                };
                 let prior = is.regrets.get(legal[i]).unwrap_or(0.0);
                 is.regrets.set(legal[i], floor0(prior + regret))?;
                 if n.street > 0 {
@@ -460,7 +516,11 @@ impl Trainer {
             Ok(sign * node_value)
         } else {
             if !discount {
-                self.dirty_strategy.insert(key);
+                if restricted {
+                    self.opponent_dirty_strategy.insert(key);
+                } else {
+                    self.dirty_strategy.insert(key);
+                }
             }
             {
                 let is = self.entry(key);
@@ -475,6 +535,13 @@ impl Trainer {
                     }
                 }
                 is.accumulate(legal, &strat[..na])?;
+            }
+            if restricted {
+                let free = strat;
+                self.dbr
+                    .as_ref()
+                    .unwrap()
+                    .mixture(key, legal, &free[..na], &mut strat[..na])?;
             }
             let pick = sample(&strat[..na], rng)?;
             let a = id_action(legal[pick]);
@@ -528,6 +595,9 @@ impl Trainer {
             ("ev_sum", py_repr(self.ev_sum)),
             ("ev_count", self.ev_count.to_string()),
         ];
+        if let Some(config) = &self.dbr {
+            meta.push(("dbr", config.json().to_string()));
+        }
         if let Some(config) = self.pruning {
             meta.push(("pruning", config.json().to_string()));
         }
@@ -544,6 +614,9 @@ impl Trainer {
         db: &mut super::db::BlueprintDb,
         iteration: i64,
     ) -> Result<usize, String> {
+        if self.dbr.is_some() {
+            return Err("DBR requires paired checkpoint_dbr".into());
+        }
         let meta = self.checkpoint_meta(iteration);
         let n = db.save_checkpoint_with_pruning(
             &self.table,
@@ -567,6 +640,9 @@ impl Trainer {
         db: &super::db::BlueprintDb,
         mode: Option<&str>,
     ) -> Result<i64, String> {
+        if self.dbr.is_some() {
+            return Err("use resume_dbr for a configured DBR trainer".into());
+        }
         for (name, ours) in [("alpha", self.sched.alpha), ("gamma", self.sched.gamma)] {
             if let Some(v) = db.metadata(name)? {
                 let stored = v
@@ -619,6 +695,9 @@ impl Trainer {
             return Err(
                 "serving snapshot has no pruning state; resume the training checkpoint".into(),
             );
+        }
+        if db.metadata("dbr")?.is_some() {
+            return Err("DBR requires resume_dbr with both role databases".into());
         }
         let stored_pruning = db.metadata("pruning")?;
         if stored_pruning != self.pruning.map(|c| c.json()) {
