@@ -19,7 +19,7 @@ def run_config(base, cache, strength=10.0):
     finally:
         db.close()
     return {
-        'version': 1,
+        'version': 2, 'fork_recipe': driver.PRESERVE_REGRET_RECIPE,
         'base_sha256': json.loads(cache.read_text())['base_sha256'],
         'cache_sha256': driver.file_sha256(cache),
         'seed': 711, 'workers': 2, 'merge_every': 8, 'checkpoint_every': 16,
@@ -192,3 +192,61 @@ def test_symlinked_base_rejects_its_real_active_wal(tmp_path, monkeypatch, compo
             else:
                 exporter.export_counts(alias, tmp_path / 'models', output)
     assert not output.exists()
+
+
+def legacy_pair(root, state):
+    """Emulate the former on-disk recipe, without changing the source base."""
+    state=json.loads(json.dumps(state))
+    state['run'].pop('fork_recipe',None);state['run']['version']=1
+    for role in ('bot','opponent'):
+        path=root/state[role]['path']
+        db=sqlite3.connect(path)
+        try:
+            config=json.loads(db.execute("SELECT value FROM training_metadata WHERE key='dbr'").fetchone()[0])
+            config['version']=1;config.pop('fork_recipe',None)
+            db.execute("UPDATE training_metadata SET value=? WHERE key='dbr'",(json.dumps(config),))
+            db.execute("UPDATE training_metadata SET value=? WHERE key='dbr_run'",(json.dumps(state['run']),))
+            db.execute('UPDATE info_sets SET visit_count=0')
+            db.commit()
+        finally:db.close()
+        state[role]['sha256']=driver.file_sha256(path)
+    driver.atomic_json(root/'latest.json',state)
+    driver.atomic_json(root/'checkpoints'/state['generation']/'pair.json',state)
+    return state
+
+
+def test_old_reset_clock_runs_resume_as_explicitly_legacy(
+        base_and_cache,tmp_path,monkeypatch,capsys):
+    base,cache=base_and_cache;root=tmp_path/'legacy'
+    state=driver.publish(fork(base,cache),root,0,run_config(base,cache))
+    legacy_pair(root,state)
+    monkeypatch.setattr(sys,'argv',arguments(base,cache,root))
+    driver.main()
+    result=driver.load_pair(root)
+    assert result['run']['version']==1 and 'fork_recipe' not in result['run']
+    db=sqlite3.connect(root/result['bot']['path'])
+    try:config=json.loads(db.execute("SELECT value FROM training_metadata WHERE key='dbr'").fetchone()[0])
+    finally:db.close()
+    assert config['version']==1 and 'fork_recipe' not in config
+    assert 'legacy reset-clock experiment' in capsys.readouterr().out
+
+
+def test_manifest_cannot_relabel_legacy_role_tables_as_corrected(
+        base_and_cache,tmp_path,monkeypatch):
+    base,cache=base_and_cache;root=tmp_path/'mismatch'
+    state=driver.publish(fork(base,cache),root,0,run_config(base,cache))
+    legacy=legacy_pair(root,state)
+    # Claim the new recipe in both run records while retaining legacy native data.
+    new_run=run_config(base,cache)
+    legacy['run']=new_run
+    for role in ('bot','opponent'):
+        path=root/legacy[role]['path'];db=sqlite3.connect(path)
+        try:
+            db.execute("UPDATE training_metadata SET value=? WHERE key='dbr_run'",(json.dumps(new_run),));db.commit()
+        finally:db.close()
+        legacy[role]['sha256']=driver.file_sha256(path)
+    driver.atomic_json(root/'latest.json',legacy)
+    before=(root/'latest.json').read_bytes()
+    monkeypatch.setattr(sys,'argv',arguments(base,cache,root))
+    with pytest.raises(ValueError,match='fork recipe mismatch'):driver.main()
+    assert (root/'latest.json').read_bytes()==before

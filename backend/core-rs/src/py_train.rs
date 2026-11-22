@@ -171,7 +171,7 @@ impl PyTrainer {
         self.inner.menu_mode.clone()
     }
 
-    /// Explicitly fork both DBR roles, retaining base regrets but resetting averages/clocks.
+    /// Explicitly fork both roles, retaining regret mass/counters and resetting averages.
     fn fork_dbr(
         &mut self,
         py: Python<'_>,
@@ -234,6 +234,14 @@ impl PyTrainer {
         })
         .map_err(err)
     }
+    #[getter]
+    fn dbr_fork_recipe(&self) -> Option<&'static str> {
+        self.inner
+            .dbr
+            .as_ref()
+            .map(|config| config.fork_recipe.name())
+    }
+
     #[getter]
     fn opponent_info_sets(&self) -> usize {
         self.inner.opponent_table.len()

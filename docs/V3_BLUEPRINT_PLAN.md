@@ -983,9 +983,9 @@ Four sequential 24M-iteration runs on the laptop (AC power), each with the step-
   until its confidence semantics are specified. The frozen base supplies the held-out
   evaluation prior, never a changing DBR table.
 - **Fork, not resume:** at the fork zero the strategy sums and `strategy_visit_count` and
-  reset the regret clocks, or a few hours of DBR barely moves a ~1.6B-iteration average;
-  an explicit fork mode (the resume guard checks the clock) with the fork stamped in the
-  DB.
+  retain the regret-visit counters. Only the average counters reset: resetting regret
+  counters rapidly discounts away D's retained regrets (corrected 2026-11-22).
+  Use the explicit versioned fork mode, stamped in both role DBs.
 - **Held-out evaluation:** leave-one-player-out or a time split (15 players); rebuild the
   population model, jam read and tilt from the fit set only; the held-out evaluation model
   uses the frozen base as its prior for every arm, never the DBR blueprint.
@@ -1020,8 +1020,10 @@ key format, cap-jam setting, iteration, and split. The held-out counts remain se
 when evaluating, construct their serving model against the frozen D prior for every arm.
 Do not fit or select against the held-out set. No player identifiers are exported.
 
-`backend/bot/scripts/train_dbr.py` forks both roles from D, preserving regrets and clearing
-both average sums and both clock families. It publishes immutable paired generations
+`backend/bot/scripts/train_dbr.py` forks both roles from D, preserving regrets and their visit counters, while clearing
+average sums and average counters. Last-seen iteration markers reset to -1 because
+the fork starts a new iteration namespace; these markers are distinct from the
+regret-visit counters that control discounting. It publishes immutable paired generations
 through `latest.json` only after both databases close and hash successfully. The run
 lock covers manifest reads and all publication decisions, so a resumer cannot load
 an older pair just before another trainer publishes and exits. Resume checks hashes,
@@ -1083,8 +1085,8 @@ supported. The normal driver already uses distinct `bot.db` / `opponent.db` name
 
 #### Local pilot results (2026-11-21)
 
-Both forks completed **48M additional iterations** from the frozen D1.6B snapshot,
-with fresh averages and clocks, seed 20261121, 8 workers × merge 2000, alpha 1.5,
+These **legacy reset-clock** forks completed **48M additional iterations** from the frozen D1.6B snapshot,
+with fresh averages and reset regret counters, seed 20261121, 8 workers × merge 2000, alpha 1.5,
 gamma 1, s=10, and paired checkpoints every 2.4M. P_max=0 is the fresh-average
 control; **P_max=0.5 is an experimental pilot, not a final policy choice**.
 
@@ -1149,6 +1151,82 @@ API and eight fit-only model-opponent hands per arm pass again. The original equ
 run's `pre_review/` directory; corrected smoke outputs explicitly record
 `deal_rng_scheme=domain-separated-v1`. Training provenance retains the original
 source hash separately from the code hash used for verification.
+
+#### Fork-clock diagnosis and corrected control (2026-11-22)
+
+The original recipe retained regret values but set `visit_count=0`. Production
+`merge_round` discounts the retained value using the new counter. At common SB
+roots D has 66,720 regret visits; the old 48M fork has 3,000 merge visits. Ignoring
+new updates and the CFR+ floor, the retained coefficient becomes
+`3000^(-1.5) = 0.00000609`. Keeping D's counter instead gives
+`(66720/69720)^1.5 = 0.93616`. This confirms that resetting the counter destroys
+the intended warm start. A Rust regression exercises the actual merge path with
+zero worker increments and verifies both decay histories.
+
+Fresh averages are a separate effect. A fixed, read-only diagnostic used all 169
+SB roots plus source rows `rowid % 359 = 0 LIMIT 4096` (4,197 source keys total).
+On the legacy control, root average-vs-D-average TV is 0.396, compared with 0.135
+for D's stored-menu current regret policy versus its own average. On 3,866 common
+nonempty postflop keys those distances are 0.232 and 0.100. These distances rule out a simple static average-versus-current-policy
+explanation, but do not decompose training noise or attribute every change to
+counter resets. The corrected matched control is the actual experiment. This is a uniform stored-key diagnostic, not a reach-weighted
+value measurement, and does **not** prove that the old policy plays worse.
+
+**Corrected recipe:** keep regret values and regret-visit counters in both roles;
+clear the served averages, their counters, both last-seen iteration markers and
+EV counters. Native `dbr` metadata and the driver run use version 2 with
+`fork_recipe=preserve_regret_clock_v2`. Version-1 pairs remain readable/resumable as
+`reset_all_clocks_v1`, print a legacy-recipe notice, and remain version 1 when
+continued. Resume never converts their learned state into the corrected recipe;
+start a new directory from frozen D for that. Unknown or inconsistent recipe
+metadata is rejected before training/publication.
+
+**Authorized control:** one new P_max=0 fork from D1.6B, 48M iterations, same cache,
+seed 20261121, 8 workers, merge 2000, checkpoint 2.4M, alpha 1.5 and gamma 1.
+The laptop is on AC; the run has an 8 GiB RSS guard and a 90-minute hard budget
+with a three-minute checkpoint reserve. The original pilots remain archived.
+Compare the completed control with D and the legacy control on the same frozen
+sample, reporting empty averages separately. Strategy distance is a warm-start
+sanity check; no arbitrary TV threshold substitutes for later strength gates.
+The P_max=0.5 rerun and .25/.75 sweep wait for this control check. No held-out
+quality data is used here; the tilt rerun and deployment remain deferred.
+
+Diagnosis, exact run command, logs and final comparison are kept locally under
+`analysis/blueprints_rs/eval_runs/20261122_dbr_clock_fix/`; corrected training lives
+in `analysis/blueprints_rs/dbr_20261122_clock_preserved_p00/`.
+
+**Corrected control completed:** 48M iterations in **40.5 minutes**, peak RSS
+**2.99 GiB**, with recipe `preserve_regret_clock_v2`. Both role tables pass SQLite
+checks and native paired resume; the old version-1 control still resumes as legacy.
+The corrected bot also passes local API health, trained lookup and new-game checks.
+Common-root regret counters finish at **69,720 = 66,720 + 3,000**, with average
+counters at 3,000, verifying the intended separate histories.
+
+On the frozen sample, compare only keys with nonempty averages in all variants:
+
+| Uniform stored-key TV from D's average | Legacy reset-clock control | Corrected control |
+|---|---:|---:|
+| All 169 SB opening keys | 0.396 | 0.134 |
+| Other sampled preflop keys (63) | 0.304 | 0.068 |
+| Common sampled postflop keys (3,696) | 0.233 | 0.087 |
+
+D's stored-menu current-regret policy is itself 0.135 / 0.082 / 0.097 away from
+D's average in those groups. The corrected fork removes much of the extra drift;
+it does not need to reproduce the long-running average exactly. These distances
+support the initialization fix, not a claim of improved playing strength.
+
+Coverage remains unresolved: **95,837 of 1,449,630 bot keys (6.6%)** and 97,135
+free-opponent keys have empty averages. In the fixed 3,965-key postflop sample,
+240 corrected and 99 legacy keys have no average; 3,696 are common and nonempty.
+The larger empty tail may reflect different visitation; it is not hidden by the
+matched-key TV table. Serving needs a validated treatment (such as frozen-D
+fallback) before promotion; none is enabled by this experiment.
+
+Verification after the recipe change: **44 Rust unit tests + 93 parity tests +
+640 backend tests pass**, one backend test skipped and the deferred BR walk
+excluded. The `.5` corrected fork has not been started, no held-out quality scores
+were read, and no deployment is performed. Exact results are in the local run's
+`comparison.json` and `verification.json`.
 
 ### Evaluation for these arms
 

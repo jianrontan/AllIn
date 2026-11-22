@@ -132,11 +132,16 @@ python tests/run_evaluation.py --db analysis/blueprints/blueprint_20260518_16090
 ### Branch rust-core (Rust core + v3 blueprint work; not on main yet)
 Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN.md`,
 `docs/V3_BLUEPRINT_PLAN.md` — read the relevant one first.
-- **Status (2026-11-21):** D1.6B is the selected base; E pruning was dropped. The
+- **Status (2026-11-22):** D1.6B is the selected base; E pruning was dropped. The
   V3.13 two-role Rust DBR fork, anonymous fit/holdout exporter and paired checkpoint
   driver are implemented experimentally; P_max=0 and 0.5 forks both completed 48M
   iterations with native resume and local API checks. See `docs/V3_BLUEPRINT_PLAN.md`
-  V3.13 for results, follow-up review fixes and rare-tail coverage. Resume reads the
+  V3.13 for results, follow-up review fixes and rare-tail coverage. New forks
+  retain regret-visit counters and reset only averages/their counters plus iteration
+  markers (`preserve_regret_clock_v2`, 2026-11-22). Older reset-clock pilots remain
+  explicitly legacy. The corrected zero-bias control completed 48M with reduced
+  strategy drift and passing resume/API checks; empty-average coverage and strength
+  gates remain open. Use a new directory when changing fork recipes. Resume reads the
   manifest under the run lock; equivalent numeric defaults remain compatible with
   old pairs. Explicit H2H deal seeds use versioned, separate RNG domains; old
   equal-seed smoke artifacts are retained as superseded wiring checks. Quality gates and final pick are pending;

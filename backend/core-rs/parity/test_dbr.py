@@ -62,14 +62,16 @@ def fork(base,cache,p=.5):
     return t
 
 
-def test_fork_resets_both_roles_and_keeps_regrets(base_and_cache,tmp_path):
+def test_fork_resets_averages_and_preserves_regret_clock(base_and_cache,tmp_path):
     base,cache=base_and_cache;t=fork(base,cache)
     state=publish(t,tmp_path/'run',0,{'seed':711})
     b=rows(tmp_path/'run'/state['bot']['path']);o=rows(tmp_path/'run'/state['opponent']['path'])
     assert b==o
     old={r[0]:r for r in rows(base)}
     assert all(r[2]==old[r[0]][2] for r in b)  # regrets retained
-    assert all(json.loads(r[3])=={} and r[4:]==(0,-1,0,-1) for r in b)
+    assert all(json.loads(r[3])=={} and r[4:]==(old[r[0]][4],-1,0,-1) for r in b)
+    assert any(r[4]>0 for r in b)
+    assert t.dbr_fork_recipe=='preserve_regret_clock_v2'
     with pytest.raises(ValueError,match='paired checkpoint'):
         t.checkpoint(str(tmp_path/'wrong.db'),0)
     with pytest.raises(ValueError,match='resume_dbr'):

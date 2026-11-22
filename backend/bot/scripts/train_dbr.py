@@ -114,6 +114,20 @@ def locked_run_state(root, resume):
         yield state
 
 
+PRESERVE_REGRET_RECIPE = 'preserve_regret_clock_v2'
+LEGACY_RESET_RECIPE = 'reset_all_clocks_v1'
+
+
+def recorded_fork_recipe(run):
+    """Identify old runs without silently relabeling their learned state."""
+    if type(run.get('version')) is int:
+        if run['version'] == 1 and 'fork_recipe' not in run:
+            return LEGACY_RESET_RECIPE
+        if run['version'] == 2 and run.get('fork_recipe') == PRESERVE_REGRET_RECIPE:
+            return PRESERVE_REGRET_RECIPE
+    raise ValueError('unknown DBR run fork recipe/version; start a new run for a new recipe')
+
+
 def canonical_run_config(value):
     """Normalize real-valued parameters without accepting coerced integer fields."""
     run = dict(value)
@@ -136,6 +150,7 @@ def canonical_run_config(value):
         run[field] = number
     if run['alpha'] < 0 or run['gamma'] < 0 or not 0 <= run['p_max'] <= 1 or run['strength'] <= 0:
         raise ValueError('invalid DBR run configuration parameters')
+    recorded_fork_recipe(run)
     return run
 
 
@@ -144,7 +159,7 @@ def main():
     ap.add_argument('--base',required=True,help='frozen base snapshot, never overwritten')
     ap.add_argument('--cache',required=True,help='anonymous fit-set empirical count cache')
     ap.add_argument('--run-dir',required=True)
-    ap.add_argument('--resume',action='store_true')
+    ap.add_argument('--resume',action='store_true',help='continue the recorded recipe; use a new directory for a corrected fork')
     ap.add_argument('--iterations',required=True,type=int,help='additional fork iterations')
     ap.add_argument('--p-max',type=float,default=.5)
     ap.add_argument('--strength',type=float,default=10.0)
@@ -207,10 +222,13 @@ def main():
             alpha=base.get_metadata('alpha');gamma=base.get_metadata('gamma')
             adir=resolve_abstraction_dir(base,'DBR training');verify_tables(adir)
         finally:base.close()
-        run={'version':1,'base_sha256':cache['base_sha256'],'cache_sha256':file_sha256(a.cache),
+        recipe=recorded_fork_recipe(state['run']) if state else PRESERVE_REGRET_RECIPE
+        run={'version':2 if recipe==PRESERVE_REGRET_RECIPE else 1,'base_sha256':cache['base_sha256'],'cache_sha256':file_sha256(a.cache),
              'seed':a.seed,'workers':a.workers,'merge_every':a.merge_every,
              'checkpoint_every':a.checkpoint_every,'key_format':kf,'menu_mode':menu,
              'alpha':alpha,'gamma':gamma,'p_max':a.p_max,'strength':a.strength}
+        if recipe==PRESERVE_REGRET_RECIPE:
+            run['fork_recipe']=recipe
         run=canonical_run_config(run)
         if state and canonical_run_config(state['run'])!=run:
             raise ValueError('DBR run configuration mismatch; seed/schedule/cache must match')
@@ -228,7 +246,12 @@ def main():
             source=trainer.fork_dbr(a.base,a.cache,a.p_max,a.strength)
             total=0
             state=publish(trainer,root,total,run)
-            print(f'Forked {source:,}-iteration base; reset both role averages/clocks.',flush=True)
+            print(f'Forked {source:,}-iteration base; retained regret counters and reset both role averages.',flush=True)
+        if trainer.dbr_fork_recipe!=recipe:
+            raise ValueError('fork recipe mismatch between manifest and native role tables')
+        print(f'Fork recipe: {recipe}',flush=True)
+        if recipe==LEGACY_RESET_RECIPE:
+            print('Continuing a legacy reset-clock experiment; this is not a corrected warm-start fork.',flush=True)
         print(f'DBR p_max={a.p_max} strength={a.strength} | bot keys {trainer.num_info_sets:,} '
               f'free-opponent keys {trainer.opponent_info_sets:,} | RSS {rss_gib():.2f} GiB',flush=True)
         target=total+a.iterations

@@ -75,11 +75,37 @@ impl DbrModel {
         Ok(())
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ForkRecipe {
+    LegacyResetAll,
+    PreserveRegretClock,
+}
+impl ForkRecipe {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::LegacyResetAll => "reset_all_clocks_v1",
+            Self::PreserveRegretClock => "preserve_regret_clock_v2",
+        }
+    }
+    fn recorded(config: &Value) -> Result<Self, String> {
+        match (config["version"].as_u64(), config.get("fork_recipe")) {
+            (Some(1), None) => Ok(Self::LegacyResetAll),
+            (Some(2), Some(Value::String(recipe)))
+                if recipe == Self::PreserveRegretClock.name() =>
+            {
+                Ok(Self::PreserveRegretClock)
+            }
+            _ => Err("unknown DBR fork recipe/version".into()),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct DbrConfig {
     pub model: Arc<DbrModel>,
     pub p_max: f64,
     pub strength: f64,
+    pub fork_recipe: ForkRecipe,
 }
 impl DbrConfig {
     pub fn new(model: Arc<DbrModel>, p_max: f64, strength: f64) -> Result<Self, String> {
@@ -94,12 +120,18 @@ impl DbrConfig {
             model,
             p_max,
             strength,
+            fork_recipe: ForkRecipe::PreserveRegretClock,
         })
     }
     pub fn json(&self) -> Value {
-        json!({"version":1,"p_max":self.p_max,"strength":self.strength,
+        let legacy = self.fork_recipe == ForkRecipe::LegacyResetAll;
+        let mut value = json!({"version":if legacy {1} else {2},"p_max":self.p_max,"strength":self.strength,
             "cache_sha1":self.model.digest,"base_sha256":self.model.metadata["base_sha256"],
-            "split_sha256":self.model.metadata["split_sha256"],"estimator":"empirical-full-v1"})
+            "split_sha256":self.model.metadata["split_sha256"],"estimator":"empirical-full-v1"});
+        if !legacy {
+            value["fork_recipe"] = json!(self.fork_recipe.name());
+        }
+        value
     }
     /// Unsupported observed mass stays free rather than being silently reassigned.
     /// With no supported observation this is exactly the free strategy.
@@ -131,11 +163,11 @@ impl DbrConfig {
     }
 }
 
-/// A fresh fork preserves regrets, but never the base's enormous average/clocks.
+/// Retain regret mass AND its visit counter; start a fresh served average.
+/// Last-seen iteration markers belong to the old iteration namespace and reset.
 pub fn reset_fork(table: &mut super::trainer::Table) {
     for is in table.values_mut() {
         is.strategy = ActMap::default();
-        is.visit_count = 0;
         is.last_visited = -1;
         is.strategy_visit_count = 0;
         is.last_strategy = -1;
@@ -165,6 +197,46 @@ mod tests {
             .unwrap(),
         )
     }
+    #[test]
+    fn fork_preserves_discount_history_in_the_real_parallel_merge() {
+        use super::super::parallel::{WorkerDelta, merge_round};
+        use super::super::table::{InfoSet, Legal};
+        use super::super::trainer::Table;
+        let key = parse_key("pf_1_ip_").unwrap();
+        let mut node = InfoSet::default();
+        node.legal = Legal::from_ids(&[1, 2]).unwrap();
+        node.regrets.set(1, 100.0).unwrap();
+        node.regrets.set(2, 40.0).unwrap();
+        node.strategy.set(1, 1000.0).unwrap();
+        node.visit_count = 10;
+        node.strategy_visit_count = 20;
+        node.last_visited = 900;
+        node.last_strategy = 901;
+        let mut warm = Table::from_iter([(key, node)]);
+        reset_fork(&mut warm);
+        assert_eq!(warm[&key].visit_count, 10);
+        assert_eq!(warm[&key].last_visited, -1);
+        assert!(warm[&key].strategy.is_empty());
+        assert_eq!(warm[&key].strategy_visit_count, 0);
+        assert_eq!(warm[&key].last_strategy, -1);
+        let mut cold = warm.clone();
+        cold.get_mut(&key).unwrap().visit_count = 0;
+        for table in [&mut warm, &mut cold] {
+            for _ in 0..2 {
+                // A zero-increment worker isolates the inherited regret term.
+                // Exercise production merge_round, not a duplicate decay helper.
+                let mut delta = WorkerDelta::default();
+                delta.regret.insert(key, table[&key].regrets);
+                merge_round(table, &[delta], 1.5, 1.0).unwrap();
+            }
+        }
+        assert_eq!(warm[&key].visit_count, 12);
+        assert!(
+            (warm[&key].regrets.get(1).unwrap() - 100.0 * (10.0f64 / 12.0).powf(1.5)).abs() < 1e-12
+        );
+        assert!((cold[&key].regrets.get(1).unwrap() - 100.0 * 2.0f64.powf(-1.5)).abs() < 1e-12);
+    }
+
     #[test]
     fn mixture_has_analytic_confidence_and_no_data_is_free() {
         let (k, c) = config();
@@ -305,12 +377,14 @@ impl super::trainer::Trainer {
         &mut self,
         bot: &super::db::BlueprintDb,
         opp: &super::db::BlueprintDb,
-        config: DbrConfig,
+        mut config: DbrConfig,
         run: &Value,
     ) -> Result<i64, String> {
         if self.pruning.is_some() {
             return Err("DBR + pruning is not supported".into());
         }
+        let recorded = bot.metadata("dbr")?.ok_or("missing DBR configuration")?;
+        config.fork_recipe = ForkRecipe::recorded(&recorded)?;
         let generation = bot
             .metadata("dbr_generation")?
             .ok_or("missing DBR pair generation")?;
