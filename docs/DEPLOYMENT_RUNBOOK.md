@@ -443,3 +443,36 @@ the first 1–2 weeks after v1.0:
   5 min; email alerts on 503/timeout. Public status page at
   `stats.uptimerobot.com/tzx21x76mt`. Cloudflare Registrar auto-renew is
   ON.
+
+
+### DBR checkpoint policy completion (experimental, not deployed)
+
+A DBR bot checkpoint has fresh averages: some stored keys have accumulated no
+average strategy yet. For **read-only policy access**, `BlueprintDB` uses the
+exact frozen fork base at those keys instead of a uniform mix. Set
+`ALLIN_DBR_BASE_DB` to that base snapshot in both serving and evaluation processes;
+Python callers can alternatively pass `fallback_base_db=...`. The ordinary
+blueprint path remains `ALLIN_BLUEPRINT_DB` (or the evaluator's candidate argument).
+
+The reader verifies the base's SHA256 against the candidate's DBR metadata,
+key format, action menu, abstraction id and fork iteration count, and rejects a
+nonempty base WAL. The source must remain an immutable snapshot throughout use. A future DBR serving
+bundle must ship both the candidate bot DB and its frozen D source. The paired
+opponent DB is for training/resume and is not a serving asset.
+A missing/mismatched base fails policy reads; the API validates at startup and
+reports degraded health. Opponent-role DBR checkpoints cannot supply bot policies.
+Ordinary blueprints retain their existing behavior, even with the variable set.
+
+Only an existing candidate row with an empty/zero average falls back. A candidate
+row with a positive average keeps its own policy. If the base has no positive
+average at that key, the reader returns an untrained key so the normal serving/
+evaluation guards apply. A missing candidate key stays untrained. Strategy records
+identify `strategySource` as `dbr_average` or `frozen_base`; health `dbrPolicy` and
+H2H output record the completion rule and base SHA256. SQL coverage counts remain
+raw: a fallback is not a newly trained average.
+
+This changes neither checkpoint bytes nor regret/average counters. Training and
+resume read the raw tables; do not fill and re-save them as a new training source.
+This fallback does not by itself pin the river safety anchor or human-model prior
+to D: those are separate evaluation/serving choices and still require verification
+before any DBR promotion. No production configuration has been changed.

@@ -134,14 +134,16 @@ Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN
 `docs/V3_BLUEPRINT_PLAN.md` — read the relevant one first.
 - **Status (2026-11-22):** D1.6B is the selected base; E pruning was dropped. The
   V3.13 two-role Rust DBR fork, anonymous fit/holdout exporter and paired checkpoint
-  driver are implemented experimentally; P_max=0 and 0.5 forks both completed 48M
-  iterations with native resume and local API checks. See `docs/V3_BLUEPRINT_PLAN.md`
+  driver are implemented experimentally; the legacy P_max=0 and 0.5 pilots both
+  completed 48M iterations with native resume and local API checks. See `docs/V3_BLUEPRINT_PLAN.md`
   V3.13 for results, follow-up review fixes and rare-tail coverage. New forks
   retain regret-visit counters and reset only averages/their counters plus iteration
   markers (`preserve_regret_clock_v2`, 2026-11-22). Older reset-clock pilots remain
   explicitly legacy. The corrected zero-bias control completed 48M with reduced
-  strategy drift and passing resume/API checks; empty-average coverage and strength
-  gates remain open. Use a new directory when changing fork recipes. Resume reads the
+  strategy drift and passing resume/API checks. Shared frozen-D completion for
+  empty policy averages is implemented; the corrected .5 fork completed 48M in
+  41.1 minutes (3.14 GiB peak), with paired resume/API checks.
+  Strength and deployment gates remain open. Use a new directory when changing fork recipes. Resume reads the
   manifest under the run lock; equivalent numeric defaults remain compatible with
   old pairs. Explicit H2H deal seeds use versioned, separate RNG domains; old
   equal-seed smoke artifacts are retained as superseded wiring checks. Quality gates and final pick are pending;
@@ -550,3 +552,13 @@ Productionization (additive, the interfaces already exist for these):
   `{action: 'bet_custom'|'raise_custom', amountBb}`; the engine stores the raise-to chip total
   in `history` as `bet_custom_<total>`/`raise_custom_<total>` (chip-conservation tests intact),
   and off-grid bets are handled by action translation (see Phase 1a above).
+
+
+DBR policy-read update (2026-11-22): read-only DBR bot lookups now require
+`ALLIN_DBR_BASE_DB` (or `fallback_base_db`) pointing to the exact frozen fork source.
+Empty averages use D; absent/empty D averages remain untrained. Positive candidate
+averages and raw training/resume state are untouched. Serving and evaluation share
+the reader. See DEPLOYMENT_RUNBOOK.md and V3_BLUEPRINT_PLAN.md for guards/provenance.
+The corrected 48M `P_max=0.5` fork completed (41.1 min, 3.14 GiB); resume and
+API/evaluation smoke checks pass. Held-out gain, LBR cost and deployment gates
+remain pending. Run records: `analysis/blueprints_rs/eval_runs/20261122_dbr_fallback/`.

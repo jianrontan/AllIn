@@ -1,4 +1,4 @@
-# v3 blueprint — plan and progress log (D1.6B selected; V3.12 pruning dropped; V3.13 initial DBR implementation and 48M pilots complete; V3.14 quality gates and Phase 7 deployment pending)
+# v3 blueprint — plan and progress log (D1.6B selected; V3.12 pruning dropped; V3.13 DBR implementation and corrected 48M control/.5 pilots complete; V3.14 quality gates and Phase 7 deployment pending)
 
 Branch `rust-core`. Written 2026-11-09 after the BUG-027 investigation.
 Follows [PHASE6_ABSTRACTION_PLAN.md](PHASE6_ABSTRACTION_PLAN.md) (SPR buckets built,
@@ -1219,13 +1219,14 @@ Coverage remains unresolved: **95,837 of 1,449,630 bot keys (6.6%)** and 97,135
 free-opponent keys have empty averages. In the fixed 3,965-key postflop sample,
 240 corrected and 99 legacy keys have no average; 3,696 are common and nonempty.
 The larger empty tail may reflect different visitation; it is not hidden by the
-matched-key TV table. Serving needs a validated treatment (such as frozen-D
-fallback) before promotion; none is enabled by this experiment.
+matched-key TV table. At control completion, serving still needed a validated treatment. The shared
+frozen-D fallback added afterward is recorded in the 2026-11-22 follow-up below.
 
 Verification after the recipe change: **44 Rust unit tests + 93 parity tests +
 640 backend tests pass**, one backend test skipped and the deferred BR walk
-excluded. The `.5` corrected fork has not been started, no held-out quality scores
-were read, and no deployment is performed. Exact results are in the local run's
+excluded. At control completion the `.5` corrected fork had not started; the
+authorized follow-up is recorded below. No held-out quality scores were read
+and no deployment was performed. Exact results are in the local run's
 `comparison.json` and `verification.json`.
 
 ### Evaluation for these arms
@@ -2090,3 +2091,90 @@ Decided 2026-11-15: the base arm is C at 300M (see "V3.10 — done").
 
 Still open:
 - Phase 7 deployment, which needs its own sign-off.
+
+
+### 2026-11-22 — shared DBR empty-average completion and corrected bias fork
+
+The corrected zero-bias control exposed 95,837 stored bot keys without fresh
+average mass (6.6%). Read-only `BlueprintDB` policy access now requires the exact
+frozen fork base via `ALLIN_DBR_BASE_DB` (or `fallback_base_db`) for a DBR bot.
+An existing empty/zero-average row reads D's positive average; a positive DBR
+average stays unchanged. If D has no positive average, or the candidate row is
+missing, it stays untrained and the existing consumer guards apply. Ordinary
+blueprint behavior is unchanged. Serving records and evaluator strategy lookups
+share this implementation; API startup validates it, health/H2H expose provenance.
+Base SHA256, key format, menu, abstraction and source iteration are checked, as is
+the physical base's WAL. Opponent-role policies are rejected. All checkpoints and
+resume state remain raw; coverage reports must distinguish fresh averages from
+D-completed keys. D must remain immutable throughout a run. The river safety
+anchor and held-out human-model prior are separate choices; this does not certify
+DBR safety or human-model gain.
+
+Completed authorized run: one new `P_max=0.5`, strength=10, 48M fork from frozen D1.6B,
+using `preserve_regret_clock_v2`, the same fit-only cache, seed=20261121, 8 workers,
+merge=2000, checkpoint=2.4M, alpha=1.5 and gamma=1 as the corrected zero-bias
+control. No .25/.75 sweep, held-out selection, BR/LBR run or deployment is implied.
+
+**Completed:** 48M iterations in **41.1 minutes**, peak RSS **3.14 GiB**, saved to
+`analysis/blueprints_rs/dbr_20261122_clock_preserved_p05/`. Both role files pass
+SQLite quick checks and native paired resume. All run settings match the corrected
+control except P_max. Sampled root regret counters are **69,720 = 66,720 + 3,000**
+for both roles; fresh-average counters are 3,000. Frozen D and count-cache hashes
+match their recorded inputs. Policy reads leave both the candidate and D unchanged.
+
+| Corrected 48M bot policy | Stored keys | Empty averages (raw) | Completed from D | Still untrained |
+|---|---:|---:|---:|---:|
+| P_max=0 control | 1,449,630 | 95,837 | 93,828 | 2,009 |
+| P_max=.5 | 1,449,644 | 96,901 | 94,880 | 2,021 |
+
+These are counts of stored keys, not reach-weighted hand frequencies. The .5
+free-opponent file has 1,449,635 keys, including 88,221 empty averages; it is a
+training/resume artifact and cannot be served as the bot.
+
+The completed .5 candidate passes local API health, an actual D-completed strategy
+lookup, new-game creation and live/evaluation-player distribution agreement. A
+separate missing-base API check correctly returns 503. An eight-hand candidate-vs-D
+CLI smoke verifies the shared fallback provenance and domain-separated deal RNG;
+its scores are not quality evidence. No held-out model scores, new LBR/BR study,
+parameter sweep or production deployment were performed. Training and its scoped
+keep-awake process have exited.
+
+Exact command, logs, role hashes, sampled clocks and verification are archived in
+`analysis/blueprints_rs/eval_runs/20261122_dbr_fallback/` (`command.json`,
+`verification.json`, per-arm `*-policy.json`, `backend-tests.log`,
+`parity-tests.log`, `rust-tests.log`, `final-verification.log`).
+
+Next quality work: finalize the held-out evaluator's human-action/jam calibration
+(the legacy aggregate caps are not a DBR quality gate), then compare .5 against the
+corrected zero-bias control and D for held-out human-model gain and base-policy/
+limited-attacker cost. Keep the prior and any safety reference explicit. No DBR
+policy is selected for deployment by successful training or these smoke checks.
+
+### Bot status in plain language (2026-11-22)
+
+The selected training base is **D1.6B**. The new work is local to `rust-core`;
+this task has not deployed a new bot or changed the live exploitation experiment.
+
+| Part | What it does | Evidence / remaining work |
+|---|---|---|
+| Card abstraction | Compresses similar poker situations so training is practical. D has all 169 starting-hand classes preflop; postflop it carries 10 coarse starting classes and uses 30 / 24 / 20 potential/strength buckets on flop / turn / river. The flop lookup is exhaustive. | Implemented, trained and checked against the Python reference. Bucketing still merges distinct real situations. |
+| Situation memory and betting | D accounts for stack-to-pot bands, including river SPR, and previous-street aggressors on flop/turn. It trains a selected bet-size menu; human sizes between anchors are translated. | Implemented and tested. D beats C300/C600 and v2 head-to-head. Those matches do not establish optimal play against every human or every bet size. |
+| River solver | Recalculates river play using the actual board, hands/ranges and bet amounts, rather than relying only on a bucket lookup. Its safety mechanism compares against a reference blueprint. | Python/Rust correctness and finite wrong-belief tests pass. Python/CFR+ remains the default; Rust/DCFR is opt-in. Stable production-profile speed and the final combined stack still need validation. A DBR reference is not automatically a safety floor relative to D. |
+| Turn play | Uses the blueprint and serving adjustments. | Real-time turn solving remains shelved after losing tests; it is not active in serving. |
+| Human adaptation | The jam read handles suspicious human shoves; the broader tilt and DBR try to earn more against human tendencies. | Jam-read gates passed after refitting on D. The corrected tilt statistical rerun is deferred. DBR implementation/training integrity checks are not evidence of held-out human gain. |
+| DBR fork | Trains against a blend of a fixed human model and a freely adapting opponent. `P_max=.5` caps the model influence where data supports it; it does not mean half the hands exploit. | Corrected zero-bias control completed. The matching corrected .5 fork completed 48M with resume/API checks; its quality comparison is pending. Empty policy averages now use the validated frozen D source without changing checkpoint/resume state. |
+| LBR | A limited attacking player probes ways to punish the bot. | D has been tested: no resolved difference from C300, and a better point estimate than v2. It is not an all-powerful adversary or proof of unexploitable play. The corrected DBR candidates have not passed this gate. |
+| BR | Intended to measure the strongest possible counter-strategy. | The current board-sampled evaluator lets earlier actions depend on future board cards. Its result is not a valid full-game exploitability score or lower bound. Repair/replacement and adversarial work remain parked. |
+
+Other open decisions/checks: sustained A/F/F_EXTENDED solver comparisons did not
+resolve a strength winner; the menu choice remains deferred (existing A default
+unchanged). The sub-minimum-bet anchor is implemented but OFF; its powered
+statistical checks remain deferred. Final hardening still needs the chosen full
+stack with its human layers on/off, stable serving latency/memory and the release
+asset/model/CI deployment wiring. No universal full-game safety guarantee has been
+established by the finite test suite.
+
+For this change, 653 backend checks, 93 parity checks and 44 native Rust unit tests
+pass (790 total); one backend check is skipped and the slow BR walk is excluded.
+The parity suite retains the existing historical fixture-manifest warning; the
+new fallback regressions and real API checks exercise the current Python reader.

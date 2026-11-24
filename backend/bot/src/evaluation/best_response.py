@@ -374,7 +374,7 @@ class BestResponseEvaluator:
         brs = None if br_streets is None else tuple(sorted(br_streets))
         chunks = [boards[i::workers] for i in range(workers)]
         payloads = [(self.db.db_path, self.menu_mode, self.purify_threshold, ch, brs,
-                     log_gain) for ch in chunks if ch]
+                     log_gain, getattr(self.db, 'policy_fallback_path', None)) for ch in chunks if ch]
         b0 = b1 = 0.0
         gain = {}
         with Pool(processes=workers) as pool:
@@ -457,7 +457,8 @@ class BestResponseEvaluator:
         # Split board indices into `workers` contiguous chunks. Each chunk is one
         # task: (db_path, menu_mode, board_sublist).
         chunks = [boards[i::workers] for i in range(workers)]
-        payloads = [(self.db.db_path, self.menu_mode, ch, self.purify_threshold)
+        payloads = [(self.db.db_path, self.menu_mode, ch, self.purify_threshold,
+                     getattr(self.db, 'policy_fallback_path', None))
                     for ch in chunks if ch]
 
         b0 = b1 = 0.0
@@ -480,9 +481,10 @@ def _br_board_chunk(payload):
     """(db_path, menu_mode, boards) -> (seat0_chip_sum, seat1_chip_sum) over the
     chunk. Builds a fresh evaluator per process; menu_mode is forced so a capped
     blueprint is walked on the capped tree even though the worker re-opens the DB."""
-    db_path, menu_mode, boards, purify_threshold = payload
+    db_path, menu_mode, boards, purify_threshold = payload[:4]
+    fallback = payload[4] if len(payload) > 4 else None
     from ..storage.blueprint_db import BlueprintDB
-    db = BlueprintDB(db_path, read_only=True)
+    db = BlueprintDB(db_path, read_only=True, fallback_base_db=fallback)
     try:
         ev = BestResponseEvaluator(db, menu_mode=menu_mode,
                                    purify_threshold=purify_threshold)
@@ -499,9 +501,10 @@ def _br_board_chunk(payload):
 def _attr_board_chunk(payload):
     """(db_path, menu_mode, purify, boards, br_streets_tuple, log_gain) ->
     (seat0_sum, seat1_sum, gain_dict) for the leak-attribution run."""
-    db_path, menu_mode, purify, boards, brs, log_gain = payload
+    db_path, menu_mode, purify, boards, brs, log_gain = payload[:6]
+    fallback = payload[6] if len(payload) > 6 else None
     from ..storage.blueprint_db import BlueprintDB
-    db = BlueprintDB(db_path, read_only=True)
+    db = BlueprintDB(db_path, read_only=True, fallback_base_db=fallback)
     try:
         ev = BestResponseEvaluator(db, menu_mode=menu_mode, purify_threshold=purify)
         br_streets = None if brs is None else set(brs)

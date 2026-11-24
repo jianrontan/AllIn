@@ -76,6 +76,7 @@ BLUEPRINT_IS_V2 = True
 try:
     _BLUEPRINT_PATH = make_blueprint_source().local_path()
     BLUEPRINT_DB = BlueprintDB(_BLUEPRINT_PATH, read_only=True)
+    BLUEPRINT_DB.validate_policy()  # reject an unbound/mismatched DBR fallback at startup
     from bot.src.cfr.keys import require_key_format, KEY_FORMATS
     require_key_format(BLUEPRINT_DB, KEY_FORMATS, 'the strategy API')
     from bot.src.abstractions.sizing import SERVING_MENU_MODES, require_menu_mode
@@ -580,6 +581,7 @@ def get_strategy():
         "strategy": record["strategy"],
         "legalActions": record["legalActions"],
         "visitCount": record["visitCount"],
+        **({"strategySource": record["strategySource"]} if "strategySource" in record else {}),
     })
 
 
@@ -867,6 +869,7 @@ def strategy_from_hand():
         "strategy": record["strategy"] if record else None,
         "legalActions": record["legalActions"] if record else None,
         "visitCount": record["visitCount"] if record else 0,
+        **({"strategySource": record["strategySource"]} if record and "strategySource" in record else {}),
     })
 
 
@@ -2165,6 +2168,7 @@ def _health_payload():
            {"error": "player store unreachable (see server logs)"}),
         "blueprint": _BLUEPRINT_PATH.name,
         "iterations": BLUEPRINT_DB.get_metadata('total_iterations', 0),
+        "dbrPolicy": BLUEPRINT_DB.policy_provenance(),
         "postflopTables": _postflop_table_status(),
         "sessionStore": type(SESSIONS).__name__,
         "storesOk": stores_ok,

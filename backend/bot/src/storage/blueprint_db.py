@@ -2,11 +2,14 @@
 import sqlite3
 import json
 import threading
+import hashlib
+import os
+from pathlib import Path
 from ..cfr.information_set import InformationSet
 
 
 class BlueprintDB:
-    def __init__(self, db_path, read_only=False):
+    def __init__(self, db_path, read_only=False, *, fallback_base_db=None):
         """
         read_only=True opens the file with SQLite's URI `mode=ro` flag: the
         connection can never write, so it is safe to point at a blueprint while
@@ -22,6 +25,13 @@ class BlueprintDB:
         """
         self.db_path = str(db_path)
         self.read_only = read_only
+        if fallback_base_db is not None and not read_only:
+            raise ValueError("DBR fallback is for read-only policy access only")
+        self._fallback_path = fallback_base_db
+        self._fallback_db = None
+        self._policy_checked = False
+        self._policy_lock = threading.Lock()
+        self._dbr_policy = False
         self._local = threading.local()
         self._all_conns = []
         self._all_conns_lock = threading.Lock()
@@ -163,60 +173,123 @@ class BlueprintDB:
                 meta_rows,
             )
 
-    def get_average_strategy(self, key):
-        """
-        Inference lookup: returns {action: probability} for one info set key,
-        or None if the key was never trained on.
+    def validate_policy(self):
+        """Bind DBR bot reads to their exact frozen fork source, once per handle.
 
-        Normalised over EVERY accumulated action. The stored `legal_actions` is
-        only the first-seen action set and can omit actions a key picked up on
-        later visits (e.g. 'allin' on a short-stack visit) — normalising over it
-        would silently drop those actions from the exported strategy.
+        Set ALLIN_DBR_BASE_DB (or fallback_base_db) for serving AND evaluation.
+        Metadata/raw SQL/resume remain raw; writable training is never affected.
+        Opponent-role tables are checkpoints, not playable bot policies.
         """
-        row = self.conn.execute(
-            "SELECT legal_actions, cumulative_strategy FROM info_sets WHERE key = ?",
-            (key,),
-        ).fetchone()
-        if row is None:
+        if not self.read_only or self._policy_checked:
+            return
+        with self._policy_lock:
+            if self._policy_checked:
+                return
+            role = self.get_metadata('dbr_role')
+            config = self.get_metadata('dbr')
+            if role is None and config is None:
+                self._policy_checked = True
+                return
+            if role != 'bot' or not isinstance(config, dict):
+                raise ValueError('only DBR bot-role checkpoints can supply a policy')
+            path = self._fallback_path or os.environ.get('ALLIN_DBR_BASE_DB')
+            if not path:
+                raise ValueError('DBR policy requires ALLIN_DBR_BASE_DB pointing to the frozen fork base')
+            path = Path(path).resolve(strict=True)
+            wal = Path(str(path) + '-wal')
+            if wal.exists() and wal.stat().st_size:
+                raise ValueError('DBR fallback base must be a quiescent snapshot without a nonempty WAL')
+            hasher = hashlib.sha256()
+            with path.open('rb') as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                    hasher.update(chunk)
+            digest = hasher.hexdigest()
+            if digest != config.get('base_sha256'):
+                raise ValueError('DBR fallback base SHA256 differs from the fork source')
+            base = BlueprintDB(path, read_only=True)
+            try:
+                if base.get_metadata('dbr') is not None or base.get_metadata('dbr_role') is not None:
+                    raise ValueError('DBR fallback base must be an ordinary frozen blueprint')
+                for field, default in [('key_format', 'v2'), ('menu_mode', 'control'),
+                                       ('abstraction_id', None)]:
+                    if base.get_metadata(field, default) != self.get_metadata(field, default):
+                        raise ValueError(f'DBR fallback base {field} mismatch')
+                if base.get_metadata('total_iterations') != self.get_metadata('fork_base_iterations'):
+                    raise ValueError('DBR fallback base iteration mismatch')
+            except Exception:
+                base.close()
+                raise
+            self._fallback_db = base
+            self._dbr_policy = True
+            self._policy_checked = True
+
+    @property
+    def policy_fallback_path(self):
+        """Validated physical source path for evaluation subprocesses."""
+        self.validate_policy()
+        return self._fallback_db.db_path if self._fallback_db is not None else None
+
+    def policy_provenance(self):
+        """Public-safe completion rule; raw average coverage must be measured separately."""
+        self.validate_policy()
+        if not self._dbr_policy:
             return None
+        return {'emptyAverage': 'frozen_base',
+                'baseSha256': self.get_metadata('dbr')['base_sha256'],
+                'unavailableBaseAverage': 'untrained'}
 
-        cumulative_strategy = json.loads(row[1])
-        total = sum(cumulative_strategy.values())
+    @staticmethod
+    def _normalise_average(cumulative):
+        # Use EVERY accumulated action: first-seen legal_actions can omit an
+        # all-in added on a later short-stack visit to the same abstract key.
+        total = sum(cumulative.values())
         if total > 1e-12:
-            return {a: v / total for a, v in cumulative_strategy.items()}
+            return {a: v / total for a, v in cumulative.items()}
+        return None
 
-        # No strategy mass accumulated — fall back to uniform over legal actions.
-        legal_actions = json.loads(row[0])
-        return {a: 1.0 / len(legal_actions) for a in legal_actions}
+    def get_average_strategy(self, key):
+        """Effective policy, shared by serving and evaluation; missing = None.
+
+        DBR empty averages use the validated fork base. Ordinary blueprints keep
+        their historical uniform-on-empty behavior. Training state is untouched.
+        """
+        record = self.get_record(key)
+        return record['strategy'] if record is not None else None
 
     def get_record(self, key):
-        """
-        Inference + UI lookup: full info-set record for one key, or None.
-        Returns the normalised average strategy plus visit metadata.
-        """
+        """Effective policy + candidate visits; DBR records identify its source."""
+        self.validate_policy()
         row = self.conn.execute(
             "SELECT legal_actions, cumulative_strategy, visit_count, "
-            "last_visited_iteration FROM info_sets WHERE key = ?",
-            (key,),
+            "last_visited_iteration FROM info_sets WHERE key = ?", (key,),
         ).fetchone()
         if row is None:
             return None
-
-        legal_actions = json.loads(row[0])
-        cumulative_strategy = json.loads(row[1])
-        # Normalise over every accumulated action (see get_average_strategy).
-        total = sum(cumulative_strategy.values())
-        if total > 1e-12:
-            strategy = {a: v / total for a, v in cumulative_strategy.items()}
-        else:
-            strategy = {a: 1.0 / len(legal_actions) for a in legal_actions}
-
-        return {
+        strategy = self._normalise_average(json.loads(row[1]))
+        source = 'dbr_average'
+        if strategy is None:
+            if self._dbr_policy:
+                base_row = self._fallback_db.conn.execute(
+                    "SELECT cumulative_strategy FROM info_sets WHERE key = ?", (key,),
+                ).fetchone()
+                strategy = self._normalise_average(json.loads(base_row[0])) if base_row else None
+                if strategy is None:
+                    # Newly discovered keys may have no trained D policy. Use
+                    # consumers' existing untrained-key handling, never uniform.
+                    return None
+                source = 'frozen_base'
+            else:
+                actions = json.loads(row[0])
+                strategy = {a: 1.0 / len(actions) for a in actions}
+        record = {
             "strategy": strategy,
             "legalActions": list(strategy.keys()),
             "visitCount": row[2],
             "lastVisitedIteration": row[3],
         }
+        if self._dbr_policy:
+            record['strategySource'] = source
+        return record
 
     def load_all_to_memory(self):
         """
@@ -270,6 +343,8 @@ class BlueprintDB:
             except Exception:
                 pass
         self._local.conn = None
+        if self._fallback_db is not None:
+            self._fallback_db.close()
 
 
 class FrozenBlueprint:

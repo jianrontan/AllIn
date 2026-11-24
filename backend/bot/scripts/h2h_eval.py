@@ -254,6 +254,7 @@ def main():
         fingerprints = (content_sha256(model_base), content_sha256(population_path))
     da = BlueprintDB(args.db_a, read_only=True)
     db = BlueprintDB(model_base if is_model else args.db_b, read_only=True)
+    policy_a, policy_b = da.policy_provenance(), db.policy_provenance()
     mm_a, mm_b = db_menu_mode(da), db_menu_mode(db)
     print(f"A {args.db_a} ({mm_a})\nB {'human population model' if is_model else args.db_b} "
           f"({mm_b})\nhands {args.hands} seed {args.seed}", flush=True)
@@ -279,6 +280,7 @@ def main():
                 jams[e['street']] += 1
     out = dict(a=args.db_a, b=args.db_b, hands=args.hands, seed=args.seed,
                deal_seed=args.deal_seed, deal_rng_scheme=m.deal_rng_scheme,
+               policy_a=policy_a, policy_b=policy_b,
                aivat_mbb=res['aivat_mbb'], aivat_se=res['aivat_stderr_mbb'],
                raw_mbb=res['raw_mbb'], raw_se=res['raw_stderr_mbb'],
                var_reduction=res['var_reduction'], jams_by_street=jams,
