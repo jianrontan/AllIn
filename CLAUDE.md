@@ -558,4 +558,3 @@ Productionization (additive, the interfaces already exist for these):
   `{action: 'bet_custom'|'raise_custom', amountBb}`; the engine stores the raise-to chip total
   in `history` as `bet_custom_<total>`/`raise_custom_<total>` (chip-conservation tests intact),
   and off-grid bets are handled by action translation (see Phase 1a above).
-
