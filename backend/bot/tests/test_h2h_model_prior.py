@@ -61,6 +61,19 @@ def test_cli_rejects_model_prior_for_blueprint_opponent(tmp_path):
 
 
 
+@pytest.mark.parametrize('extra',[[],['--model-dir','x'],['--model-base','x']])
+def test_cli_requires_explicit_held_out_inputs_for_dbr_candidate(tmp_path,extra):
+    candidate=tmp_path/'dbr_bot.db'
+    db=BlueprintDB(str(candidate));db.set_metadata('dbr_role','bot');db.close()
+    result=subprocess.run([sys.executable,str(BOT/'scripts/h2h_eval.py'),
+                           '--db-a',str(candidate),'--db-b','model',*extra,
+                           '--out',str(tmp_path/'out.json')],
+                          capture_output=True,text=True,timeout=30)
+    assert result.returncode==2
+    assert 'needs explicit --model-base' in result.stderr
+    assert not (tmp_path/'out.json').exists()
+
+
 @pytest.mark.parametrize('change',[None,'counts','prior_wal'])
 @pytest.mark.parametrize('symlink_prior',[False,True])
 def test_cli_binds_frozen_prior_and_discards_changed_inputs(tmp_path,monkeypatch,change,symlink_prior):

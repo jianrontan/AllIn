@@ -303,14 +303,266 @@ mod tests {
         std::fs::remove_dir_all(folder).unwrap();
     }
 
+    // ---- Traversal oracles (2026-11-25 review). They run the real trainer on a
+    // tiny card abstraction and take subtree values from a paired P_max=0 run,
+    // so they check the restricted-node maths without a toy-game refactor.
+    use super::super::parallel::{train_parallel, train_single};
+    use super::super::table::unpack_key;
+    use super::super::{Abstraction, Schedule, Trainer};
+    struct Abs;
+    impl Abstraction for Abs {
+        fn preflop_fine(&self, h: [u8; 2]) -> u8 {
+            h[0]
+        }
+        fn coarse(&self, _: u8) -> u8 {
+            0
+        }
+        fn postflop(&self, _: [u8; 2], _: &[u8]) -> Result<u16, String> {
+            Ok(0)
+        }
+        fn rank(&self, c: &[u8]) -> i32 {
+            c[0] as i32
+        }
+    }
+    fn plain() -> Trainer {
+        let mut t = Trainer::new("capped_pj", Schedule::default()).unwrap();
+        t.key_format = crate::keys::KeyFormat::Spr5a;
+        t
+    }
+    fn forked_table() -> super::super::trainer::Table {
+        let mut base = plain();
+        train_single(&mut base, &Abs, 200, 0, 5).unwrap();
+        let mut table = base.table.clone();
+        reset_fork(&mut table);
+        table
+    }
+    fn dbr_trainer(
+        table: &super::super::trainer::Table,
+        rows: FxHashMap<u64, ModelRow>,
+        p: f64,
+    ) -> Trainer {
+        let mut t = plain();
+        t.table = table.clone();
+        t.opponent_table = table.clone();
+        let model = DbrModel {
+            rows,
+            metadata: json!({}),
+            digest: "t".into(),
+        };
+        t.dbr = Some(DbrConfig::new(Arc::new(model), p, 10.0).unwrap());
+        t
+    }
+
     #[test]
-    fn free_regret_uses_free_baseline_and_mixture_value_passes_up() {
-        // Free=(1,0), fixed=(0,1), q=.25, utilities=(0,10).
-        // Mixed value2.5; changing the free policy gains7.5, not5.625.
-        let free_value = 0.0;
-        let mixed_value = 2.5;
-        assert_eq!(free_increment(10.0, free_value, 0.25), 7.5);
-        assert_ne!((1.0 - 0.25) * (10.0 - mixed_value), 7.5);
+    fn restricted_root_update_matches_closed_form() {
+        // Iteration 2: bot_seat=1, updater=0, so the SB root is restricted AND updating.
+        let it = 2;
+        let mut table = forked_table();
+        let mut probe = dbr_trainer(&table, FxHashMap::default(), 0.0);
+        train_single(&mut probe, &Abs, 1, it, 711).unwrap();
+        let root = *probe
+            .opponent_dirty
+            .iter()
+            .find(|k| {
+                let p = unpack_key(**k);
+                p.seat == 0 && p.street == 0 && p.pattern.len == 0
+            })
+            .unwrap();
+        let legal_set = probe.opponent_table[&root].legal;
+        let legal: Vec<u8> = legal_set.ids().to_vec();
+        {
+            // Uniform free policy, no flooring, no decay.
+            let is = table.entry(root).or_default();
+            is.legal = legal_set;
+            is.visit_count = 0;
+            for &a in &legal {
+                is.regrets.set(a, 1e6).unwrap();
+            }
+        }
+        let rows = || {
+            let mut c = ActMap::default();
+            c.set(b'f', 6.0).unwrap();
+            c.set(b'c', 4.0).unwrap();
+            FxHashMap::from_iter([(root, ModelRow { counts: c, n: 10.0 })])
+        };
+        let mut d0 = dbr_trainer(&table, rows(), 0.0);
+        let mut dp = dbr_trainer(&table, rows(), 0.8);
+        train_single(&mut d0, &Abs, 1, it, 711).unwrap();
+        train_single(&mut dp, &Abs, 1, it, 711).unwrap();
+        let q = 0.8 * 10.0 / (10.0 + 10.0);
+        let na = legal.len() as f64;
+        let (fold, call) = (
+            action_id(crate::engine::Action::Fold).unwrap(),
+            action_id(crate::engine::Action::Call).unwrap(),
+        );
+        let mut expect_ev = 0.0;
+        for &a in &legal {
+            // At P_max=0 the increment is v_a - v_free, and v_free is the root value.
+            let r0 = d0.opponent_table[&root].regrets.get(a).unwrap() - 1e6;
+            let rp = dp.opponent_table[&root].regrets.get(a).unwrap() - 1e6;
+            // Free regret is (1-q)(v_a - v_free): the FREE baseline, not the mixed one.
+            assert!(
+                (rp - (1.0 - q) * r0).abs() < 1e-6,
+                "regret {a}: {rp} vs {}",
+                (1.0 - q) * r0
+            );
+            let v = r0 + d0.ev_sum;
+            let fixed = if a == fold {
+                0.6
+            } else if a == call {
+                0.4
+            } else {
+                0.0
+            };
+            expect_ev += ((1.0 - q) / na + q * fixed) * v;
+        }
+        // The MIXED value passes up (to the root's EV here).
+        assert!(
+            (dp.ev_sum - expect_ev).abs() < 1e-6,
+            "ev {} vs {expect_ev}",
+            dp.ev_sum
+        );
+        // The bot role is untouched by restricted updates.
+        assert_eq!(dp.table, d0.table);
+    }
+
+    #[test]
+    fn non_updating_restricted_node_samples_the_mixture_and_averages_the_free_policy() {
+        // Iteration 3: bot_seat=1, updater=1, so the SB root is restricted, not updating.
+        let it = 3;
+        let table = forked_table();
+        let mut bot_changed_without_model = false;
+        for seed in 900..908 {
+            // Each seed deals a different SB hand, hence a different SB root key.
+            let mut probe = dbr_trainer(&table, FxHashMap::default(), 0.0);
+            train_single(&mut probe, &Abs, 1, it, seed).unwrap();
+            let root = *probe
+                .opponent_dirty
+                .iter()
+                .find(|k| {
+                    let p = unpack_key(**k);
+                    p.seat == 0 && p.street == 0 && p.pattern.len == 0
+                })
+                .unwrap();
+            // All observed mass on fold with q ~ 1: the sampled SB action is a fold,
+            // so the updating BB (bot) never acts and its table cannot change.
+            let rows = || {
+                let mut c = ActMap::default();
+                c.set(b'f', 1e9).unwrap();
+                FxHashMap::from_iter([(root, ModelRow { counts: c, n: 1e9 })])
+            };
+            let mut m = dbr_trainer(&table, rows(), 1.0);
+            m.dbr.as_mut().unwrap().strength = 1e-9;
+            let mut f = dbr_trainer(&table, rows(), 0.0);
+            train_single(&mut m, &Abs, 1, it, seed).unwrap();
+            train_single(&mut f, &Abs, 1, it, seed).unwrap();
+            assert!(
+                m.table == table,
+                "sampling ignored the model mixture (seed {seed})"
+            );
+            // The opponent's average accumulates the FREE policy in both runs.
+            assert_eq!(
+                m.opponent_table[&root].strategy,
+                f.opponent_table[&root].strategy
+            );
+            bot_changed_without_model |= f.table != table;
+        }
+        assert!(
+            bot_changed_without_model,
+            "the free policy never let the BB act"
+        );
+    }
+
+    #[test]
+    fn pmax0_dbr_equals_ordinary_training_on_each_role_pairing() {
+        // Bot seat 0 + opponent seat 1 train on iterations = 0,1 (mod 4);
+        // bot seat 1 + opponent seat 0 on iterations = 2,3 (mod 4).
+        let table = forked_table();
+        let mut d = dbr_trainer(&table, FxHashMap::default(), 0.0);
+        let n = 400i64;
+        train_single(&mut d, &Abs, n as u64, 0, 711).unwrap();
+        let (mut a, mut b) = (plain(), plain());
+        a.table = table.clone();
+        b.table = table.clone();
+        for it in 0..n {
+            let t = if it.rem_euclid(4) < 2 { &mut a } else { &mut b };
+            train_single(t, &Abs, 1, it, 711).unwrap();
+        }
+        let seat = |t: &super::super::trainer::Table, s: u8| {
+            let mut v: Vec<_> = t
+                .iter()
+                .filter(|(k, _)| unpack_key(**k).seat == s)
+                .map(|(k, x)| (*k, *x))
+                .collect();
+            v.sort_by_key(|x| x.0);
+            v
+        };
+        assert_eq!(seat(&d.table, 0), seat(&a.table, 0));
+        assert_eq!(seat(&d.opponent_table, 1), seat(&a.table, 1));
+        assert_eq!(seat(&d.table, 1), seat(&b.table, 1));
+        assert_eq!(seat(&d.opponent_table, 0), seat(&b.table, 0));
+        assert_ne!(seat(&d.table, 0), seat(&table, 0));
+    }
+
+    #[test]
+    fn parallel_merges_and_checkpoints_the_opponent_table() {
+        let table = forked_table();
+        let mut t = dbr_trainer(&table, FxHashMap::default(), 0.0);
+        train_parallel(&mut t, &Abs, 64, 0, 2, 8, 711, |_, _| true).unwrap();
+        let changed: Vec<u64> = t
+            .opponent_table
+            .iter()
+            .filter(|(k, v)| table.get(k) != Some(v))
+            .map(|(k, _)| *k)
+            .collect();
+        assert!(!changed.is_empty(), "opponent merge was dropped");
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let folder =
+            std::env::temp_dir().join(format!("allin-dbr-par-{}-{stamp}", std::process::id()));
+        std::fs::create_dir(&folder).unwrap();
+        let (bp, op) = (folder.join("bot.db"), folder.join("opponent.db"));
+        {
+            let mut bot = super::super::db::BlueprintDb::open(bp.to_str().unwrap()).unwrap();
+            let mut opp = super::super::db::BlueprintDb::open(op.to_str().unwrap()).unwrap();
+            t.checkpoint_dbr(&mut bot, &mut opp, 63, "g", &json!({}))
+                .unwrap();
+        }
+        let opp = super::super::db::BlueprintDb::open_read_only(op.to_str().unwrap()).unwrap();
+        let saved = opp.load_all().unwrap();
+        for k in &changed {
+            // Every merged opponent update reached the checkpoint (dirty tracking).
+            let (s, m) = (&saved[k], &t.opponent_table[k]);
+            assert_eq!(
+                (s.regrets, s.strategy, s.visit_count),
+                (m.regrets, m.strategy, m.visit_count)
+            );
+        }
+        drop(opp);
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn dbr_rejects_pruning() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let folder =
+            std::env::temp_dir().join(format!("allin-dbr-prune-{}-{stamp}", std::process::id()));
+        std::fs::create_dir(&folder).unwrap();
+        let path = folder.join("x.db");
+        drop(super::super::db::BlueprintDb::open(path.to_str().unwrap()).unwrap());
+        let db = super::super::db::BlueprintDb::open_read_only(path.to_str().unwrap()).unwrap();
+        let (_, cfg) = config();
+        let mut t = plain();
+        t.pruning = Some(super::super::pruning::PruneConfig::new(0.01, 100.0, 0.95).unwrap());
+        assert!(t.fork_dbr(&db, cfg.model.clone(), 0.5, 10.0).is_err());
+        assert!(t.resume_dbr(&db, &db, cfg, &json!({})).is_err());
+        drop(db);
+        std::fs::remove_dir_all(folder).unwrap();
     }
 }
 

@@ -537,6 +537,13 @@ impl PyTrainer {
         if start_iteration < 0 {
             return Err(err("start_iteration must be >= 0".into()));
         }
+        // A DBR fork keeps D's per-merge-round regret counters; the serial path's
+        // per-iteration discount would rescale them away (BUG-035).
+        if self.inner.dbr.is_some() && workers < 2 {
+            return Err(err(
+                "DBR training requires workers >= 2 (parallel merge discounting)".into(),
+            ));
+        }
         let abs = self
             .abs
             .clone()

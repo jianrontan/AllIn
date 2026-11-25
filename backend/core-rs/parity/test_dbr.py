@@ -160,6 +160,16 @@ def test_training_callback_can_request_a_clean_stop(base_and_cache,tmp_path):
     assert state['bot']['info_sets']>0 and state['opponent']['info_sets']>0
 
 
+def test_dbr_training_rejects_serial_worker(base_and_cache):
+    # BUG-035: the serial path's per-iteration discount would rescale D's kept
+    # per-merge-round regret counters away.
+    from src.abstractions.abstraction_set import resolve_abstraction_dir
+    base,cache=base_and_cache;t=fork(base,cache)
+    b=BlueprintDB(str(base),read_only=True);adir=resolve_abstraction_dir(b);b.close()
+    t.load_abstraction(str(adir),1000)
+    with pytest.raises(Exception,match='workers >= 2'):t.train(16,0,711,workers=1)
+
+
 def test_pair_hash_detects_database_corruption(base_and_cache,tmp_path):
     base,cache=base_and_cache;t=fork(base,cache)
     state=publish(t,tmp_path/'run',0,{'seed':711})

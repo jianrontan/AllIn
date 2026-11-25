@@ -132,28 +132,29 @@ python tests/run_evaluation.py --db analysis/blueprints/blueprint_20260518_16090
 ### Branch rust-core (Rust core + v3 blueprint work; not on main yet)
 Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN.md`,
 `docs/V3_BLUEPRINT_PLAN.md` — read the relevant one first.
-- **Status (2026-11-22):** D1.6B is the selected base; E pruning was dropped. The
-  V3.13 two-role Rust DBR fork, anonymous fit/holdout exporter and paired checkpoint
-  driver are implemented experimentally; the legacy P_max=0 and 0.5 pilots both
-  completed 48M iterations with native resume and local API checks. See `docs/V3_BLUEPRINT_PLAN.md`
-  V3.13 for results, follow-up review fixes and rare-tail coverage. New forks
-  retain regret-visit counters and reset only averages/their counters plus iteration
-  markers (`preserve_regret_clock_v2`, 2026-11-22). Older reset-clock pilots remain
-  explicitly legacy. The corrected zero-bias control completed 48M with reduced
-  strategy drift and passing resume/API checks. Shared frozen-D completion for
-  empty policy averages is implemented; the corrected .5 fork completed 48M in
-  41.1 minutes (3.14 GiB peak), with paired resume/API checks.
-  Strength and deployment gates remain open. Use a new directory when changing fork recipes. Resume reads the
-  manifest under the run lock; equivalent numeric defaults remain compatible with
-  old pairs. Explicit H2H deal seeds use versioned, separate RNG domains; old
-  equal-seed smoke artifacts are retained as superseded wiring checks. Quality gates and final pick are pending;
-  the corrected tilt rerun remains deferred. Phase 7 deploy requires separate sign-off.
+- **Status (2026-11-25):** D1.6B selected; V3.13 DBR built, with corrected 48M P_max=0
+  control and P_max=0.5 forks (2026-11-22); next = the revised order A–H in
+  `docs/V3_BLUEPRINT_PLAN.md` ("Revised order after the 2026-11-25 review"). E pruning
+  was dropped (2026-11-17). Older reset-clock pilots (2026-11-21) are legacy (BUG-034);
+  new forks keep regret-visit counters and reset only averages (`preserve_regret_clock_v2`).
+  Use a new run directory when changing fork recipes. No DBR policy is selected; the
+  corrected tilt rerun is deferred; Phase 7 deploy requires separate sign-off.
+- **DBR (V3.13):** `backend/bot/scripts/export_dbr_counts.py` (anonymous fit/holdout counts)
+  and `backend/bot/scripts/train_dbr.py` (two-role fork from a frozen D snapshot, paired
+  checkpoints, `--workers` ≥ 2). Runs live in `backend/bot/analysis/blueprints_rs/dbr_*`
+  (git-ignored); their records in `analysis/blueprints_rs/eval_runs/2026112*_dbr*/`
+  (corrected forks: `dbr_20261122_clock_preserved_p00` / `_p05`; `dbr_20261121_*` are
+  legacy). A DBR bot DB needs `ALLIN_DBR_BASE_DB` set to its frozen D snapshot for any read (serving, `h2h_eval.py`,
+  LBR/BR), else reads fail. An empty-average candidate row reads exactly what D serves at that
+  key; checkpoints and resume state stay raw. Only `bot.db` can be a policy; `opponent.db`
+  is training state. Details: `docs/DEPLOYMENT_RUNBOOK.md` ("DBR checkpoint policy completion").
 - **Environment:** a uv `.venv` (Python 3.12) at the worktree root; run Python as
   `../../.venv/bin/python` from `backend/bot/`. Rust is Homebrew rustup (keg-only):
   `env PATH=/opt/homebrew/opt/rustup/bin:/opt/homebrew/bin:/usr/bin:/bin cargo test --release`
   from `backend/core-rs/`; rebuild the PyO3 module `allin_core` with `maturin develop --release`.
 - **Rust trainer:** `backend/core-rs` (engine, keys, buckets, MCCFR, parallel merge), driven by
-  `scripts/train_rust.py` (~50k it/s on 12 cores; writes `analysis/blueprints_rs/`, snapshots
+  `scripts/train_rust.py` (~50k it/s on 12 cores for the spr5 table (C); spr5a (D) measured
+  ~30k it/s; DBR forks ~20k it/s, 48M in ~40 min on 8 workers; writes `analysis/blueprints_rs/`, snapshots
   with `--snapshot-every`). Python stays the oracle: a component is done only when
   `backend/core-rs/parity/` passes against fixtures from `scripts/export_rust_fixtures.py`.
 - **spr5 keys** (`--key-format spr5`): flop/turn keys carry the street-start SPR bucket,
@@ -195,9 +196,13 @@ Plans and progress logs: `docs/RUST_CORE_PLAN.md`, `docs/PHASE6_ABSTRACTION_PLAN
 - **Evaluation scripts** (`backend/bot/scripts/`): `h2h_eval.py` (AIVAT head-to-head; plays an
   untrained faced jam with prod's guard; `--db-b model --model-base <frozen-D.db>`
   binds the human-model prior across candidates and records input hashes. An explicit
-  shared `--deal-seed` makes dealt cards identical across policies; default seeds keep
-  historical behaviour. Without
-  `--model-base` it retains the legacy v2 prior. Jam-rate assumptions still need
+  shared `--deal-seed` makes dealt cards identical across policies, from an RNG domain
+  separate from action sampling (output records `deal_rng_scheme` = `domain-separated-v1`,
+  or `legacy-shared` when omitted); identical deals alone do not give a paired SE. An explicit
+  prior also selects its action menu, and a run is discarded if the prior or count hashes
+  change. Default seeds keep historical behaviour. Without
+  `--model-base` it retains the legacy v2 prior, except that when either side is a DBR bot
+  `--db-b model` requires explicit `--model-base` and `--model-dir` (2026-11-25). Jam-rate assumptions still need
   validation before using this as the held-out DBR quality gate. `--model-dir` selects
   the population counts; `--jam-read-a` re-scores A's faced jams with a jam read), `lbr_paired.py` (per-hand LBR for paired comparisons), `br_attr.py` (BR with
   per-street gain attribution), `bug027_replay.py` (the BUG-027 hand through any blueprint).
@@ -364,13 +369,14 @@ Leaderboard / accounts:
 - `POST /api/player` — set the caller's unique username; rate-limited (10/min/player + 30/min/IP → 429).
 - `POST /api/auth/google` — verify a Cognito Google ID token, resolve the canonical account; rate-limited (20/min/IP → 429); generic 401 on bad token (reason logged server-side).
 
-Health: `GET /api/test` (alias `GET /api/healthz`) — returns 200 with `{status:"ok", blueprint, iterations, postflopTables, sessionStore, debugOverlay, riverGadget, purify, exploit, commit}` when healthy (`exploit` = `{players, delta}` when `ALLIN_EXPLOIT=1`, else null); **503 with `{status:"degraded", error}`** when the blueprint failed to load at import (a `before_request` guard then 503s every other endpoint while degraded).
+Health: `GET /api/test` (alias `GET /api/healthz`) — returns 200 with `{status:"ok", blueprint, iterations, dbrPolicy, postflopTables, sessionStore, storesOk, debugOverlay, riverGadget, riverBackend, riverAlgorithm, riverMenu, subminimumAnchor, purify, exploit, jamRead, commit}` when healthy (`exploit` = `{players, delta}` when a human model is loaded (`ALLIN_EXPLOIT=1`), else `false`; `jamRead` = `{jams}` when a jam read is loaded, else `false`; `dbrPolicy` = the DBR empty-average completion rule + frozen base hash for a DBR bot, else null; field names from `_health_payload` in `strategy_api.py`); **503 with `{status:"degraded", error}`** when the blueprint failed to load at import (a `before_request` guard then 503s every other endpoint while degraded), and also 503 `degraded` (with `storesOk: false`) when the player store has failed its consecutive probes.
 
 ### Environment Variables
 
 The full, authoritative list is in [docs/DEPLOYMENT_RUNBOOK.md](docs/DEPLOYMENT_RUNBOOK.md) ("Environment variables"). The essentials:
 - `ALLIN_BLUEPRINT_DB` — explicit path to the blueprint DB (overrides auto-resolution).
 - `ALLIN_BLUEPRINT_SOURCE` — `local` (default) | `s3`; `ALLIN_BLUEPRINT_S3_URI` paired with the latter.
+- `ALLIN_DBR_BASE_DB` — (branch rust-core, V3.13) path to the exact frozen D snapshot a DBR bot DB was forked from. Required for ANY read of a DBR bot DB (serving, `h2h_eval.py`, LBR/BR), else the read fails (the API 503s). Ignored for ordinary blueprints. See the runbook's DBR section.
 - `ALLIN_BOT_VERSION` — explicit bot-version tag (e.g. `v1`/`v2`) stamped on every hand recap AND keyed into the LIVE global per-version counters that drive the +EV card's v1/v2 numbers (`GlobalStats` `vh_<v>`/`vn_<v>`). **When unset, the version bucket is derived from the blueprint NAME (v1/v2) — never the build SHA** (a SHA would mint unbounded per-version counters on the global row → a 400KB-item leak, and mis-bucket the card). Set it coarse (`v1`/`v2`) per deploy. The build SHA stays in `ALLIN_GIT_SHA`/healthz for forensics.
 - `ALLIN_CORS_ORIGINS` — comma-separated allowed CORS origins (defaults to `localhost:5173`/`5174`).
 - `ALLIN_SESSION_STORE` / `ALLIN_STORE_BACKEND` — `memory` (default) | `dynamodb` for sessions / leaderboard stores. Entrypoint picks 1 worker if either is memory, 2 if both DynamoDB.
@@ -553,12 +559,3 @@ Productionization (additive, the interfaces already exist for these):
   in `history` as `bet_custom_<total>`/`raise_custom_<total>` (chip-conservation tests intact),
   and off-grid bets are handled by action translation (see Phase 1a above).
 
-
-DBR policy-read update (2026-11-22): read-only DBR bot lookups now require
-`ALLIN_DBR_BASE_DB` (or `fallback_base_db`) pointing to the exact frozen fork source.
-Empty averages use D; absent/empty D averages remain untrained. Positive candidate
-averages and raw training/resume state are untouched. Serving and evaluation share
-the reader. See DEPLOYMENT_RUNBOOK.md and V3_BLUEPRINT_PLAN.md for guards/provenance.
-The corrected 48M `P_max=0.5` fork completed (41.1 min, 3.14 GiB); resume and
-API/evaluation smoke checks pass. Held-out gain, LBR cost and deployment gates
-remain pending. Run records: `analysis/blueprints_rs/eval_runs/20261122_dbr_fallback/`.

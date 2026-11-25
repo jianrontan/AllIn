@@ -53,9 +53,14 @@ def test_effective_serving_and_evaluation_policy_and_raw_state(pair):
             assert record['strategy']==db.get_average_strategy(key)==frozen.get_average_strategy(key)==want
             assert record['visitCount']==23
             assert record['strategySource']==('dbr_average' if key=='trained' else 'frozen_base')
-        # No D policy: ordinary consumers' untrained guards apply. A missing
-        # candidate row is not completed, even when D has that row.
-        for key in ('new','base_empty','missing'):
+        # D has the key but no average: serve what D serves there (its uniform),
+        # so the DBR bot and D agree at every key D stores.
+        record=db.get_record('base_empty')
+        assert record['strategy']==db.get_average_strategy('base_empty')=={'fold':.5,'call':.5}
+        assert record['strategySource']=='frozen_base'
+        # D never stored the key, or the candidate lacks it: untrained guards apply.
+        # A missing candidate row is not completed, even when D has that row.
+        for key in ('new','missing'):
             assert db.get_record(key) is None
             assert db.get_average_strategy(key) is None
         assert json.loads(db.conn.execute("SELECT cumulative_strategy FROM info_sets WHERE key='empty'").fetchone()[0])=={}

@@ -36,6 +36,9 @@ Run from backend/bot/:
     python scripts/h2h_eval.py --db-a A.db --db-b {B.db|model} --hands 40000 --seed 101 --out x.json
     # Explicit prior for newer-key model harness checks (jam caps still need validation):
     python scripts/h2h_eval.py --db-a A.db --db-b model --model-base frozen_D.db --model-dir fit_models --out x.json
+    # Paired arms: pass the same --deal-seed to every arm so they see identical cards.
+    # A DBR bot DB (--db-a or --db-b) needs ALLIN_DBR_BASE_DB=<its frozen D snapshot>;
+    # a DBR --db-a vs model also needs explicit --model-base and --model-dir.
 """
 import argparse
 import hashlib
@@ -224,8 +227,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     p.add_argument('--db-a', required=True)
     p.add_argument('--db-b', required=True, help="blueprint path, or 'model'")
-    p.add_argument('--model-dir', default=os.path.join(_BOT, 'analysis', 'opponent_models'),
-                   help='fitted opponent models (model_population.json)')
+    p.add_argument('--model-dir', default=None,
+                   help='fitted opponent models (model_population.json); default analysis/opponent_models, '
+                        'required explicitly when --db-a is a DBR bot')
     p.add_argument('--model-base', default=None,
                    help='frozen human-model blueprint prior, shared by every candidate (default: legacy v2)')
     p.add_argument('--hands', type=int, default=40000)
@@ -236,10 +240,23 @@ def main():
     p.add_argument('--jam-read-a', default=None,
                    help="a fitted jam read for --db-a: re-score A's faced flop/turn jams with it")
     args = p.parse_args()
+    model_dir_explicit = args.model_dir is not None
+    if not model_dir_explicit:
+        args.model_dir = os.path.join(_BOT, 'analysis', 'opponent_models')
 
     is_model = args.db_b == 'model'
     if args.model_base and not is_model:
         p.error('--model-base requires --db-b model')
+    if is_model and not (args.model_base and model_dir_explicit):
+        # A DBR candidate scored against a silent v2 prior / full population would
+        # be in-sample and mis-anchored; make the held-out inputs explicit.
+        probe = BlueprintDB(args.db_a, read_only=True)
+        try:
+            is_dbr = probe.get_metadata('dbr_role') is not None
+        finally:
+            probe.close()
+        if is_dbr:
+            p.error('a DBR --db-a vs model needs explicit --model-base (frozen D) and --model-dir')
     # SQLite resolves database-file symlinks before choosing its WAL filename.
     # Pin that physical file for the entire run and check its actual sidecar.
     model_base = os.path.realpath(args.model_base or V2)

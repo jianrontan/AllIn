@@ -236,7 +236,8 @@ class BlueprintDB:
             return None
         return {'emptyAverage': 'frozen_base',
                 'baseSha256': self.get_metadata('dbr')['base_sha256'],
-                'unavailableBaseAverage': 'untrained'}
+                'emptyBaseAverage': 'base_uniform',
+                'missingBaseKey': 'untrained'}
 
     @staticmethod
     def _normalise_average(cumulative):
@@ -269,13 +270,12 @@ class BlueprintDB:
         source = 'dbr_average'
         if strategy is None:
             if self._dbr_policy:
-                base_row = self._fallback_db.conn.execute(
-                    "SELECT cumulative_strategy FROM info_sets WHERE key = ?", (key,),
-                ).fetchone()
-                strategy = self._normalise_average(json.loads(base_row[0])) if base_row else None
+                # Serve exactly what D serves here (its average, or its own
+                # uniform-on-empty), so DBR and D agree wherever D has the key and
+                # candidate-vs-D comparisons don't credit that difference to DBR.
+                # A key D never stored stays untrained (consumers' guards apply).
+                strategy = self._fallback_db.get_average_strategy(key)
                 if strategy is None:
-                    # Newly discovered keys may have no trained D policy. Use
-                    # consumers' existing untrained-key handling, never uniform.
                     return None
                 source = 'frozen_base'
             else:

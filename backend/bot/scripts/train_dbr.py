@@ -178,6 +178,9 @@ def main():
     a.base=str(Path(a.base).resolve())
     if min(a.iterations,a.workers,a.merge_every,a.checkpoint_every)<1 or a.seed<0 or a.seed>=2**64:
         ap.error('positive iteration/worker/chunk counts and u64 seed required')
+    if a.workers<2:
+        # D's kept regret counters are per merge round; the serial path discounts per iteration (BUG-035).
+        ap.error('DBR training requires --workers >= 2')
     if not 0<=a.p_max<=1 or not math.isfinite(a.strength) or a.strength<=0:
         ap.error('p-max in [0,1] and positive finite strength required')
     if not math.isfinite(a.checkpoint_reserve) or a.checkpoint_reserve<0 or not math.isfinite(a.max_rss_gib) or a.max_rss_gib<=0:

@@ -10,6 +10,48 @@ wasn't caught earlier, retrain impact, and lessons. Append new bugs at the top.
 
 ---
 
+## BUG-035 — `train_dbr.py --workers 1` would rescale D's regrets with the wrong clock
+
+- **Date:** 2026-11-25 · **Area:** DBR training (`scripts/train_dbr.py`, Rust native
+  binding) · **Severity:** high if used (silently re-creates BUG-034); no recorded run
+  used it · **Status:** fix in progress (being made in code by another session, 2026-11-25)
+- **Summary:** with `--workers 1` the driver routed to `train_single`, whose discount
+  clock counts iterations. D's regret-visit counters count merge rounds (parallel
+  training). Mixing the two clocks would discount D's retained regrets as if D were
+  barely trained.
+- **Walkthrough:** at a common SB root D has 66,720 merge-round visits; a single-worker
+  fork at 12M iterations would discount by about `(66,720 / 12M)^1.5 ≈ 0.002`, so D's
+  warm start is mostly lost, as in BUG-034.
+- **Fix:** DBR training requires `--workers` ≥ 2; guarded in `train_dbr.py` and in the
+  native binding.
+- **Lesson:** a warm start is only as good as the clock that discounts it; any code path
+  that resumes or forks a table must use the same clock the table was trained under.
+
+## BUG-034 — DBR fork reset regret-visit counters, discarding D's warm start
+
+- **Date:** 2026-11-21 (found in review; fixed 2026-11-22) · **Area:** DBR fork
+  (`core-rs` fork path, `scripts/train_dbr.py`) · **Severity:** high (the 2026-11-21
+  48M pilots trained from an effectively cold regret table) · **Status:** fixed in
+  `8c44604`
+- **Summary:** the fork kept D's regret values but set `visit_count=0`. `merge_round`'s
+  Linear-CFR discount `((t-1)/t)^1.5` uses that counter, so the decay restarted and
+  wiped out D's retained regrets.
+- **Walkthrough:** at common SB roots D has 66,720 regret visits. After 3,000 merge rounds
+  of the 48M fork, the retained coefficient is `3000^-1.5 ≈ 6e-6`. Keeping D's counter
+  gives `(66,720 / 69,720)^1.5 ≈ 0.936`.
+- **Symptom:** the P_max=0 control (no model, so it should stay close to D) drifted
+  TV 0.29 preflop / 0.23 postflop from D's average (plan breakdown: 0.396 SB roots,
+  0.304 other preflop, 0.233 postflop), further than D's own 100M snapshot (0.20 / 0.16).
+- **Fix:** keep the regret-visit counters; reset only the averages, their counters,
+  the last-seen iteration markers and EV counters. Recipe stamped
+  `preserve_regret_clock_v2`; old pairs stay readable as `reset_all_clocks_v1`. A Rust
+  regression runs the real merge path. Corrected control TV from D: 0.13 / 0.07 / 0.09
+  (SB roots / other preflop / postflop).
+- **Why missed:** the design said "fresh averages" and the counters looked like
+  bookkeeping; the 48M pilots passed every functional check (resume, API, integrity).
+- **Lesson:** a warm-start fork must keep the clock that discounts what it keeps; check a
+  P_max=0 control's distance from its base before reading any biased fork.
+
 ## BUG-033 — The offline exploit scoreboard played v2 keys against a v3 blueprint
 
 - **Date:** 2026-11-20 · **Area:** evaluation (`scripts/measure_exploit.py`) ·

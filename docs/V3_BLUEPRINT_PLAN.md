@@ -1,4 +1,4 @@
-# v3 blueprint — plan and progress log (D1.6B selected; V3.12 pruning dropped; V3.13 DBR implementation and corrected 48M control/.5 pilots complete; V3.14 quality gates and Phase 7 deployment pending)
+# v3 blueprint — plan and progress log (D1.6B selected; V3.12 pruning dropped; V3.13 DBR built with corrected 48M control/.5 forks; next = revised order A–H (2026-11-25); Phase 7 deployment pending)
 
 Branch `rust-core`. Written 2026-11-09 after the BUG-027 investigation.
 Follows [PHASE6_ABSTRACTION_PLAN.md](PHASE6_ABSTRACTION_PLAN.md) (SPR buckets built,
@@ -604,9 +604,9 @@ speed.
 | Arm | What | Compared with | Answers |
 |---|---|---|---|
 | **D** (first) | C + the V3.16 keys, trained from scratch | C300 first (interim), then C-long at matching snapshots | Do the new keys help? |
-| **C-long** (later, when there is time) | C300 resumed (same config, same keys) to D's iteration count | — (the control) | Is D's gain just more training? C was still improving at 300M (vs v2 +233 → +381 from 150M to 300M), so C-long is also a ship candidate. |
+| **C-long** (staged to 600M (2026-11-19); not continued) | C300 resumed (same config, same keys) to D's iteration count | — (the control) | Is D's gain just more training? C was still improving at 300M (vs v2 +233 → +381 from 150M to 300M), so C-long was also a ship candidate; C600 ≈ C300 (+22 ± 30), so it was stopped. |
 | ~~E~~ (dropped 2026-11-17) | D + pruning | D at equal wall time | Does pruning help? Not trained: see the decision above. |
-| **DBR** | forks of the base winner (D, or C300/C-long if D loses), one per P_max | that winner, on held-out players | Does baking in the population model help? |
+| **DBR** | forks of the base winner (D, selected 2026-11-19), one per P_max | that winner, on held-out players | Does baking in the population model help? |
 
 ### Order
 
@@ -617,10 +617,10 @@ speed.
 | 3 | Short `spr5a` runs: measure it/s on the bigger table; calibrate the prune threshold; read the pruning telemetry — **done 2026-11-17** (c=0.01, n_min=100; ~30k it/s) | ~1 h, plugged in |
 | 4a | **Done 2026-11-18.** Train **D** to ~1.6B iterations (~15 h at the measured ~30k it/s; see "Step 3 — calibration results"), recipe below. Resumable: run whenever the laptop is idle. Optional early look: at a mid snapshot (e.g. 800M, ~7–8 h in) screen D against C300; if D is clearly behind, stop and rethink before spending the rest | heavy, idle laptop |
 | 4b | **Done staged 2026-11-19:** C-long from 300M to 600M (1.5 h); C600 ≈ C300 (+22 ± 30), so C has levelled off and the rest of the run to 1.6B is not needed (see "Overnight checks") | heavy, idle laptop |
-| 5 | Evaluate (see "Evaluation for these arms"): first D vs C300 (interim; confounded by D's extra iterations), then D vs C-long once 4b exists; screen, pick, confirm | heavy, a few hours per comparison |
+| 5 | **Done 2026-11-19:** D vs C300 and D vs C600 done; D selected (see "Overnight checks"). Plan was: evaluate (see "Evaluation for these arms"): first D vs C300 (interim; confounded by D's extra iterations), then D vs C-long once 4b exists; screen, pick, confirm | heavy, a few hours per comparison |
 | 6 | **Done 2026-11-20:** refit and restamp the opponent models and the jam read on `spr5a`. Jam-read gates pass on D (+7.8 chips/spot; +42 ± 6 mbb/hand). The offline tilt scoreboard was invalid (wrong key format; fixed) and needs a rerun (see "Step 6") | light |
-| 7 | V3.13 code (two tables, fork mode), then DBR forks per P_max | code days; each fork a few hours |
-| 8 | V3.14: final pick among C300 / C-long / D / DBR, hardening, then Phase 7 (separate sign-off) | — |
+| 7 | V3.13 code (two tables, fork mode), then DBR forks per P_max. **Code done; corrected P_max 0 and 0.5 48M forks done 2026-11-22; quality gates pending — see the revised order below** ("Revised order after the 2026-11-25 review") | code days; each 48M fork ~40 min |
+| 8 | V3.14: final pick between D and D+DBR (C300 / C-long are no longer candidates), hardening, then Phase 7 (separate sign-off) | — |
 
 Disk: snapshots every 100M at ~430 MB each are ~7 GB for D (C-long's are ~130 MB
 each); 731 GB were free on 2026-11-17.
@@ -718,7 +718,8 @@ Paired LBR (seed 777, 10k hands, the same deals as the earlier arms): D1.6B 549,
   little. A C-long to 1.6B is not planned for now.
 - **D's head-to-head lead held against C600:** +118 ± 29 (all six seeds positive), the
   same as +114 ± 29 vs C300: doubling C's training did not shrink D's lead at all. So
-  the lead comes from the `spr5a` keys, not from D's extra iterations. Equal iteration
+  the lead comes mostly from the `spr5a` keys; C600 − C300 = +22 ± 30 leaves room for
+  some effect of D's extra iterations. Equal iteration
   counts are not equal training: D has ~3.3× C's info sets, so at the same count each of
   D's keys is visited ~3.3× less, and an equal-iteration match (e.g. D600 vs C600) would
   be biased against D. The comparison is each arm near its own plateau, which is what
@@ -975,6 +976,10 @@ Four sequential 24M-iteration runs on the laptop (AC power), each with the step-
   P_conf·model + (1 − P_conf)·free; regret matching updates only the free part; the
   mixture's value passes up the tree; only the bot table's average strategy is served.
   About 2× training memory.
+- **What `opponent.db` holds (noted 2026-11-25):** its averages accumulate the free
+  policy along mixed-policy reach. They are neither the free policy's own average nor
+  the effective opponent (the model/free mixture). Treat the file as training/resume
+  state only; never analyse it as "the learned counter-strategy".
 - **The model inside training:** P_conf = P_max·n/(s + n) with n = human decisions at the
   full key; drop the blueprint rung from the model so P_conf alone shrinks toward the free
   strategy (otherwise thin keys double-shrink toward the frozen base); a key with no model
@@ -994,9 +999,21 @@ Four sequential 24M-iteration runs on the laptop (AC power), each with the step-
   both on and off, since the tilt assumes a GTO-ish base and may exploit twice. The safe
   gadget's "no worse than the blueprint" weakens to "no worse than DBR": anchor it to the
   base blueprint, or re-validate.
+- **Serving caveat (2026-11-25):** if a DBR bot were served, every blueprint-reading
+  layer (river safe-gadget CFV anchor, range-tracker opponent model, `HumanModel` prior)
+  would read the DBR policy, not D, so "no worse than blueprint" becomes "no worse than
+  DBR". Anchoring them to D is an open decision (gate E of the revised order below); no
+  serving change now.
 - **Sweep:** P_max 0.25 / 0.5 / 0.75, each fork a few hours (set from step 3's it/s).
+  **Status 2026-11-25:** only the P_max=0 control and P_max=0.5 ran (48M, ~40 min each);
+  the .25/.75 sweep is replaced by the dose step (C) of the revised order below.
 
 #### V3.13 implementation (2026-11-21; experimental, not promoted)
+
+**Standing caveat for every V3.13 subsection below:** training, resume, integrity, API
+and few-hand smoke checks are functional checks only. They are not evidence of poker
+strength; quality comes only from the gates in the revised order (held-out human-model
+gain, paired AIVAT H2H, paired LBR).
 
 The Rust trainer now has an explicit `fork_dbr` / `resume_dbr` path and a separate
 free-opponent table. Ordinary training stays unchanged; DBR and pruning cannot be
@@ -1021,7 +1038,11 @@ when evaluating, construct their serving model against the frozen D prior for ev
 Do not fit or select against the held-out set. No player identifiers are exported.
 
 `backend/bot/scripts/train_dbr.py` forks both roles from D, preserving regrets and their visit counters, while clearing
-average sums and average counters. Last-seen iteration markers reset to -1 because
+average sums and average counters. This is the corrected recipe of 2026-11-22
+(`preserve_regret_clock_v2`); the 2026-11-21 code reset the regret-visit counters too
+(see "Fork-clock diagnosis" below and BUG-034). Since 2026-11-25 it rejects
+`--workers` < 2: the single-worker path's per-iteration discount clock does not match
+D's per-merge-round counters (BUG-035). Last-seen iteration markers reset to -1 because
 the fork starts a new iteration namespace; these markers are distinct from the
 regret-visit counters that control discounting. It publishes immutable paired generations
 through `latest.json` only after both databases close and hash successfully. The run
@@ -1032,11 +1053,8 @@ and one rollback pair. A partial write never becomes the latest pair. Only `bot.
 a candidate serving asset; `opponent.db` is training state. Empty average keys are
 reported, so a short fork cannot silently be called a production-ready strategy.
 
-For a local pilot, use the same seed, schedule and budget for `P_max=0` (fresh-average
-control) and `P_max=0.5`, with `s=10`. This isolates the model restriction from resetting
-the base's long-running average. The `.25/.75` sweep and held-out/live-stack/LBR quality
-gates remain pending; a functional training smoke is not evidence of poker strength.
-The macOS/Linux driver supports a timezone-aware `--stop-at`, checkpoint reserve, wall-time and RSS
+Compare biased forks only against a `P_max=0` control with the same seed, schedule and
+budget. The macOS/Linux driver supports a timezone-aware `--stop-at`, checkpoint reserve, wall-time and RSS
 limits. A process-local hard deadline also stops native workers if orderly stopping
 stalls. These runs do not change the active blueprint or deployment.
 
@@ -1051,22 +1069,9 @@ From `backend/bot/` after rebuilding `allin_core`:
   --checkpoint-every 2400000 --stop-at <timezone-aware-ISO-deadline> --max-rss-gib 8
 ```
 
-The existing `h2h_eval.py` now accepts `--db-b model --model-base <frozen-D.db>`
-with the same prior for every candidate. An explicit prior also selects its action
-menu; the model retains its own abstraction and history keys. Result metadata
-records the prior and population-count hashes, and discards a run if either changes.
-The legacy v2 default is preserved. The prior filename is resolved before opening,
-hashing and checking its WAL, including when supplied through a symlink. The
-exporter and trainer resolve frozen base filenames for the same reason. Use the same explicit `--deal-seed` across
-comparison arms: ordinary `--seed` historically interleaves deal and action draws,
-so different policies otherwise change later dealt hands. Explicit deal seeds use
-a separate seed domain from action sampling: equal numeric action/deal seeds must
-not initialize identical PRNG states. H2H output records `deal_rng_scheme` as
-`domain-separated-v1` (explicit deal seed) or `legacy-shared` (omitted). The optional deal stream preserves old
-trajectories when omitted; identical dealt cards alone do not supply
-a paired standard error. An eight-hand fit-set smoke checks the model wiring;
-it is not a quality measurement. The legacy aggregate jam caps still require
-validation for a held-out DBR comparison, alongside the live-layer gates above.
+H2H against the human model (`h2h_eval.py --db-b model --model-base`, shared
+`--deal-seed`, and the explicit `--model-base`/`--model-dir` required with a DBR side
+since 2026-11-25): see CLAUDE.md's "Evaluation scripts" bullet.
 
 For a continuation, pass `--resume` with the same base/cache/seed/workers/merge and
 checkpoint configuration. `--iterations` is **additional** iterations. Use a new run
@@ -1074,14 +1079,7 @@ directory when changing `P_max` or any training configuration. Always resume via
 pair manifest; an ordinary `train_rust.py --resume bot.db` is intentionally rejected.
 Explicit and omitted numeric defaults are equivalent on resume, including older
 manifests that serialized strength as integer `10` instead of float `10.0`.
-The native paired interface accepts implicit-v2 key metadata and rejects two paths
-that identify the same database before writing either role, including relative,
-symlink and hardlink aliases. Paired writes require Unix filesystem-identity support;
-the driver targets macOS/Linux. Other training and inference interfaces are unaffected.
-New paired output filenames must be ASCII and must not differ only by case; this
-avoids aliases on case-insensitive, Unicode-normalizing filesystems before a new
-file has an identity. Unicode parent directories and existing Unicode files are
-supported. The normal driver already uses distinct `bot.db` / `opponent.db` names.
+Paired output paths are validated against aliases (macOS/Linux only); see `py_train.rs`.
 
 #### Local pilot results (2026-11-21)
 
@@ -1100,22 +1098,11 @@ full keys**, with **4 held-out players / 4,023 decisions** kept separate. Both b
 and free-opponent tables have fresh averages for every fit key. All four tables
 pass SQLite integrity checks; both complete pairs load through native resume with
 matching configurations, role counts, generation and clocks. Both preflop probes
-report OK. These are functional checks, not evidence of better poker play.
+report OK.
 
-The 48M P_max=0.5 bot table also passes local API health, trained preflop lookup
-and new-game checks with spr5a session binding, using in-memory stores only. Eight
-fit-only model-opponent hands per arm checked the frozen-D prior wiring. Review
-subsequently found that the smoke recipe's equal action/deal seeds initialized
-identical random streams; those historical smoke scores are not quality evidence
-and are superseded by the corrected smoke checks recorded below. No held-out
-quality score was used to choose a policy. The rare tail
-still contains roughly 2.5–2.6% empty-average bot keys, so coverage remains a gate.
-
-Initial verification before review: **42 Rust unit tests + 59 Python/Rust parity tests + 634 backend tests
-passed**; one backend test skipped, and the deferred board-clairvoyant BR walk was
-excluded. `git diff --check` passes. The .25/.75 sweep, held-out gain/cost comparisons,
-jam-cap validation and live-layer gates remain pending. The corrected tilt rerun
-stays deferred. D remains the selected base; no DBR serving choice is made here.
+The legacy 48M P_max=0.5 bot table also passed local API/lookup/new-game checks; its
+eight-hand smoke used equal action/deal seeds (identical streams) and is superseded.
+Its rare tail had ~2.5–2.6% empty-average bot keys.
 
 Historical recipes, logs and verification are local and git-ignored under
 `backend/bot/analysis/blueprints_rs/eval_runs/20261121_dbr/` (`run_all.sh`,
@@ -1133,24 +1120,15 @@ Regression checks cover these cases. The native learning update and pilot files
 are not changed by these fixes; the 48M training runs used spr5a, distinct generated
 role paths, consistent explicit parameters and separate run directories.
 
-Configuration comparison preserves strict integer fields such as the seed while
-normalizing float-valued settings. Resume retains the stored representation when
-passing validated legacy run metadata to the native layer. Both role databases
-are explicitly closed before publication. A known-solution constrained-game
-oracle remains useful additional mathematical validation; passing plumbing tests
-does not replace the held-out poker-strength gates.
-
-After the fixes, **43 Rust unit tests + 91 Python/Rust parity tests + 640 backend
-tests pass**. One backend test is skipped; the deferred BR walk remains excluded.
-The regressions reproduce the manifest/lock handoff, both directions of default
-strength migration, current and older implicit-v2 pairs, filesystem aliases,
-equal-seed correlation and symlinked WAL mutations. SQLite connection cleanup is
-also checked, including macOS directory aliases in the native output-path tests.
-Both existing 48M pairs pass native resume with the corrected module; the local
-API and eight fit-only model-opponent hands per arm pass again. The original equal-seed smoke outputs are preserved under the local
-run's `pre_review/` directory; corrected smoke outputs explicitly record
-`deal_rng_scheme=domain-separated-v1`. Training provenance retains the original
-source hash separately from the code hash used for verification.
+Fixes (2026-11-21): manifest read under the run lock; strict integer fields (seed)
+kept while float settings are normalised, and stored legacy metadata passed through
+on resume; domain-separated H2H deal seeds; symlinked priors resolved before WAL
+checks; aliased native output paths rejected; implicit-v2 paired metadata accepted;
+both role DBs closed before publication; SQLite connection cleanup checked. Both 48M
+pairs passed native resume again. The original equal-seed smoke outputs are kept in
+the local run's `pre_review/` directory; training provenance keeps the original source
+hash apart from the verification code hash. A known-solution restricted-node oracle
+is being added on 2026-11-25 (see "Revised order after the 2026-11-25 review").
 
 #### Fork-clock diagnosis and corrected control (2026-11-22)
 
@@ -1163,15 +1141,6 @@ new updates and the CFR+ floor, the retained coefficient becomes
 the intended warm start. A Rust regression exercises the actual merge path with
 zero worker increments and verifies both decay histories.
 
-Fresh averages are a separate effect. A fixed, read-only diagnostic used all 169
-SB roots plus source rows `rowid % 359 = 0 LIMIT 4096` (4,197 source keys total).
-On the legacy control, root average-vs-D-average TV is 0.396, compared with 0.135
-for D's stored-menu current regret policy versus its own average. On 3,866 common
-nonempty postflop keys those distances are 0.232 and 0.100. These distances rule out a simple static average-versus-current-policy
-explanation, but do not decompose training noise or attribute every change to
-counter resets. The corrected matched control is the actual experiment. This is a uniform stored-key diagnostic, not a reach-weighted
-value measurement, and does **not** prove that the old policy plays worse.
-
 **Corrected recipe:** keep regret values and regret-visit counters in both roles;
 clear the served averages, their counters, both last-seen iteration markers and
 EV counters. Native `dbr` metadata and the driver run use version 2 with
@@ -1181,53 +1150,167 @@ continued. Resume never converts their learned state into the corrected recipe;
 start a new directory from frozen D for that. Unknown or inconsistent recipe
 metadata is rejected before training/publication.
 
-**Authorized control:** one new P_max=0 fork from D1.6B, 48M iterations, same cache,
-seed 20261121, 8 workers, merge 2000, checkpoint 2.4M, alpha 1.5 and gamma 1.
-The laptop is on AC; the run has an 8 GiB RSS guard and a 90-minute hard budget
-with a three-minute checkpoint reserve. The original pilots remain archived.
-Compare the completed control with D and the legacy control on the same frozen
-sample, reporting empty averages separately. Strategy distance is a warm-start
-sanity check; no arbitrary TV threshold substitutes for later strength gates.
-The P_max=0.5 rerun and .25/.75 sweep wait for this control check. No held-out
-quality data is used here; the tilt rerun and deployment remain deferred.
-
 Diagnosis, exact run command, logs and final comparison are kept locally under
 `analysis/blueprints_rs/eval_runs/20261122_dbr_clock_fix/`; corrected training lives
 in `analysis/blueprints_rs/dbr_20261122_clock_preserved_p00/`.
 
-**Corrected control completed:** 48M iterations in **40.5 minutes**, peak RSS
+**Corrected control completed:** one P_max=0 fork from D1.6B (same cache, seed
+20261121, 8 workers, merge 2000, checkpoint 2.4M, alpha 1.5, gamma 1; 8 GiB RSS guard),
+48M iterations in **40.5 minutes**, peak RSS
 **2.99 GiB**, with recipe `preserve_regret_clock_v2`. Both role tables pass SQLite
 checks and native paired resume; the old version-1 control still resumes as legacy.
 The corrected bot also passes local API health, trained lookup and new-game checks.
 Common-root regret counters finish at **69,720 = 66,720 + 3,000**, with average
 counters at 3,000, verifying the intended separate histories.
 
-On the frozen sample, compare only keys with nonempty averages in all variants:
+On a fixed, read-only sample (all 169 SB roots plus source rows
+`rowid % 359 = 0 LIMIT 4096`; 4,197 source keys), compare only keys with nonempty
+averages in all variants. This is a uniform stored-key diagnostic, not a reach-weighted
+value measurement:
 
-| Uniform stored-key TV from D's average | Legacy reset-clock control | Corrected control |
-|---|---:|---:|
-| All 169 SB opening keys | 0.396 | 0.134 |
-| Other sampled preflop keys (63) | 0.304 | 0.068 |
-| Common sampled postflop keys (3,696) | 0.233 | 0.087 |
+| Uniform stored-key TV from D's average | Legacy reset-clock control | Corrected control | D's own current-regret policy |
+|---|---:|---:|---:|
+| All 169 SB opening keys | 0.396 | 0.134 | 0.135 |
+| Other sampled preflop keys (63) | 0.304 | 0.068 | 0.082 |
+| Common sampled postflop keys (3,696) | 0.233 | 0.087 | 0.097 |
 
-D's stored-menu current-regret policy is itself 0.135 / 0.082 / 0.097 away from
-D's average in those groups. The corrected fork removes much of the extra drift;
-it does not need to reproduce the long-running average exactly. These distances
-support the initialization fix, not a claim of improved playing strength.
+(On the wider 3,866 common nonempty postflop keys before the corrected run, the legacy
+control was 0.232 and D's current-regret policy 0.100.) The last column is D's
+stored-menu current-regret policy vs its own average, so the legacy drift is not just
+average-vs-current noise. The corrected fork removes much of the extra drift; it does
+not need to reproduce the long-running average exactly.
 
-Coverage remains unresolved: **95,837 of 1,449,630 bot keys (6.6%)** and 97,135
-free-opponent keys have empty averages. In the fixed 3,965-key postflop sample,
-240 corrected and 99 legacy keys have no average; 3,696 are common and nonempty.
-The larger empty tail may reflect different visitation; it is not hidden by the
-matched-key TV table. At control completion, serving still needed a validated treatment. The shared
-frozen-D fallback added afterward is recorded in the 2026-11-22 follow-up below.
+Coverage: **95,837 of 1,449,630 bot keys (6.6%)** and 97,135 free-opponent keys have
+empty averages. In the fixed 3,965-key postflop sample, 240 corrected and 99 legacy
+keys have no average; 3,696 are common and nonempty.
 
-Verification after the recipe change: **44 Rust unit tests + 93 parity tests +
-640 backend tests pass**, one backend test skipped and the deferred BR walk
-excluded. At control completion the `.5` corrected fork had not started; the
-authorized follow-up is recorded below. No held-out quality scores were read
-and no deployment was performed. Exact results are in the local run's
-`comparison.json` and `verification.json`.
+Exact results and the verification run are in the local run's `comparison.json` and
+`verification.json` (test counts: see the end of "Bot status in plain language").
+
+#### 2026-11-22 — shared DBR empty-average completion and corrected bias fork
+
+The corrected control left 95,837 stored bot keys (6.6%) with empty averages. A DBR bot
+is now read through its frozen D base (`ALLIN_DBR_BASE_DB`, validated; serving and
+evaluation share the reader; checkpoints stay raw). Rules, checks and provenance: see
+`docs/DEPLOYMENT_RUNBOOK.md` "DBR checkpoint policy completion".
+
+**Fallback semantics changed 2026-11-25:** an existing candidate row with an empty
+average now reads exactly what D serves at that key (D's average, or D's historical
+uniform-over-legal when D's own average is empty). Only a key missing from the
+candidate, or present in the candidate but missing from D, is untrained (None). So DBR
+and D agree at every key D covers, and candidate-vs-D comparisons do not credit
+guard-vs-uniform differences to DBR. (Before, an empty D average also stayed untrained.)
+
+Completed authorized run: one new `P_max=0.5`, strength=10, 48M fork from frozen D1.6B,
+using `preserve_regret_clock_v2`, the same fit-only cache, seed=20261121, 8 workers,
+merge=2000, checkpoint=2.4M, alpha=1.5 and gamma=1 as the corrected zero-bias
+control.
+
+**Completed:** 48M iterations in **41.1 minutes**, peak RSS **3.14 GiB**, saved to
+`analysis/blueprints_rs/dbr_20261122_clock_preserved_p05/`. Both role files pass
+SQLite quick checks and native paired resume. All run settings match the corrected
+control except P_max. Sampled root regret counters are **69,720 = 66,720 + 3,000**
+for both roles; fresh-average counters are 3,000. Frozen D and count-cache hashes
+match their recorded inputs. Policy reads leave both the candidate and D unchanged.
+
+| Corrected 48M bot policy | Stored keys | Empty averages (raw) | Completed from D's average | D's average empty too (now read as D's uniform) |
+|---|---:|---:|---:|---:|
+| P_max=0 control | 1,449,630 | 95,837 | 93,828 | 2,009 |
+| P_max=.5 | 1,449,644 | 96,901 | 94,880 | 2,021 |
+
+These are counts of stored keys, not reach-weighted hand frequencies (measured
+2026-11-22, when the last column was still read as untrained). The .5
+free-opponent file has 1,449,635 keys, including 88,221 empty averages; it is a
+training/resume artifact and cannot be served as the bot.
+
+The completed .5 candidate passes local API health, an actual D-completed strategy
+lookup, new-game creation and live/evaluation-player distribution agreement. A
+separate missing-base API check correctly returns 503. An eight-hand candidate-vs-D
+CLI smoke verifies the shared fallback provenance and domain-separated deal RNG.
+No held-out model scores, new LBR/BR study, parameter sweep or production deployment
+were performed.
+
+Exact command, logs, role hashes, sampled clocks and verification are archived in
+`analysis/blueprints_rs/eval_runs/20261122_dbr_fallback/` (`command.json`,
+`verification.json`, per-arm `*-policy.json`, `backend-tests.log`,
+`parity-tests.log`, `rust-tests.log`, `final-verification.log`).
+
+Next quality work (2026-11-22; superseded by the revised order below): finalize the
+held-out evaluator's human-action/jam calibration (the legacy aggregate caps are not a
+DBR quality gate), then compare .5 against the corrected zero-bias control and D for
+held-out human-model gain and base-policy/limited-attacker cost. Keep the prior and
+any safety reference explicit. No DBR policy is selected.
+
+#### Bot status in plain language (2026-11-22)
+
+The selected training base is **D1.6B**. The new work is local to `rust-core`;
+this task has not deployed a new bot or changed the live exploitation experiment.
+
+| Part | What it does | Evidence / remaining work |
+|---|---|---|
+| Card abstraction | Compresses similar poker situations so training is practical. D has all 169 starting-hand classes preflop; postflop it carries 10 coarse starting classes and uses 30 / 24 / 20 potential/strength buckets on flop / turn / river. The flop lookup is exhaustive. | Implemented, trained and checked against the Python reference. Bucketing still merges distinct real situations. |
+| Situation memory and betting | D accounts for stack-to-pot bands, including river SPR, and previous-street aggressors on flop/turn. It trains a selected bet-size menu; human sizes between anchors are translated. | Implemented and tested. D beats C300/C600 and v2 head-to-head. Those matches do not establish optimal play against every human or every bet size. |
+| River solver | Recalculates river play using the actual board, hands/ranges and bet amounts, rather than relying only on a bucket lookup. Its safety mechanism compares against a reference blueprint. | Python/Rust correctness and finite wrong-belief tests pass. Python/CFR+ remains the default; Rust/DCFR is opt-in. Stable production-profile speed and the final combined stack still need validation. A DBR reference is not automatically a safety floor relative to D. |
+| Turn play | Uses the blueprint and serving adjustments. | Real-time turn solving remains shelved after losing tests; it is not active in serving. |
+| Human adaptation | The jam read handles suspicious human shoves; the broader tilt and DBR try to earn more against human tendencies. | Jam-read gates passed after refitting on D. The corrected tilt statistical rerun is deferred. DBR held-out human gain is unmeasured. |
+| DBR fork | Trains against a blend of a fixed human model and a freely adapting opponent. `P_max=.5` caps the model influence where data supports it; it does not mean half the hands exploit. | Corrected zero-bias control completed. The matching corrected .5 fork completed 48M with resume/API checks; its quality comparison is pending. Empty policy averages now use the validated frozen D source without changing checkpoint/resume state. |
+| LBR | A limited attacking player probes ways to punish the bot. | D has been tested: no resolved difference from C300, and a better point estimate than v2. It is not an all-powerful adversary or proof of unexploitable play. The corrected DBR candidates have not passed this gate. |
+| BR | Intended to measure the strongest possible counter-strategy. | The current board-sampled evaluator lets earlier actions depend on future board cards. Its result is not a valid full-game exploitability score or lower bound. Repair/replacement and adversarial work remain parked. |
+
+Other open decisions/checks: sustained A/F/F_EXTENDED solver comparisons did not
+resolve a strength winner; the menu choice remains deferred (existing A default
+unchanged). The sub-minimum-bet anchor is implemented but OFF; its powered
+statistical checks remain deferred. Final hardening still needs the chosen full
+stack with its human layers on/off, stable serving latency/memory and the release
+asset/model/CI deployment wiring. No universal full-game safety guarantee has been
+established by the finite test suite.
+
+Verification on 2026-11-22: 653 backend checks, 93 parity checks and 44 native Rust
+unit tests pass (790 total); one backend check is skipped and the slow BR walk is
+excluded. The parity suite retains the existing historical fixture-manifest warning.
+Latest verification: see the 2026-11-25 review entry.
+
+### Revised order after the 2026-11-25 review
+
+Why the order changed. The fit cache has 6,447 keys / 13,511 decisions; the median key
+has 1 decision, the max 39. The decision-weighted model weight q is 0.15 at P_max .5 /
+s=10 (0.52 at P_max 1 / s=3). Only ~63% of held-out decisions land on fit keys. So the
+expected held-out gain is small (perhaps 0–20 mbb/hand) against ±30 SE at 240k hands.
+Cheap, decisive checks come first, and the .25/.75 sweep is dropped unless a
+dose-response appears.
+
+| # | Step | Cost |
+|---|---|---|
+| A | Signal check: TV(.5, control) on keys at/near model keys vs matched keys elsewhere; reach-weighted coverage (share of simulated decisions on D-filled or untrained keys) | minutes |
+| B | Fork cost: P_max=0 control vs D, paired AIVAT H2H (240k) + paired LBR, margins set before running. If the control loses, fix the fork (longer forks or a discounted share of D's averages) before anything else | ~4–6 h |
+| C | In-sample upper bound: .5 vs control, both vs the fit-set model; optional stronger dose (P_max 1, s≈3) and a second-seed control for the noise floor. Stop or redesign (backoff estimator) if the gain is under 2 SE | ~3 h + 40 min/fork |
+| D | Held-out gain on the 4 held-out players, only if C passes; size and margin pre-registered | ~3–4 h |
+| E | DBR vs D cost and safety: H2H + LBR non-inferiority; decide the river gadget / tracker / HumanModel anchor (D or DBR) | ~4 h |
+| F | Full stack on the chosen bot (D or D+DBR) with layers on/off; the deferred tilt rerun (~2 h) if exploit ships on | ~6 h (+2 h) |
+| G | V3.14 hardening: memory + p95 latency at 0.25 vCPU, BUG-027 replay, API smoke with every live key trained | ~2 h |
+| H | Phase 7 wiring and deploy (separate sign-off) | code |
+
+**Shippable without DBR:** D1.6B + river solver (anchored to D) + jam read, exploit/tilt
+off. It needs F (without DBR) + G + H, about 6–8 h of compute.
+
+#### 2026-11-25 review entry
+
+Code changes made on 2026-11-25 after the four-agent review:
+- DBR fallback semantics: an empty-average candidate row reads exactly what D serves
+  (see the 2026-11-22 subsection above and the runbook).
+- `train_dbr.py` and the native binding reject `--workers` < 2 (BUG-035).
+- `h2h_eval.py`: with a DBR side and `--db-b model`, `--model-base` and `--model-dir`
+  are required explicitly (no silent v2 prior or full-population default).
+- New Rust tests: a closed-form restricted-node oracle, a P_max=0 role-pairing reduction
+  to ordinary training, a parallel opponent-merge test, and pruning rejection (replacing
+  the old helper-only test).
+
+Verification (2026-11-25): 48 Rust unit tests + 94 parity tests + 657 backend tests pass
+(one backend test skipped; the deferred BR walk excluded). A mutation check re-ran the
+DBR tests against seven deliberately broken copies of the trainer (mixed-value regret
+baseline, free value passed up, no (1-q) scale, free-policy sampling, bot seat fixed or
+tied to the updater, opponent merge discarded); each is now caught. Four of them
+passed the previous suite.
 
 ### Evaluation for these arms
 
@@ -1279,12 +1362,12 @@ and no deployment was performed. Exact results are in the local run's
 | V3.7 | Rust serving adapter, Docker wheel and DCFR experiment implemented; correctness checks pass; latency gate deferred to V3.14 / Phase 7 by user decision (2026-11-13) | ~1 week | Rust == Python solve on fixed spots; p95 latency ≤ 5 s on a 0.25 vCPU profile; gadget still ≤ blueprint |
 | V3.8 | Candidate anchor implemented, OFF by default; evaluator/range bugs fixed; powered statistical gates deferred to final hardening by user decision (2026-11-13) | days | LBR at 0.1×/0.25× pot falls (z > 2); other fractions and H2H vs v2 within \|t\| < 2 |
 | V3.9 | F / F_EXTENDED implemented; local structure/parity/safety checks pass; sustained solver-on H2H and latency gates pending | days, after V3.7 | p95 ≤ 5 s on Rust; H2H with the solver on ≥ menu A (\|t\| < 2 or better) |
-| V3.10 | ✅ 2026-11-15 (see "V3.10 — done"): base arm **C at 300M**. **Pick the base arm** (A or C, from V3.5b's results and V3.6's memory numbers; V3.10–V3.13 build on it), then re-fit the opponent models on its v3 keys, stamped with `abstraction_id` (moved here from Phase 7: V3.11 and V3.13 need it) | ~1 day | the model guard compares abstraction ids; exploit no longer self-disables on the v3 blueprint |
+| V3.10 | ✅ 2026-11-15 (see "V3.10 — done"): base arm **C at 300M** (superseded 2026-11-19: D1.6B). **Pick the base arm** (A or C, from V3.5b's results and V3.6's memory numbers; V3.10–V3.13 build on it), then re-fit the opponent models on its v3 keys, stamped with `abstraction_id` (moved here from Phase 7: V3.11 and V3.13 need it) | ~1 day | the model guard compares abstraction ids; exploit no longer self-disables on the v3 blueprint |
 | V3.11 | ✅ 2026-11-15 (see "V3.11 — done"): humans jam wider than assumed, so the read mostly calls more. Both gates pass after the review fixes (gate 1 +7.6 / +6.1 chips/spot; gate 2 +33.3 ± 4.8 mbb/hand). Pooled facing-jam population read + logged-spot evaluator (targets BUG-027) | days | logged-spot EV(call) − EV(fold) improves over the current guard; no regression vs the human model |
 | V3.12 | ~~Pruning arm **E**~~ (code built and calibrated; arm dropped 2026-11-17, pruning stays off by default) (Rust trainer), design revised after review 2026-11-16 (see "Next steps"): prune only zero-probability actions with a per-key shadow-score test; trained on V3.16's keys | days + one training run | strategy-shape probe (+ postflop checks); BUG-027 replay; it/s; H2H vs D at equal wall time, no worse at equal iterations; LBR no worse |
-| V3.13 | Data-biased-response (DBR) blueprint against the population model: a second (opponent) table, forked from the base winner (D, or C300/C-long if D loses) with fresh averages, models refit on its keys, P_max swept, held out by player/time (see "Next steps") | 1–2 weeks, after V3.16 and V3.12 | held-out human-model gain vs the cost (paired LBR + H2H vs the base), live layers on and off |
-| V3.16 | History tags in the keys (`spr5a`): flop + preflop's last aggressor; turn + the flop's and preflop's; river + SPR. Python + Rust + parity; arm **D** from scratch and control **C-long** (C300 resumed), both to ~1.6B (see "Next steps") | days + two training runs | D vs C-long at matching snapshots, screened then confirmed on fresh seeds; human model and LBR within pre-set margins |
-| V3.14 | Final pick among C300 / C-long / D / DBR blueprints; hardening, including deferred V3.7 latency and V3.8 statistical validation (below) | — | the gates, re-run on the final candidates |
+| V3.13 | Code done; corrected P_max 0 and 0.5 48M forks done 2026-11-22; quality gates pending (see "Revised order after the 2026-11-25 review"). Data-biased-response (DBR) blueprint against the population model: a second (opponent) table, forked from the base (resolved: **D**) with fresh averages, models refit on its keys, held out by player/time (see "Next steps") | each 48M fork ~40 min | held-out human-model gain vs the cost (paired LBR + H2H vs the base), live layers on and off |
+| V3.16 | ✅ D trained to 1.6B (2026-11-18); C-long stopped at 600M (2026-11-19); D selected. History tags in the keys (`spr5a`): flop + preflop's last aggressor; turn + the flop's and preflop's; river + SPR. Python + Rust + parity; arm **D** from scratch and control **C-long** (C300 resumed) (see "Next steps") | days + two training runs | D vs C-long at matching snapshots, screened then confirmed on fresh seeds; human model and LBR within pre-set margins |
+| V3.14 | Final pick between D and D+DBR; hardening, including deferred V3.7 latency and V3.8 statistical validation (below) | — | the gates, re-run on the final candidates |
 | V3.15 | ✅ measured 2026-11-16, corrected after review: today's keys mis-state equity by more than 5 points for 12/9% of flop, 42/33% of turn and 76/72% of river hand mass; the chosen tags cut the turn to 13/17% and SPR cuts the river to 58/47% (→ V3.16) | minutes to measure | — |
 
 The V3.6 serving work covered (all done; see "V3.6 — done" below):
@@ -1523,7 +1606,7 @@ snap_300000000.db`), picked 2026-11-15. C300 beats A300 head-to-head (+79 ± 30 
 beats v2 by more (+381 vs +280); LBR is level within noise (599 vs 710, each ±300). It costs
 ~12 MB more to serve (V3.6). The BR gap that favoured A (+353) was not used: the repo's BR
 lets the exploiter see the whole board at every street (verified 2026-11-15), so it is
-neither exploitability nor a lower bound. V3.11–V3.13 build on C300.
+neither exploitability nor a lower bound. V3.11–V3.13 built on C300 at the time; superseded 2026-11-19 by D1.6B.
 
 **Stamped models.** `opponent_model.blueprint_model_stamp(db)` is what a model's keys
 depend on: the key format, the abstraction id (plus its name, for reading) and `cap_jam`
@@ -1987,6 +2070,12 @@ off-grid), so there is no volume to add.
 
 ## Evaluation and gates
 
+**Superseded in part (V3.5-era; noted 2026-11-25):** the BR-based measure and gate 2
+below are no longer used. The repo's BR evaluator is board-clairvoyant (earlier actions
+can depend on future board cards), so it is not a valid exploitability score or lower
+bound. The measures now are paired LBR and paired AIVAT H2H (see "Evaluation for these
+arms").
+
 **Measures** (as in Phase 6 unless noted):
 - **BUG-027 replay** (new, cheap). In the exact line:
   - BB's response to the 4-bet: the jam/fold split, and AA/KK no longer
@@ -1997,7 +2086,7 @@ off-grid), so there is no volume to add.
   
   Same script as `scratchpad/bug027/range_ev/range_ev.py`, moved into
   `backend/bot/scripts/`.
-- **Best response** (96 paired boards, seeds 42–45; ~45 min per blueprint).
+- ~~**Best response**~~ (superseded: board-clairvoyant, see above) (96 paired boards, seeds 42–45; ~45 min per blueprint).
   - Caveat: change 1 changes the game, so BR of v3 and BR of v2 measure different
     games. Compare **A vs SPR 100M** for the jam's effect and **C vs A** for the
     card changes (same tree). Treat v3 vs v2 as indicative only.
@@ -2016,12 +2105,12 @@ off-grid), so there is no volume to add.
    - the flop shove range has materially more top pair+;
    - J9's call EV against v3's own range is ≤ 0, or the shove is no longer reached
      with J9's range.
-2. **Card changes don't hurt:** BR of C ≤ BR of A, within noise.
+2. ~~**Card changes don't hurt:** BR of C ≤ BR of A, within noise.~~ (superseded: BR not valid; see above)
 3. **No regression:** head-to-head vs v2 and paired LBR not significantly worse
    (|t| < 2 or better).
 4. **Against the human-like opponent:** v3 ≥ v2, within noise.
 
-Gates 1 and 4 carry the decision. Gate 2 is the attribution check.
+Gates 1 and 4 carry the decision. Gate 2 was the attribution check (superseded).
 
 ## Risks
 
@@ -2087,94 +2176,18 @@ Decided 2026-11-13: the base-arm pick waits until V3.10, the first step that nee
 it. V3.6–V3.9 are built and tested for both arms, and V3.6 measures C's extra serving
 memory first.
 
-Decided 2026-11-15: the base arm is C at 300M (see "V3.10 — done").
+Decided 2026-11-15: the base arm is C at 300M (see "V3.10 — done"). **Superseded
+2026-11-19 by D1.6B** (below).
+
+Decided 2026-11-17: train D first; the pruning arm E is dropped (pruning measured only
+7–15% faster; the code stays, off by default).
+
+Decided 2026-11-19: C-long stopped at 600M. C plateaued: C600 ≈ C300 (+22 ± 30).
+
+Decided 2026-11-19: D1.6B is the base. It beats C300 (+114 ± 29), C600 (+118 ± 29) and
+v2 (+392 ± 31) head-to-head. Equal iterations are not equal training across
+abstractions (D has ~3.3× C's info sets), so each arm was compared near its own plateau
+(see "Overnight checks").
 
 Still open:
 - Phase 7 deployment, which needs its own sign-off.
-
-
-### 2026-11-22 — shared DBR empty-average completion and corrected bias fork
-
-The corrected zero-bias control exposed 95,837 stored bot keys without fresh
-average mass (6.6%). Read-only `BlueprintDB` policy access now requires the exact
-frozen fork base via `ALLIN_DBR_BASE_DB` (or `fallback_base_db`) for a DBR bot.
-An existing empty/zero-average row reads D's positive average; a positive DBR
-average stays unchanged. If D has no positive average, or the candidate row is
-missing, it stays untrained and the existing consumer guards apply. Ordinary
-blueprint behavior is unchanged. Serving records and evaluator strategy lookups
-share this implementation; API startup validates it, health/H2H expose provenance.
-Base SHA256, key format, menu, abstraction and source iteration are checked, as is
-the physical base's WAL. Opponent-role policies are rejected. All checkpoints and
-resume state remain raw; coverage reports must distinguish fresh averages from
-D-completed keys. D must remain immutable throughout a run. The river safety
-anchor and held-out human-model prior are separate choices; this does not certify
-DBR safety or human-model gain.
-
-Completed authorized run: one new `P_max=0.5`, strength=10, 48M fork from frozen D1.6B,
-using `preserve_regret_clock_v2`, the same fit-only cache, seed=20261121, 8 workers,
-merge=2000, checkpoint=2.4M, alpha=1.5 and gamma=1 as the corrected zero-bias
-control. No .25/.75 sweep, held-out selection, BR/LBR run or deployment is implied.
-
-**Completed:** 48M iterations in **41.1 minutes**, peak RSS **3.14 GiB**, saved to
-`analysis/blueprints_rs/dbr_20261122_clock_preserved_p05/`. Both role files pass
-SQLite quick checks and native paired resume. All run settings match the corrected
-control except P_max. Sampled root regret counters are **69,720 = 66,720 + 3,000**
-for both roles; fresh-average counters are 3,000. Frozen D and count-cache hashes
-match their recorded inputs. Policy reads leave both the candidate and D unchanged.
-
-| Corrected 48M bot policy | Stored keys | Empty averages (raw) | Completed from D | Still untrained |
-|---|---:|---:|---:|---:|
-| P_max=0 control | 1,449,630 | 95,837 | 93,828 | 2,009 |
-| P_max=.5 | 1,449,644 | 96,901 | 94,880 | 2,021 |
-
-These are counts of stored keys, not reach-weighted hand frequencies. The .5
-free-opponent file has 1,449,635 keys, including 88,221 empty averages; it is a
-training/resume artifact and cannot be served as the bot.
-
-The completed .5 candidate passes local API health, an actual D-completed strategy
-lookup, new-game creation and live/evaluation-player distribution agreement. A
-separate missing-base API check correctly returns 503. An eight-hand candidate-vs-D
-CLI smoke verifies the shared fallback provenance and domain-separated deal RNG;
-its scores are not quality evidence. No held-out model scores, new LBR/BR study,
-parameter sweep or production deployment were performed. Training and its scoped
-keep-awake process have exited.
-
-Exact command, logs, role hashes, sampled clocks and verification are archived in
-`analysis/blueprints_rs/eval_runs/20261122_dbr_fallback/` (`command.json`,
-`verification.json`, per-arm `*-policy.json`, `backend-tests.log`,
-`parity-tests.log`, `rust-tests.log`, `final-verification.log`).
-
-Next quality work: finalize the held-out evaluator's human-action/jam calibration
-(the legacy aggregate caps are not a DBR quality gate), then compare .5 against the
-corrected zero-bias control and D for held-out human-model gain and base-policy/
-limited-attacker cost. Keep the prior and any safety reference explicit. No DBR
-policy is selected for deployment by successful training or these smoke checks.
-
-### Bot status in plain language (2026-11-22)
-
-The selected training base is **D1.6B**. The new work is local to `rust-core`;
-this task has not deployed a new bot or changed the live exploitation experiment.
-
-| Part | What it does | Evidence / remaining work |
-|---|---|---|
-| Card abstraction | Compresses similar poker situations so training is practical. D has all 169 starting-hand classes preflop; postflop it carries 10 coarse starting classes and uses 30 / 24 / 20 potential/strength buckets on flop / turn / river. The flop lookup is exhaustive. | Implemented, trained and checked against the Python reference. Bucketing still merges distinct real situations. |
-| Situation memory and betting | D accounts for stack-to-pot bands, including river SPR, and previous-street aggressors on flop/turn. It trains a selected bet-size menu; human sizes between anchors are translated. | Implemented and tested. D beats C300/C600 and v2 head-to-head. Those matches do not establish optimal play against every human or every bet size. |
-| River solver | Recalculates river play using the actual board, hands/ranges and bet amounts, rather than relying only on a bucket lookup. Its safety mechanism compares against a reference blueprint. | Python/Rust correctness and finite wrong-belief tests pass. Python/CFR+ remains the default; Rust/DCFR is opt-in. Stable production-profile speed and the final combined stack still need validation. A DBR reference is not automatically a safety floor relative to D. |
-| Turn play | Uses the blueprint and serving adjustments. | Real-time turn solving remains shelved after losing tests; it is not active in serving. |
-| Human adaptation | The jam read handles suspicious human shoves; the broader tilt and DBR try to earn more against human tendencies. | Jam-read gates passed after refitting on D. The corrected tilt statistical rerun is deferred. DBR implementation/training integrity checks are not evidence of held-out human gain. |
-| DBR fork | Trains against a blend of a fixed human model and a freely adapting opponent. `P_max=.5` caps the model influence where data supports it; it does not mean half the hands exploit. | Corrected zero-bias control completed. The matching corrected .5 fork completed 48M with resume/API checks; its quality comparison is pending. Empty policy averages now use the validated frozen D source without changing checkpoint/resume state. |
-| LBR | A limited attacking player probes ways to punish the bot. | D has been tested: no resolved difference from C300, and a better point estimate than v2. It is not an all-powerful adversary or proof of unexploitable play. The corrected DBR candidates have not passed this gate. |
-| BR | Intended to measure the strongest possible counter-strategy. | The current board-sampled evaluator lets earlier actions depend on future board cards. Its result is not a valid full-game exploitability score or lower bound. Repair/replacement and adversarial work remain parked. |
-
-Other open decisions/checks: sustained A/F/F_EXTENDED solver comparisons did not
-resolve a strength winner; the menu choice remains deferred (existing A default
-unchanged). The sub-minimum-bet anchor is implemented but OFF; its powered
-statistical checks remain deferred. Final hardening still needs the chosen full
-stack with its human layers on/off, stable serving latency/memory and the release
-asset/model/CI deployment wiring. No universal full-game safety guarantee has been
-established by the finite test suite.
-
-For this change, 653 backend checks, 93 parity checks and 44 native Rust unit tests
-pass (790 total); one backend check is skipped and the slow BR walk is excluded.
-The parity suite retains the existing historical fixture-manifest warning; the
-new fallback regressions and real API checks exercise the current Python reader.

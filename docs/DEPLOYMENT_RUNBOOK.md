@@ -70,17 +70,25 @@ diagnosing CI failures, dev workflow) — that's in
   The dominant per-action cost on a fractional vCPU before this existed (~1–1.5s →
   near-zero after the first action). See `range_tracker.py`.
 - `ALLIN_SOLVE_PERMITS` / `ALLIN_EXPLORER_PERMITS` — per-process concurrency caps for
-  the live river solver / the explorer's on-demand solve (defaults: `cpu_count - 1`
-  and half that, floored at 1). The solver is anytime CFR, so on a small instance
-  raising the live cap to 2 lets two concurrent solves both finish (slower) instead
-  of one queueing 30s into a 503 — usually the better trade for live play.
+  the live river solver / the explorer's on-demand solve (code defaults: `cpu_count() - 1`
+  and half that, each floored at 1). **Set both to `1` in prod** (the image does):
+  Lightsail reports the HOST cores, not the ~0.25 vCPU allocation, so the auto-default
+  over-subscribes against 24s solves. A request waits up to 30 s for a permit (the
+  hard-coded `_SOLVE_WAIT_SECONDS` in `strategy_api.py`, not an env var), then 503s.
+  The solver is anytime CFR, so on a bigger instance raising the live cap to 2 lets two
+  concurrent solves both finish (slower) instead of one queueing into a 503.
+- `ALLIN_DBR_BASE_DB` — (branch rust-core, experimental) path to the frozen D snapshot a
+  DBR bot DB was forked from; required for any read of a DBR bot DB. See "DBR checkpoint
+  policy completion" below. Ignored for ordinary blueprints.
 - **Phase 6 exploitation + turn-solve (flag-gated, default OFF; the image bakes them off):**
   - `ALLIN_EXPLOIT` — `1` swaps the range tracker's opponent model to the fitted human model
     (`HumanModel`; `ALLIN_OPPONENT_MODEL_DIR`, `ALLIN_EXPLOIT_DELTA`=0.05 pre-river tilt budget,
     `ALLIN_EXPLOIT_ALPHA`=10 / `ALLIN_EXPLOIT_ALPHA_POP`=160 shrinkage). **Requires the served
     blueprint + the opponent models to share an abstraction** — on mismatch the guard raises, is
-    caught, and exploit self-disables (stays on the blueprint). Prod serves 20/16 today; the models
-    were fit on 30/24, so this is a no-op until the 30/24 blueprint is served (assets-v2).
+    caught, and exploit self-disables (stays on the blueprint). Prod serves the 30/24 v2 blueprint
+    (assets-v2 cutover done) and the models were fit on 30/24, so the guard no longer blocks
+    exploit in prod; it stays off only because the flag is unset. On branch rust-core a v3
+    blueprint needs models refit and stamped on its own keys (e.g. D1.6B's `d1600/` models).
   - `ALLIN_EXPLOIT_RECENT_N` — `>0` enables LIVE LAST-N: refit the personal layer from the player's
     most-recent N hands (read from the live recap store — in-memory dev / DynamoDB prod) at session
     start, reflecting CURRENT play. `ALLIN_EXPLOIT_RECENT_REFRESH`=K re-fits every K completed hands
@@ -93,11 +101,9 @@ diagnosing CI failures, dev workflow) — that's in
     mbb/hand H2H); `strategy_api` no longer reads this flag and serving is river-only. Listed only so an
     operator who finds it in an old config knows it does nothing. (SPR-aware turn play → SPR buckets in
     the blueprint, ROADMAP item 8 — not a solve.)
-  - `ALLIN_SOLVE_PERMITS` / `ALLIN_EXPLORER_PERMITS` — concurrent river-solve cap. **Set both to `1` in
-    prod** (the image does): the code default is `cpu_count()-1`, but Lightsail reports the HOST cores,
-    not the ~0.25 vCPU allocation, so the auto-default over-subscribes against 24s solves.
-  - `ALLIN_LOCK_LEASE_SECONDS` (90) — DynamoDB session-lock lease. MUST exceed `ALLIN_SOLVE_WAIT_SECONDS`
-    (30) + the river `time_budget` (24) + slack, or a long solve can outlive the lease → lost-update race.
+  - `ALLIN_LOCK_LEASE_SECONDS` (90) — DynamoDB session-lock lease. MUST exceed the permit wait
+    (`_SOLVE_WAIT_SECONDS`, a hard-coded 30 s in `strategy_api.py`, not an env var) + the river
+    `time_budget` (24) + slack, or a long solve can outlive the lease → lost-update race.
   - `ALLIN_TRUST_XFF` — `1` trusts the leftmost `X-Forwarded-For` for per-IP rate limits. Leave UNSET
     (keys on `remote_addr`) until the origin is locked to Cloudflare; XFF is client-spoofable on the raw
     Lightsail URL otherwise. `ALLIN_AB_ARM` (`on`/`off`/`random`) — live exploitation A/B arm per session.
@@ -464,9 +470,13 @@ reports degraded health. Opponent-role DBR checkpoints cannot supply bot policie
 Ordinary blueprints retain their existing behavior, even with the variable set.
 
 Only an existing candidate row with an empty/zero average falls back. A candidate
-row with a positive average keeps its own policy. If the base has no positive
-average at that key, the reader returns an untrained key so the normal serving/
-evaluation guards apply. A missing candidate key stays untrained. Strategy records
+row with a positive average keeps its own policy. Since 2026-11-25 the fallback
+reads exactly what the frozen D base serves at that key: D's average, or D's
+historical uniform-over-legal when D's own average is empty. So DBR and D agree
+at every key D covers, and candidate-vs-D comparisons do not credit guard-vs-uniform
+differences to DBR. Only a key missing from the candidate, or present in the
+candidate but missing from D, returns untrained (None), so the normal serving/
+evaluation guards apply. Strategy records
 identify `strategySource` as `dbr_average` or `frozen_base`; health `dbrPolicy` and
 H2H output record the completion rule and base SHA256. SQL coverage counts remain
 raw: a fallback is not a newly trained average.
@@ -476,3 +486,10 @@ resume read the raw tables; do not fill and re-save them as a new training sourc
 This fallback does not by itself pin the river safety anchor or human-model prior
 to D: those are separate evaluation/serving choices and still require verification
 before any DBR promotion. No production configuration has been changed.
+
+**Serving caveat (2026-11-25).** If a DBR bot were served, every layer that reads
+the served blueprint (the river safe-gadget CFV anchor, the range tracker's opponent
+model, the `HumanModel` prior) would read the DBR policy, not D. The gadget's "no
+worse than the blueprint" then means "no worse than DBR". Whether to anchor these
+layers to D is an open decision (gate E of the plan's "Revised order after the
+2026-11-25 review"); no serving change is made now.
